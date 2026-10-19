@@ -59,6 +59,7 @@ try {
             if (-not (Test-Path -LiteralPath $resolved)) { throw "Broken document link in ${file}: $link" }
         }
     }
+    & (Join-Path $PSScriptRoot 'verify-chrome-source.ps1')
     Write-Output ('Source checks passed: {0} Rust files; workspace manifests/lock; XML/resource IDs/icon assets; handoff links.' -f $rustSources.Count)
     Write-Output 'This script performs no compilation, Rust tests, application, fixture or dev-server launch.'
 }
