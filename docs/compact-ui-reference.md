@@ -52,8 +52,9 @@ files show 0 Bytes and 100 percent. Marquee starts/stops only on mode transition
 The later [transfer-controls implementation](transfer-controls.md) enables Pause,
 Resume and the per-download Speed Limiter tab. Resume capability reflects whether
 safe byte continuation can be attempted; otherwise resume restarts from zero.
-Options on completion has a working,
-default-off close-on-success checkbox; it is disabled after terminal results.
+The progress window now closes automatically on success, leaving the separate
+[completion dialog](completion-dialog.md). Options on completion explains this
+behavior and points to the completion-notification preference in Options.
 
 Engine snapshots expose a deliberately sanitized display URL: username,
 password, query and fragment are removed. Original request URLs remain private.
@@ -67,13 +68,14 @@ Written tests cover percentage precision and u64 bounds, unknown/zero length,
 once-per-attempt opening/retry/dismissal, deferred jobs and retained paths, and
 sanitized source addresses. They have not been executed.
 
-One focused independent source review found no blocking issue. Its minor finding
+One focused independent source review of the original layout found no blocking issue. Its minor finding
 about toggling close-on-completion after completion was addressed by disabling
-that checkbox for terminal states.
+that checkbox for terminal states. The later automatic-close revision replaces
+the checkbox with explanatory text.
 
 Pixel-for-pixel rendering remains unverified: native metrics, theme and effective
 display DPI must be compared against the running app when launch is authorized.
 Pending manual checks: dialog at 100/125/150/200 percent DPI; tab focus/keyboard;
 expansion and monitor changes; two concurrent automatic dialogs; window close
-during transfer; retry; checkbox behavior; cancel versus completion; known,
+during transfer; retry; automatic closure on success; cancel versus completion; known,
 unknown and zero-length bodies; long Unicode URL/path copying.

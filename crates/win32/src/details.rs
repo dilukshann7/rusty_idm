@@ -46,7 +46,6 @@ struct Detail {
     limit_initialized: Cell<bool>,
     cancellable: Cell<bool>,
     expanded: Cell<bool>,
-    close_on_completion: Cell<bool>,
     marquee: Cell<bool>,
 }
 #[derive(Default)]
@@ -56,16 +55,12 @@ pub struct DetailsWindows {
 }
 impl DetailsWindows {
     pub fn show_existing(&mut self, owner: HWND, snapshot: &JobSnapshot) -> Result<(), AppError> {
-        if let Some(detail) = self.windows.get(&snapshot.id) {
-            detail.close_on_completion.set(false);
-            if let Ok(checkbox) = item(detail.hwnd.get(), COMPLETION_CLOSE) {
-                send(checkbox, BM_SETCHECK, BST_UNCHECKED.0 as usize, 0);
-            }
-        }
         self.show_or_update(owner, snapshot)
     }
     pub fn observe(&mut self, owner: HWND, snapshot: &JobSnapshot) -> Result<(), AppError> {
-        if self.attempts.should_open(snapshot) {
+        // Record even an attempt that finished before its first GUI update,
+        // without briefly opening a progress window for that completed result.
+        if self.attempts.should_open(snapshot) && snapshot.state != JobState::Completed {
             self.show_or_update(owner, snapshot)?;
         } else {
             self.update(snapshot);
@@ -91,7 +86,6 @@ impl DetailsWindows {
                 limit_initialized: Cell::new(false),
                 cancellable: Cell::new(false),
                 expanded: Cell::new(false),
-                close_on_completion: Cell::new(false),
                 marquee: Cell::new(false),
             });
             unsafe {
@@ -114,6 +108,11 @@ impl DetailsWindows {
         };
         let hwnd = detail.hwnd.get();
         if hwnd.is_invalid() {
+            return;
+        }
+        let previous = detail.state.replace(snapshot.state);
+        if snapshot.state == JobState::Completed && previous != JobState::Completed {
+            destroy(hwnd);
             return;
         }
         let view = format_transfer(snapshot);
@@ -139,7 +138,6 @@ impl DetailsWindows {
         ] {
             set_value(hwnd, id, text);
         }
-        detail.state.set(snapshot.state);
         set_value(
             hwnd,
             LIMIT_NOTICE,
@@ -205,11 +203,6 @@ impl DetailsWindows {
             }
         }
         detail.cancellable.set(active);
-        if let Ok(checkbox) = item(hwnd, COMPLETION_CLOSE) {
-            unsafe {
-                let _ = EnableWindow(checkbox, !snapshot.state.is_terminal());
-            }
-        }
         if let Ok(button) = item(hwnd, DETAIL_STOP) {
             set_value(
                 hwnd,
@@ -250,9 +243,6 @@ impl DetailsWindows {
                 send(bar, PBM_SETRANGE32, 0, 10_000);
                 send(bar, PBM_SETPOS, position.unwrap_or(0) as usize, 0);
             }
-        }
-        if snapshot.state == JobState::Completed && detail.close_on_completion.get() {
-            destroy(hwnd);
         }
     }
     pub fn is_dialog_message(&self, msg: &MSG) -> bool {
@@ -528,14 +518,6 @@ unsafe fn detail_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                                 false,
                             );
                         }
-                    }
-                    return 1;
-                }
-                COMPLETION_CLOSE => {
-                    if let Ok(control) = item(hwnd, COMPLETION_CLOSE) {
-                        detail
-                            .close_on_completion
-                            .set(send(control, BM_GETCHECK, 0, 0).0 == BST_CHECKED.0 as isize);
                     }
                     return 1;
                 }

@@ -207,3 +207,15 @@ extension syntax and document links; `git diff --check` passed. This change was
 not compiled, installed or launched, and no test suite was run, following the
 user's execution constraint. Existing test fixtures only received the required
 settings field/schema-count adjustment. Live menu/action acceptance is deferred.
+
+## Completion window cleanup and compact sizing, 2026-10-19
+
+Progress windows now close automatically on a transition to Completed. A first
+snapshot already marked Completed does not auto-open a progress window. Explicitly
+opened completed Properties remains available. The former close-on-completion
+checkbox is explanatory text, and the completion resource shrank from 348x170 to
+310x132 dialog units, with standard compact buttons, fields and spacing.
+
+The source verifier passed for all 60 Rust files, native resources and other
+workspace assets; `git diff --check` passed. No compilation, installation, GUI
+launch, visual acceptance or test suite was run for this revision.
