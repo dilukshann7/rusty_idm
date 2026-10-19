@@ -49,7 +49,8 @@ try {
         if ($id -gt 1000 -and -not $ids.ContainsKey($id)) { throw "Resource control/command $id has no Rust ID." }
     }
 
-    foreach ($file in @('README.md', 'docs/implementation-progress.md', 'docs/native-gui-validation.md')) {
+    $documents = @('README.md', 'THIRD_PARTY.md') + @(Get-ChildItem -LiteralPath (Join-Path $taskRoot 'docs') -Recurse -Filter '*.md' | ForEach-Object { $_.FullName.Substring($taskRoot.Length + 1) })
+    foreach ($file in $documents) {
         $document = Join-Path $taskRoot $file
         $body = Get-Content -Raw -LiteralPath $document
         foreach ($match in [regex]::Matches($body, '\]\(([^)#]+)(?:#[^)]*)?\)')) {

@@ -9,7 +9,7 @@ catch supported public downloads from Chrome.
 
 ## Install
 
-Use `RustyDownloadManager-0.1.0-windows-x64-setup.exe` from the local `dist` folder.
+Download the [v0.1.0 Windows installer](https://github.com/dilukshann7/rusty_idm/releases/download/v0.1.0/RustyDownloadManager-0.1.0-windows-x64-setup.exe).
 Setup installs for your Windows user, offers background startup at sign-in, and
 provides a **Connect Chrome** helper. Chrome requires one-time extension and
 website-access approval. Existing integration preferences are preserved on upgrade.
@@ -20,7 +20,7 @@ Windows is awake and you are signed in. The portable ZIP also runs without an
 installer; it does not configure startup or Chrome automatically.
 
 See the [user guide](docs/USER_GUIDE.md), [release notes](docs/RELEASE_NOTES.md)
-and `dist/SHA256SUMS.txt`. This is an unsigned local release.
+and the release's `SHA256SUMS.txt`. This release is unsigned.
 
 ## Features
 
@@ -49,7 +49,6 @@ optimized binaries, stages required files/licenses and produces setup/portable/
 extension artifacts with SHA-256 checksums. It does not launch the app, run the
 installer or run test suites. Generated release files live under ignored `dist/`.
 
-See [implementation history](docs/implementation-progress.md),
-[Chrome integration details](docs/chrome-integration.md) and
-[native validation](docs/native-gui-validation.md) for evidence and pending live
-acceptance scenarios. MIT license; see [third-party notices](THIRD_PARTY.md).
+See [development](docs/DEVELOPMENT.md), [Chrome integration](docs/chrome-integration.md)
+and [validation](docs/VALIDATION.md) for source structure and verification boundaries.
+MIT license; see [third-party notices](THIRD_PARTY.md).

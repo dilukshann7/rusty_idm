@@ -1,16 +1,8 @@
-# Disposable investigation state; retain reports and JSON evidence separately.
-analysis/idm/runtime/edge-profile/
-analysis/idm/runtime/downloads/
-analysis/idm/runtime/browser-launch.json
-analysis/idm/runtime/browser-submissions.jsonl
-analysis/idm/runtime/cli-submissions.jsonl
-analysis/idm/runtime/fixture-lifecycle.jsonl
-analysis/idm/runtime/fixture-stdout.log
-analysis/idm/runtime/fixture-stderr.log
-analysis/idm/runtime/mutable-version.txt
+# Generated files and local working records
+/.superpowers/
+/analysis/
 **/__pycache__/
 *.pyc
-analysis/idm/runtime/fixture.pid
 
 # Rust workspace outputs
 /target/

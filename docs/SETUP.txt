@@ -9,4 +9,4 @@ extension as instructed, register its ID, and enable Capture public downloads
 in its popup. Existing integration and capture preferences are preserved.
 
 Downloads/history last for this process session; restart-resume is not supported.
-This local release is unsigned. No automatic publishing or updating is enabled.
+This release is unsigned. No automatic publishing or updating is enabled.

@@ -1,7 +1,7 @@
 use crate::AppError;
 use std::{ffi::OsStr, mem::size_of, os::windows::ffi::OsStrExt};
 use windows::{
-    core::{w, PCWSTR},
+    core::PCWSTR,
     Win32::{
         Foundation::{HWND, LPARAM, LRESULT, WPARAM},
         Graphics::Gdi::{CreateFontIndirectW, DeleteObject, HFONT},
@@ -133,8 +133,4 @@ impl Drop for Font {
             let _ = DeleteObject(self.0.into());
         }
     }
-}
-
-pub fn error_title() -> PCWSTR {
-    w!("Rusty Download Manager")
 }

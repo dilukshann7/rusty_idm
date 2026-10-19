@@ -114,9 +114,10 @@ without retaining capture URL payloads. URL queries reach the engine but are
 redacted from UI/debug/log output. Credential header values are never stored.
 
 No cookie import, POST replay, DOM injection, profile edits, network listener,
-media extraction, store publication, installer or other Chromium-browser support
-is supplied. Historical [IDM research](idm-browser-protocol.md) is independent
-and unchanged.
+media extraction, store publication or other Chromium-browser support is supplied.
+The v0.1.0 installer bundles the extension and a visible Chrome setup helper;
+Chrome approval is still required. Historical investigation material is archived
+separately from the production source.
 
 ## Verification
 

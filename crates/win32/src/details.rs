@@ -54,9 +54,6 @@ pub struct DetailsWindows {
     attempts: AutoOpenTracker,
 }
 impl DetailsWindows {
-    pub fn show_existing(&mut self, owner: HWND, snapshot: &JobSnapshot) -> Result<(), AppError> {
-        self.show_or_update(owner, snapshot)
-    }
     pub fn observe(&mut self, owner: HWND, snapshot: &JobSnapshot) -> Result<(), AppError> {
         // Record even an attempt that finished before its first GUI update,
         // without briefly opening a progress window for that completed result.
