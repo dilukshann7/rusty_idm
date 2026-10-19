@@ -396,6 +396,9 @@ unsafe fn dialog_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                     enable_duplicate_action(hwnd);
                 }
             }
+            if context.lease.is_some() {
+                platform::bring_to_front(hwnd);
+            }
             return 1;
         }
         let pointer = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Context;
@@ -633,6 +636,9 @@ unsafe extern "system" fn duplicate_proc(
                 DuplicateChoice::Existing => DUPLICATE_EXISTING,
             };
             set_checked(hwnd, selected, true);
+            if context.lease.is_some() {
+                platform::bring_to_front(hwnd);
+            }
             if let Ok(edit) = item(hwnd, DUPLICATE_URL) {
                 let _ = SetFocus(Some(edit));
                 platform::send(edit, EM_SETSEL, 0, -1);

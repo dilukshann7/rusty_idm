@@ -88,6 +88,15 @@ downloads** and inspect Chrome Downloads when pause/cancel/resume could not be
 confirmed. An interrupted offer whose pause ownership was never recorded may
 need manual resumption in Chrome.
 
+Browser capture now restores Rusty when minimized and activates File Info and
+duplicate dialogs on the GUI thread. Before delivery, the native host requests
+foreground permission for the verified pipe server's process only, using
+[AllowSetForegroundWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-allowsetforegroundwindow).
+System foreground-lock settings and permanent topmost flags are not changed.
+The updated GUI/host Windows debug build passed and both installed binaries were
+refreshed with matching build hashes. Actual Chrome focus behavior needs a user
+retry; no GUI automation or runtime test suite was run for this change.
+
 ## Limits and privacy
 
 This is a session handoff. Rusty's receipts/history do not survive a process

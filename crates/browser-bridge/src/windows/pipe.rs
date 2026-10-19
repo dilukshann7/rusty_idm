@@ -174,6 +174,24 @@ impl PipeClient {
             .connection
             .take()
             .ok_or_else(|| io::Error::other("Connection already used"))?;
+        if matches!(operation, Operation::Capture(_) | Operation::Activate) {
+            // Chrome's native child can delegate foreground permission to the
+            // verified GUI process before its UI thread receives the request.
+            // Do not grant ASFW_ANY or change system foreground-lock settings.
+            unsafe {
+                let mut server_pid = 0;
+                if windows::Win32::System::Pipes::GetNamedPipeServerProcessId(
+                    HANDLE(pipe.as_raw_handle()),
+                    &mut server_pid,
+                )
+                .is_ok()
+                {
+                    let _ = windows::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(
+                        server_pid,
+                    );
+                }
+            }
+        }
         let (tx, rx) = mpsc::sync_channel(4);
         thread::spawn(move || {
             rt.block_on(async move {

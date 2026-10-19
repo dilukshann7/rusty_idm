@@ -879,10 +879,7 @@ impl AppState {
             return Ok(());
         };
         if browser.take_activation() {
-            unsafe {
-                let _ = ShowWindow(window.hwnd, SW_RESTORE);
-                let _ = SetForegroundWindow(window.hwnd);
-            }
+            platform::bring_to_front(window.hwnd);
         }
         let presentations = browser.take_presentations();
         let captures = browser.drain();
@@ -901,6 +898,7 @@ impl AppState {
             let intent = if self.lifecycle.accepts_submissions()
                 && incoming.lease.state() == LeaseState::Pending
             {
+                platform::bring_to_front(window.hwnd);
                 match dialogs::show_browser_download(
                     window.hwnd,
                     &self.settings,
