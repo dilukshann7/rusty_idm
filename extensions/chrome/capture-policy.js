@@ -11,7 +11,7 @@ export function classifyDownload(item, observations, preferences, nowMs) {
   // Count unsafe candidates too: a simultaneous POST must make the GET ambiguous.
   const candidates = observations.filter(o => nowMs - o.lastAt <= 30000 && Math.abs(o.startedAt - started) <= 10000 &&
     o.urls?.includes(item.url) && o.urls?.includes(item.finalUrl || item.url) &&
-    (!item.referrer || o.referrer === item.referrer));
+    (!item.referrer || (preferences.referrerDigest && o.referrerDigest === preferences.referrerDigest)));
   if (candidates.length !== 1) return reject('ambiguous_metadata');
   const candidate = candidates[0];
   if (!candidate.allGet || !candidate.headersObserved || candidate.credentials || candidate.incognito || candidate.consumed) return reject('unsafe_request');
@@ -29,7 +29,7 @@ export class Observations {
       const all = (result.requestObservations || []).filter(o => now - o.lastAt <= 30000);
       let chain = all.find(o => o.requestId === details.requestId);
       if (!chain && stage !== 'before') return;
-      if (!chain) { chain = { requestId: details.requestId, urls: [], startedAt: details.timeStamp, lastAt: now, allGet: true, headersObserved: true, credentials: false, incognito: !!details.incognito, referrer: '', hopHeaders: false }; all.push(chain); }
+      if (!chain) { chain = { requestId: details.requestId, urls: [], startedAt: details.timeStamp, lastAt: now, allGet: true, headersObserved: true, credentials: false, incognito: !!details.incognito, referrerDigest: null, hopHeaders: false }; all.push(chain); }
       if (stage === 'before') {
         if (chain.urls.length && !chain.hopHeaders) chain.headersObserved = false;
         chain.hopHeaders = false;
@@ -43,7 +43,7 @@ export class Observations {
         chain.credentials ||= (details.requestHeaders || []).some(h => ['cookie', 'authorization', 'proxy-authorization'].includes(h.name.toLowerCase()));
         const referrer = (details.requestHeaders || []).find(h => h.name.toLowerCase() === 'referer');
         // Referrer is only an exact correlation signal, never sent to the desktop.
-        if (referrer?.value && chain.urls.length === 1) chain.referrer = referrer.value;
+        if (referrer?.value && chain.urls.length === 1) chain.referrerDigest = await fingerprintReferrer(referrer.value);
       }
       chain.lastAt = now;
       await this.storage.set({ requestObservations: all.slice(-64) });
@@ -52,5 +52,8 @@ export class Observations {
   }
   async list() { await this.queue; const r = await this.storage.get('requestObservations'); return (r.requestObservations || []).filter(o => this.now() - o.lastAt <= 30000).map(o => ({ ...o, headersObserved: o.headersObserved && o.hopHeaders })); }
   consume(id) { const operation = async () => { const r = await this.storage.get('requestObservations'); await this.storage.set({ requestObservations: (r.requestObservations || []).map(o => o.requestId === id ? { ...o, consumed: true } : o) }); }; const result = this.queue.then(operation); this.queue = result.catch(() => {}); return result; }
+  clear() { const result = this.queue.then(() => this.storage.remove('requestObservations')); this.queue = result.catch(() => {}); return result; }
   clearExpired() { const operation = async () => { const r = await this.storage.get('requestObservations'); await this.storage.set({ requestObservations: (r.requestObservations || []).filter(o => this.now() - o.lastAt <= 30000) }); }; const result = this.queue.then(operation); this.queue = result.catch(() => {}); return result; }
 }
+
+export async function fingerprintReferrer(value) { const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)); return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, '0')).join(''); }

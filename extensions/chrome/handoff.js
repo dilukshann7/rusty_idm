@@ -24,10 +24,16 @@ export async function finishAccepted(record, reply, browser, native, ledger) {
   try {
     const item = await browser.get(record.downloadId);
     const latest = await ledger.get(record.id); record = { ...record, ...latest };
+    if (record.cancelRequested && item?.state === 'interrupted' && item.error === 'USER_CANCELED') {
+      // A worker may have died after our successful cancel but before the next storage write.
+      await ledger.remove(record.id); return 'accepted';
+    }
     if (!item || item.state !== 'in_progress' || !item.paused || !record.pausedByUs || record.userPaused) {
       if (reply.created_new) await abortCapture(native, record.id);
       await ledger.remove(record.id); return 'continued_in_chrome';
     }
+    record = { ...record, cancelRequested: true };
+    await ledger.put(record);
     await browser.cancel(record.downloadId);
     await ledger.put({ ...record, phase: 'browser_cancelled' });
     await ledger.remove(record.id); return 'accepted';

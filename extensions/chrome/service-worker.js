@@ -1,17 +1,11 @@
-import { classifyDownload, Observations, supportedUrl } from './capture-policy.js';
+import { classifyDownload, Observations, supportedUrl, fingerprintReferrer } from './capture-policy.js';
 import { NativeClient } from './native-client.js';
 import { handoff } from './handoff.js';
 
-class SessionLedger {
-  constructor(storage) { this.storage = storage; this.queue = Promise.resolve(); }
-  transact(action) { const run = async () => { const data = await this.storage.get('captureLedger'); const records = data.captureLedger || {}; const result = await action(records); await this.storage.set({ captureLedger: records }); return result; }; const result = this.queue.then(run); this.queue = result.catch(() => {}); return result; }
-  put(record) { return this.transact(records => { if (!records[record.id] && Object.keys(records).length >= 32) throw Error('Capture queue full'); const previous = records[record.id]; records[record.id] = { ...record, ...(previous?.ownershipLost ? { ownershipLost: true, pausedByUs: false, userPaused: previous.userPaused } : {}) }; }); }
-  get(id) { return this.transact(records => records[id] && structuredClone(records[id])); }
-  list() { return this.transact(records => Object.values(records).map(r => structuredClone(r))); }
-  remove(id) { return this.transact(records => { delete records[id]; }); }
-  update(id, action) { return this.transact(records => { if (records[id]) records[id] = action(records[id]); }); }
-}
-const ledger = new SessionLedger(chrome.storage.session);
+import { SessionLedger, recoverPending } from './recovery.js';
+
+const ledger = new SessionLedger(chrome.storage.session, () => updateAlarm().catch(showFailure));
+const activeIds = new Set();
 const observations = new Observations(chrome.storage.session);
 const browser = { get: async id => (await chrome.downloads.search({ id }))[0], pause: id => chrome.downloads.pause(id), cancel: id => chrome.downloads.cancel(id), resume: id => chrome.downloads.resume(id) };
 const origins = ['http://*/*', 'https://*/*'];
@@ -34,7 +28,7 @@ async function updateAlarm() {
 }
 async function recover() {
   if (recovering) return recovering;
-  recovering = (async () => { await observations.clearExpired(); await updateAlarm(); })();
+  recovering = (async () => { await observations.clearExpired(); const report = await recoverPending(browser, native, ledger, Date.now(), { activeIds }); if (report.needsAttention.length) await showOutcome('needs_attention'); else if (report.resolved.length || report.continued.length) await showOutcome('recovered'); await updateAlarm(); })();
   try { await recovering; } finally { recovering = null; }
 }
 async function ensureMenu() {
@@ -47,10 +41,12 @@ chrome.webRequest.onBeforeSendHeaders.addListener(details => { if (preferences.c
 chrome.downloads.onCreated.addListener(item => {
   void (async () => {
     await loadPreferences();
-    const result = classifyDownload(item, await observations.list(), preferences, Date.now());
+    const referrerDigest = item.referrer ? await fingerprintReferrer(item.referrer) : null;
+    const result = classifyDownload(item, await observations.list(), { ...preferences, referrerDigest }, Date.now());
     if (!result.eligible) return;
     await observations.consume(result.observationId);
-    const outcome = await handoff(item.id, { ...result.request, id: crypto.randomUUID() }, browser, native, ledger);
+    const id = crypto.randomUUID(); activeIds.add(id); let outcome;
+    try { outcome = await handoff(item.id, { ...result.request, id }, browser, native, ledger); } finally { activeIds.delete(id); }
     await showOutcome(outcome); await updateAlarm();
   })().catch(showFailure);
 });
@@ -65,14 +61,15 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== 'rusty-download-link') return;
   void (async () => {
     if (tab?.incognito || !supportedUrl(info.linkUrl)) { await showOutcome('needs_attention'); return; }
-    const outcome = await handoff(null, { id: crypto.randomUUID(), url: info.linkUrl, source: 'context_menu' }, browser, native, ledger);
+    const id = crypto.randomUUID(); activeIds.add(id); let outcome;
+    try { outcome = await handoff(null, { id, url: info.linkUrl, source: 'context_menu' }, browser, native, ledger); } finally { activeIds.delete(id); }
     await showOutcome(outcome); await updateAlarm();
   })().catch(showFailure);
 });
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL('popup.html')) return false;
   const action = async () => {
-    if (message.type === 'capture-preference') { const access = await chrome.permissions.contains({ origins }); await chrome.storage.local.set({ captureEnabled: message.enabled === true && access }); await loadPreferences(); await updateAlarm(); return { ok: true }; }
+    if (message.type === 'capture-preference') { const access = await chrome.permissions.contains({ origins }); await chrome.storage.local.set({ captureEnabled: message.enabled === true && access }); await loadPreferences(); if (!preferences.captureEnabled) await observations.clear(); await updateAlarm(); return { ok: true }; }
     if (message.type === 'recover') { await recover(); return { ok: true }; }
     if (message.type === 'status') {
       await loadPreferences(); let ping;
