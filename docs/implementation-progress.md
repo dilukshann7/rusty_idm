@@ -147,3 +147,15 @@ Formatting and source checks are the permitted verification. Independent
 source review found no blocking duplicate-flow issue. New tests are authored
 but not executed; native replacement, GUI rendering and final compilation
 remain unverified. No build, test, app, fixture or server was launched.
+
+
+## Chrome capture source implementation, 2026-10-19
+
+[Chrome integration](chrome-integration.md) records the new extension, native host,
+secured transport, actor receipts, compact dialog integration and session recovery.
+All eight plan components are implemented in source. Authored Rust/JavaScript/Pester
+tests remain unexecuted. The source verifier covers all four exact workspace
+packages, Rust formatting/parsing, native assets, extension JSON/imports/icons,
+JavaScript syntax and PowerShell parsing. `git diff --check` is also required.
+Compilation, runtime tests, live GUI/Chrome behavior, wrong-user transport attempts
+and registration/unregistration remain Not run; no working binary is claimed.

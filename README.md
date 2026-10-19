@@ -88,5 +88,13 @@ server is needed. Test HTTP fixtures bind loopback and run only within tests.
 - [IDM investigation](docs/idm-investigation.md): historical reference evidence,
   preserved separately from Rusty's implementation.
 
-Durable history, resume after application exit, segmentation, named queues, browser capture, tray
+## Chrome download capture
+
+Source now includes an opt-in Chrome extension, Windows native messaging host,
+secured local pipe, File Info handoff, actor receipts and session recovery.
+See [Chrome setup and validation](docs/chrome-integration.md) for setup commands,
+supported public GET downloads and the unexecuted acceptance matrix.
+Compilation, runtime tests and real browser behavior remain unverified.
+
+Durable history, resume after application exit, segmentation, named queues, tray
 operation, installers and automatic updates remain future milestones.

@@ -549,7 +549,7 @@ impl AppState {
                             .refresh(owner, &self.view, self.category, false);
                     }
                     ABOUT => {
-                        message(Some(owner), "About Rusty", "Rusty Download Manager 0.1\n\nNative Windows controls and single-stream HTTP/HTTPS downloads.\nTwo simultaneous downloads. History lasts for this session.\n\nPause/resume, replacement, queues and browser capture are not available yet.", false);
+                        message(Some(owner), "About Rusty", "Rusty Download Manager 0.1\n\nNative Windows controls and single-stream HTTP/HTTPS downloads.\nTwo simultaneous downloads. History lasts for this session.\n\nPause/resume, speed limits, guarded replacement and opt-in Chrome capture.\nChrome integration requires separate extension/native-host setup.", false);
                     }
                     _ => {}
                 }
