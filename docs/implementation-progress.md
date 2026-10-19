@@ -181,3 +181,15 @@ The registration script ran, its HKCU manifest/origin was read back and verified
 and the installed host returned one valid correlated `ok` ping frame with version
 0.1.0, GUI not running and empty stderr. Automatic capture remains off.
 Unregister, full test suites and actual Chrome download handoff remain unrun.
+
+
+## Download completion dialog, 2026-10-19
+
+Added the compact reference-style modeless completion window, exact byte summary,
+redacted address, saved path, Open/Open with/Open folder/Close and saved opt-out.
+Options can re-enable completion notifications. It triggers only on successful
+completion transitions and can show a subsequent successful retry.
+Windows debug compilation and source checks (59 Rust files) passed. The installed
+GUI was replaced and its hash matched the build output. No test suite, live
+completion/button/persistence exercise or visual comparison was run. See
+[completion behavior](completion-dialog.md).

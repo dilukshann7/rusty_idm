@@ -115,7 +115,26 @@ BEGIN
     CONTROL "&Remember my selection (Options > Downloads)", 2405, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 8, 146, 254, 11
 END
 
-202 DIALOGEX 0, 0, 330, 139
+207 DIALOGEX 0, 0, 348, 170
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
+EXSTYLE WS_EX_CONTROLPARENT
+CAPTION "Download complete"
+FONT 8, "Tahoma"
+BEGIN
+    CONTROL "", 2508, "Static", SS_ICON | SS_CENTERIMAGE, 8, 8, 24, 24
+    LTEXT "Download complete", 2501, 38, 10, 300, 28, SS_NOPREFIX
+    LTEXT "Address", -1, 8, 47, 332, 10
+    EDITTEXT 2502, 8, 60, 332, 15, ES_READONLY | ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "The file saved as", -1, 8, 84, 332, 10
+    EDITTEXT 2503, 8, 97, 332, 15, ES_READONLY | ES_AUTOHSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON "&Open", 2504, 8, 122, 70, 17, WS_TABSTOP
+    PUSHBUTTON "Open &with...", 2505, 88, 122, 70, 17, WS_TABSTOP
+    PUSHBUTTON "Open &folder", 2506, 168, 122, 70, 17, WS_TABSTOP
+    PUSHBUTTON "&Close", IDCANCEL, 270, 122, 70, 17, WS_TABSTOP
+    CONTROL "&Don't show this dialog again", 2507, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 18, 151, 284, 11
+END
+
+202 DIALOGEX 0, 0, 330, 158
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 EXSTYLE WS_EX_CONTROLPARENT
 CAPTION "Options"
@@ -124,13 +143,14 @@ BEGIN
     LTEXT "Default save &folder:", -1, 8, 8, 314, 9
     EDITTEXT 2102, 8, 20, 260, 13, ES_AUTOHSCROLL | WS_TABSTOP
     PUSHBUTTON "&Browse...", 2103, 274, 20, 48, 14, WS_TABSTOP
-    GROUPBOX "Downloads", -1, 8, 42, 314, 61
+    GROUPBOX "Downloads", -1, 8, 42, 314, 80
     CONTROL "&Ask what to do with duplicate links", 2406, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 16, 55, 296, 11
     LTEXT "Otherwise:", 2408, 16, 78, 45, 9
     COMBOBOX 2407, 66, 74, 246, 70, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "Folders and duplicate preferences are remembered.", -1, 8, 109, 314, 10
-    DEFPUSHBUTTON "&Save", IDOK, 220, 121, 48, 14, WS_TABSTOP
-    PUSHBUTTON "Cancel", IDCANCEL, 274, 121, 48, 14, WS_TABSTOP
+    CONTROL "Show the download &complete dialog", 2509, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 16, 103, 296, 11
+    LTEXT "Folders and download preferences are remembered.", -1, 8, 128, 314, 10
+    DEFPUSHBUTTON "&Save", IDOK, 220, 140, 48, 14, WS_TABSTOP
+    PUSHBUTTON "Cancel", IDCANCEL, 274, 140, 48, 14, WS_TABSTOP
 END
 
 203 DIALOGEX 0, 0, 380, 145

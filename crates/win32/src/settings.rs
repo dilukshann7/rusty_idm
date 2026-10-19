@@ -14,6 +14,11 @@ pub struct Settings {
     pub category_destinations: std::collections::BTreeMap<String, PathBuf>,
     #[serde(default)]
     pub duplicate_choice: Option<crate::duplicates::DuplicateChoice>,
+    #[serde(default = "show_completion_by_default")]
+    pub show_completion_dialog: bool,
+}
+fn show_completion_by_default() -> bool {
+    true
 }
 #[derive(Debug)]
 pub struct SettingsError(pub String);
@@ -162,6 +167,7 @@ pub fn defaults() -> Result<Settings, SettingsError> {
             schema_version: 1,
             category_destinations: Default::default(),
             duplicate_choice: None,
+            show_completion_dialog: true,
             default_destination: PathBuf::from(folder),
         })
     }

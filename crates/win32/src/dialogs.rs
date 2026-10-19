@@ -47,6 +47,7 @@ struct Draft {
     remember: bool,
     deferred: bool,
     duplicate_choice: Option<DuplicateChoice>,
+    show_completion_dialog: bool,
 }
 struct Context {
     mode: Mode,
@@ -159,6 +160,7 @@ pub fn show_options(owner: HWND, settings: &Settings) -> Result<Option<Settings>
     let mut draft = Draft {
         path: settings.default_destination.to_string_lossy().into_owned(),
         duplicate_choice: settings.duplicate_choice.clone(),
+        show_completion_dialog: settings.show_completion_dialog,
         ..Default::default()
     };
     loop {
@@ -179,6 +181,7 @@ pub fn show_options(owner: HWND, settings: &Settings) -> Result<Option<Settings>
         let mut updated = settings.clone();
         updated.default_destination = folder;
         updated.duplicate_choice = draft.duplicate_choice;
+        updated.show_completion_dialog = draft.show_completion_dialog;
         return Ok(Some(updated));
     }
 }
@@ -393,6 +396,7 @@ unsafe fn dialog_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                     if let Ok(combo) = item(hwnd, DUPLICATE_ACTION) {
                         platform::send(combo, CB_SETCURSEL, selected, 0);
                     }
+                    set_checked(hwnd, OPTION_COMPLETION, draft.show_completion_dialog);
                     enable_duplicate_action(hwnd);
                 }
             }
@@ -439,6 +443,7 @@ unsafe fn dialog_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                                 result.deferred = id == DOWNLOAD_LATER;
                             }
                             Mode::Options => {
+                                result.show_completion_dialog = checked(hwnd, OPTION_COMPLETION);
                                 result.path = value(hwnd, PATH_EDIT);
                                 result.duplicate_choice = if checked(hwnd, DUPLICATE_ASK) {
                                     None

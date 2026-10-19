@@ -24,8 +24,8 @@ then review Download File Info (category, suggested filename/Save As, Browse,
 remembered category folder and description). Start Download submits immediately.
 Download Later adds a held entry for this session; select it and use
 **Downloads → Start / Resume Download** when ready. Cancelling either dialog submits nothing.
-Only folder and duplicate-link preferences are saved; URLs, authorization and job
-history are not.
+Only folder, duplicate-link and completion-dialog preferences are saved; URLs,
+authorization and job history are not.
 
 Duplicate links open a compact dialog with numbered-copy, overwrite and
 show/resume-existing choices. Remembered choices can be changed under
@@ -89,6 +89,9 @@ server is needed. Test HTTP fixtures bind loopback and run only within tests.
   preserved separately from Rusty's implementation.
 
 ## Chrome download capture
+
+Successful downloads now show a compact [completion dialog](docs/completion-dialog.md)
+with file-opening actions and an optional saved opt-out.
 
 Source now includes an opt-in Chrome extension, Windows native messaging host,
 secured local pipe, File Info handoff, actor receipts and session recovery.

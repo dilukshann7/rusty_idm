@@ -14,6 +14,8 @@ pub mod bridge;
 #[cfg(windows)]
 pub mod browser_integration;
 #[cfg(windows)]
+mod completion;
+#[cfg(windows)]
 mod controls;
 #[cfg(windows)]
 mod details;

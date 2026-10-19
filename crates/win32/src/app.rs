@@ -1,3 +1,4 @@
+use crate::completion::{self, CompletionAction, CompletionWindows};
 use crate::{
     bridge::{self, WakeTarget},
     commands::*,
@@ -171,6 +172,7 @@ struct AppState {
     view: ViewModel,
     controls: Controls,
     details: DetailsWindows,
+    completions: CompletionWindows,
     settings: Settings,
     category: Category,
     lifecycle: Lifecycle,
@@ -391,6 +393,10 @@ impl AppState {
         for event in events {
             match &event {
                 Event::JobChanged(snapshot) => {
+                    let newly_completed = snapshot.state == rusty_engine::JobState::Completed
+                        && self.view.jobs.get(&snapshot.id).map_or(true, |previous| {
+                            previous.state != rusty_engine::JobState::Completed
+                        });
                     if self.lifecycle == Lifecycle::Open {
                         if let Err(error) = self.details.observe(window.hwnd, snapshot) {
                             message(
@@ -402,6 +408,19 @@ impl AppState {
                         }
                     } else {
                         self.details.update(snapshot);
+                    }
+                    if newly_completed
+                        && self.lifecycle == Lifecycle::Open
+                        && self.settings.show_completion_dialog
+                    {
+                        if let Err(error) = self.completions.show(window.hwnd, snapshot) {
+                            message(
+                                Some(window.hwnd),
+                                "Download complete",
+                                &error.to_string(),
+                                false,
+                            );
+                        }
                     }
                 }
                 Event::JobRemoved(id) => self.details.remove(*id),
@@ -445,6 +464,7 @@ impl AppState {
                     }
                 }
             }
+            self.completions.close_all();
             self.details.close_all();
             window.destroy();
         }
@@ -517,6 +537,8 @@ impl AppState {
                         if let Some(settings) = dialogs::show_options(owner, &self.settings)? {
                             settings::save(&settings)?;
                             self.settings = settings;
+                            self.completions
+                                .set_show_again(self.settings.show_completion_dialog);
                         }
                     }
                     STOP if actions.stop => {
@@ -655,6 +677,7 @@ pub fn run() -> Result<(), AppError> {
         view: ViewModel::default(),
         controls,
         details: DetailsWindows::default(),
+        completions: CompletionWindows::default(),
         settings,
         category: Category::All,
         lifecycle: Lifecycle::Open,
@@ -677,6 +700,7 @@ pub fn run() -> Result<(), AppError> {
     }
     drop(pipe);
     drop(app.browser.take());
+    app.completions.close_all();
     app.details.close_all();
     window.destroy();
     // On an exceptional message-loop exit, dropping the sender in join() also
@@ -703,7 +727,7 @@ fn message_loop(window: &MainWindow, app: &mut AppState) -> Result<(), AppError>
         if value == 0 {
             return Ok(());
         }
-        if !app.details.is_dialog_message(&msg) {
+        if !app.details.is_dialog_message(&msg) && !app.completions.is_dialog_message(&msg) {
             let translated = unsafe { TranslateAcceleratorW(window.hwnd, accelerators, &msg) != 0 };
             if !translated && !unsafe { IsDialogMessageW(window.hwnd, &msg).as_bool() } {
                 unsafe {
@@ -725,6 +749,7 @@ fn message_loop(window: &MainWindow, app: &mut AppState) -> Result<(), AppError>
                 message(Some(window.hwnd), "Rusty", &error.to_string(), false);
             }
         }
+        app.completion_actions();
         if window.signals.overflow.replace(false) {
             message(
                 Some(window.hwnd),
@@ -953,5 +978,42 @@ impl AppState {
             }
         }
         Ok(())
+    }
+}
+
+impl AppState {
+    fn completion_actions(&mut self) {
+        let actions = self.completions.take_actions();
+        for action in actions {
+            match action {
+                CompletionAction::Open {
+                    owner,
+                    path,
+                    action,
+                } => {
+                    if let Err(error) = completion::open_completed(owner, &path, action) {
+                        message(
+                            Some(owner),
+                            "Cannot open download",
+                            &error.to_string(),
+                            false,
+                        );
+                    }
+                }
+                CompletionAction::ShowAgain(show) => {
+                    let mut updated = self.settings.clone();
+                    updated.show_completion_dialog = show;
+                    match settings::save(&updated) {
+                        Ok(()) => self.settings = updated,
+                        Err(error) => {
+                            message(None, "Completion preference", &error.to_string(), false);
+                        }
+                    }
+                    self.completions
+                        .set_show_again(self.settings.show_completion_dialog);
+                }
+            }
+        }
+        self.completions.prune();
     }
 }
