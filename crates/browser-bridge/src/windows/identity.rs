@@ -49,7 +49,9 @@ fn sid_text(sid: PSID) -> io::Result<String> {
     unsafe {
         let mut text = PWSTR::null();
         ConvertSidToStringSidW(sid, &mut text).map_err(error)?;
-        let result = text.to_string().map_err(error);
+        let result = text
+            .to_string()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Invalid SID text"));
         LocalFree(Some(HLOCAL(text.0.cast())));
         result
     }

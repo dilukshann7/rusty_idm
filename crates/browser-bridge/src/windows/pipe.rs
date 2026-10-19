@@ -52,10 +52,10 @@ fn create(session: &UserSession, first: bool) -> io::Result<NamedPipeServer> {
         ServerOptions::new()
             .first_pipe_instance(first)
             .reject_remote_clients(true)
-            .max_instances(64)
+            .max_instances(65)
             .create_with_security_attributes_raw(
                 session.pipe_name(),
-                (&mut attributes as *mut _).cast(),
+                (&mut attributes as *mut windows::Win32::Security::SECURITY_ATTRIBUTES).cast(),
             )
     }
 }

@@ -5,6 +5,7 @@ param(
     [Parameter(Mandatory=$true)][string]$GuiExe
 )
 $ErrorActionPreference = 'Stop'
+if ($ExtensionId -cnotmatch '^[a-p]{32}$') { throw 'Supply one exact lowercase Chrome extension ID.' }
 foreach ($binary in @($HostExe, $GuiExe)) {
     if (-not [IO.Path]::IsPathRooted($binary) -or $binary -notmatch '^(?:[a-zA-Z]:[\\/]|\\\\)' -or [IO.Path]::GetExtension($binary) -ne '.exe' -or -not (Test-Path -LiteralPath $binary -PathType Leaf)) { throw 'Supply existing absolute .exe paths for the native host and GUI.' }
 }
@@ -22,7 +23,7 @@ if (Test-Path -LiteralPath $registryPath) {
 }
 if ((Test-Path -LiteralPath $configPath) -or (Test-Path -LiteralPath $manifestPath)) {
     if (-not (Test-Path -LiteralPath $ownerPath)) { throw 'Existing browser files have no Rusty ownership record. Nothing changed.' }
-    $owner = Get-Content -Raw -LiteralPath $ownerPath | ConvertFrom-Json
+    $owner = Get-Content -Raw -Encoding UTF8 -LiteralPath $ownerPath | ConvertFrom-Json
     if ($owner.app -ne 'RustyIDM' -or $owner.schema -ne 1 -or $owner.manifest -ne $manifestPath -or $owner.extension_id -ne $ExtensionId) { throw 'Existing browser files belong to a different registration. Nothing changed.' }
 }
 $manifest = [ordered]@{ name='dev.rusty_idm.chrome'; description='Rusty Download Manager browser bridge'; path=$hostPath; type='stdio'; allowed_origins=@("chrome-extension://$ExtensionId/") } | ConvertTo-Json -Depth 4

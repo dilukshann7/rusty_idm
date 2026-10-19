@@ -38,6 +38,19 @@ impl WakeTarget {
             (self.notify)(hwnd);
         }
     }
+    pub fn wake_browser(&self) {
+        let target = self.target.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(hwnd) = *target {
+            unsafe {
+                let _ = PostMessageW(
+                    Some(HWND(hwnd as *mut _)),
+                    BROWSER_WAKE,
+                    WPARAM(0),
+                    LPARAM(0),
+                );
+            }
+        }
+    }
     /// Serializes against the last PostMessage before the main HWND is destroyed.
     pub fn disable(&self) {
         *self.target.lock().unwrap_or_else(|p| p.into_inner()) = None;

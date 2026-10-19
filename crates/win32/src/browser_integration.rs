@@ -28,12 +28,21 @@ struct State {
     entries: HashMap<RequestId, Entry>,
     inbox: VecDeque<IncomingCapture>,
     activate: bool,
+    presentations: VecDeque<rusty_engine::JobId>,
     closing: bool,
 }
 impl State {
     fn finish(&mut self, id: &RequestId, status: ReplyStatus) {
         if let Some(entry) = self.entries.get_mut(id) {
             if entry.original.is_none() {
+                if let ReplyStatus::Accepted { job_id, .. } = &status {
+                    let job_id = rusty_engine::JobId(*job_id);
+                    if self.presentations.len() < MAX_RECEIPTS
+                        && !self.presentations.contains(&job_id)
+                    {
+                        self.presentations.push_back(job_id);
+                    }
+                }
                 entry.original = Some(status.clone());
                 for waiter in entry.waiters.drain(..) {
                     let _ = waiter.try_send(Reply::new(id.clone(), status.clone()));
@@ -240,6 +249,7 @@ impl BrowserController {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
         let shared = state.clone();
+        let notify = wake.clone();
         let thread = thread::spawn(move || {
             let mut waiting = Vec::new();
             while !flag.load(Ordering::Acquire) {
@@ -305,6 +315,7 @@ impl BrowserController {
                                 .lock()
                                 .unwrap_or_else(|p| p.into_inner())
                                 .finish(id, result.map(receipt).unwrap_or_else(declined));
+                            notify();
                             false
                         }
                         Err(oneshot::error::TryRecvError::Empty) => true,
@@ -414,6 +425,15 @@ impl BrowserController {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .inbox
+            .drain(..)
+            .collect()
+    }
+    pub fn take_presentations(&self) -> Vec<rusty_engine::JobId> {
+        self.router
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .presentations
             .drain(..)
             .collect()
     }

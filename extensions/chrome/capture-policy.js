@@ -22,35 +22,42 @@ export function classifyDownload(item, observations, preferences, nowMs) {
 
 // Header values are never copied. Each redirect hop needs its own observed headers.
 export class Observations {
-  constructor(storage, now = Date.now) { this.storage = storage; this.now = now; this.queue = Promise.resolve(); }
+  constructor(storage, now = Date.now) { this.storage = storage; this.now = now; this.queue = Promise.resolve(); this.pending = 0; this.uncertainUntil = 0; }
   update(details, stage) {
+    if (this.pending >= 128) { this.uncertainUntil = this.now() + 30000; return Promise.resolve(); }
+    // Reduce headers immediately: the queued operation must not retain raw values.
+    const summary = { requestId: details.requestId, url: supportedUrl(details.url) ? details.url : '', method: details.method, timeStamp: details.timeStamp, incognito: !!details.incognito };
+    summary.credentials = (details.requestHeaders || []).some(h => ['cookie', 'authorization', 'proxy-authorization'].includes(h.name.toLowerCase()));
+    const referrer = (details.requestHeaders || []).find(h => h.name.toLowerCase() === 'referer')?.value;
+    const digest = referrer ? fingerprintReferrer(referrer).catch(() => null) : Promise.resolve(null);
+    details = null;
+    this.pending++;
     const operation = async () => {
       const now = this.now(); const result = await this.storage.get('requestObservations');
       const all = (result.requestObservations || []).filter(o => now - o.lastAt <= 30000);
-      let chain = all.find(o => o.requestId === details.requestId);
+      let chain = all.find(o => o.requestId === summary.requestId);
       if (!chain && stage !== 'before') return;
-      if (!chain) { chain = { requestId: details.requestId, urls: [], startedAt: details.timeStamp, lastAt: now, allGet: true, headersObserved: true, credentials: false, incognito: !!details.incognito, referrerDigest: null, hopHeaders: false }; all.push(chain); }
+      if (!chain) { chain = { requestId: summary.requestId, urls: [], startedAt: summary.timeStamp, lastAt: now, allGet: true, headersObserved: true, credentials: false, incognito: summary.incognito, referrerDigest: null, hopHeaders: false }; all.push(chain); }
       if (stage === 'before') {
         if (chain.urls.length && !chain.hopHeaders) chain.headersObserved = false;
         chain.hopHeaders = false;
-        chain.allGet &&= details.method === 'GET';
-        if (!chain.urls.includes(details.url)) chain.urls.push(details.url);
+        chain.allGet &&= summary.method === 'GET';
+        if (!chain.urls.includes(summary.url)) chain.urls.push(summary.url);
         // Reject pathological redirect chains without retaining unbounded URL metadata.
-        if (chain.urls.length > 16 || !supportedUrl(details.url)) { chain.allGet = false; chain.urls = chain.urls.slice(0, 16); }
+        if (chain.urls.length > 16 || !summary.url) { chain.allGet = false; chain.urls = chain.urls.slice(0, 16); }
       }
       if (stage === 'headers') {
         chain.hopHeaders = true;
-        chain.credentials ||= (details.requestHeaders || []).some(h => ['cookie', 'authorization', 'proxy-authorization'].includes(h.name.toLowerCase()));
-        const referrer = (details.requestHeaders || []).find(h => h.name.toLowerCase() === 'referer');
+        chain.credentials ||= summary.credentials;
         // Referrer is only an exact correlation signal, never sent to the desktop.
-        if (referrer?.value && chain.urls.length === 1) chain.referrerDigest = await fingerprintReferrer(referrer.value);
+        if (chain.urls.length === 1) chain.referrerDigest = await digest;
       }
       chain.lastAt = now;
       await this.storage.set({ requestObservations: all.slice(-64) });
     };
-    const result = this.queue.then(operation); this.queue = result.catch(() => {}); return result;
+    const result = this.queue.then(operation).finally(() => { this.pending--; }); this.queue = result.catch(() => { this.uncertainUntil = this.now() + 30000; }); return result;
   }
-  async list() { await this.queue; const r = await this.storage.get('requestObservations'); return (r.requestObservations || []).filter(o => this.now() - o.lastAt <= 30000).map(o => ({ ...o, headersObserved: o.headersObserved && o.hopHeaders })); }
+  async list() { await this.queue; if (this.now() < this.uncertainUntil) return []; const r = await this.storage.get('requestObservations'); return (r.requestObservations || []).filter(o => this.now() - o.lastAt <= 30000).map(o => ({ ...o, headersObserved: o.headersObserved && o.hopHeaders })); }
   consume(id) { const operation = async () => { const r = await this.storage.get('requestObservations'); await this.storage.set({ requestObservations: (r.requestObservations || []).map(o => o.requestId === id ? { ...o, consumed: true } : o) }); }; const result = this.queue.then(operation); this.queue = result.catch(() => {}); return result; }
   clear() { const result = this.queue.then(() => this.storage.remove('requestObservations')); this.queue = result.catch(() => {}); return result; }
   clearExpired() { const operation = async () => { const r = await this.storage.get('requestObservations'); await this.storage.set({ requestObservations: (r.requestObservations || []).filter(o => this.now() - o.lastAt <= 30000) }); }; const result = this.queue.then(operation); this.queue = result.catch(() => {}); return result; }

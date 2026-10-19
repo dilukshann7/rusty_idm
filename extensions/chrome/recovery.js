@@ -43,6 +43,19 @@ export async function recoverPending(browser, native, ledger, nowMs, { activeIds
         else report.needsAttention.push(record.id);
         continue;
       }
+      const item = record.cancelRequested && record.downloadId != null ? await browser.get(record.downloadId) : null;
+      const chromeCancelled = record.cancelRequested && item?.state === 'interrupted' && item.error === 'USER_CANCELED';
+      if (chromeCancelled) {
+        const status = await nativeStatus(native, record.id);
+        if (status.status === 'accepted') { await ledger.remove(record.id); report.resolved.push(record.id); }
+        else { await ledger.put({ ...record, attention: 'rusty_ownership_unconfirmed' }); report.needsAttention.push(record.id); }
+        continue;
+      }
+      if (record.phase === 'fallback_pending') {
+        const outcome = await fallback(record, browser, native, ledger);
+        report[outcome === 'needs_attention' ? 'needsAttention' : 'continued'].push(record.id);
+        continue;
+      }
       const status = await nativeStatus(native, record.id);
       if (status.status === 'pending' && nowMs < record.expiresAtMs) continue;
       const outcome = status.status === 'accepted'

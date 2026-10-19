@@ -629,3 +629,46 @@ fn activate_external(
     bus.publish(Event::JobChanged(job.snapshot.clone()));
     Ok(())
 }
+
+#[cfg(test)]
+mod external_queue_tests {
+    use super::*;
+    #[test]
+    fn queued_command_is_not_an_acknowledgement_and_full_or_closed_queues_reject() {
+        let (sender, receiver) = mpsc::channel(1);
+        let client = EngineClient {
+            sender,
+            closing: Arc::new(AtomicBool::new(false)),
+        };
+        let id = RequestId::parse("12345678-1234-4234-8234-123456789abc").unwrap();
+        let (reply, mut result) = tokio::sync::oneshot::channel();
+        client
+            .try_external(ExternalCommand::Status {
+                id: id.clone(),
+                reply,
+            })
+            .unwrap();
+        assert_eq!(
+            result.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        );
+        let (reply, _rx) = tokio::sync::oneshot::channel();
+        assert_eq!(
+            client.try_external(ExternalCommand::Status {
+                id: id.clone(),
+                reply
+            }),
+            Err(CommandError::QueueFull)
+        );
+        drop(receiver);
+        assert_eq!(
+            result.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+        );
+        let (reply, _rx) = tokio::sync::oneshot::channel();
+        assert_eq!(
+            client.try_external(ExternalCommand::Status { id, reply }),
+            Err(CommandError::Closed)
+        );
+    }
+}

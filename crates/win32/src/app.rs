@@ -228,14 +228,16 @@ impl AppState {
                 updated.duplicate_choice = Some(choice);
                 match settings::save(&updated) {
                     Ok(()) => self.settings = updated,
-                    Err(error) => message(
-                        Some(owner),
-                        "Duplicate preference",
-                        &format!(
-                            "This choice will be used now, but could not be saved.\n\n{error}"
-                        ),
-                        false,
-                    ),
+                    Err(error) => {
+                        message(
+                            Some(owner),
+                            "Duplicate preference",
+                            &format!(
+                                "This choice will be used now, but could not be saved.\n\n{error}"
+                            ),
+                            false,
+                        );
+                    }
                 };
             }
             choice
@@ -636,7 +638,7 @@ pub fn run() -> Result<(), AppError> {
     let controls = Controls::new(window.hwnd)?;
     let engine_wake = wake.clone();
     let engine = spawn_engine(Arc::new(move || engine_wake.wake()));
-    let browser = BrowserController::new(engine.client(), Arc::new(move || wake.wake()));
+    let browser = BrowserController::new(engine.client(), Arc::new(move || wake.wake_browser()));
     let pipe = match PipeServer::start(session, browser.router()) {
         Ok(pipe) => pipe,
         Err(_) => {
@@ -835,7 +837,9 @@ impl AppState {
             );
             match settings::save(&updated) {
                 Ok(()) => self.settings = updated,
-                Err(e) => message(Some(owner), "Download folder", &e.to_string(), false),
+                Err(e) => {
+                    message(Some(owner), "Download folder", &e.to_string(), false);
+                }
             }
         }
     }
@@ -880,7 +884,18 @@ impl AppState {
                 let _ = SetForegroundWindow(window.hwnd);
             }
         }
+        let presentations = browser.take_presentations();
         let captures = browser.drain();
+        if !presentations.is_empty() {
+            self.events(window);
+            if self.lifecycle.accepts_submissions() {
+                for id in presentations {
+                    if let Some(snapshot) = self.view.jobs.get(&id) {
+                        self.details.show_existing(window.hwnd, snapshot)?;
+                    }
+                }
+            }
+        }
         for incoming in captures {
             let id = incoming.capture.id.clone();
             let intent = if self.lifecycle.accepts_submissions()

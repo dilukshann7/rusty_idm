@@ -21,6 +21,7 @@ export async function finishAccepted(record, reply, browser, native, ledger) {
   const status = await nativeStatus(native, record.id);
   if (status.status !== 'accepted' || status.job_id !== reply.job_id || status.created_new !== reply.created_new) return fallback(record, browser, native, ledger);
   if (record.downloadId == null) { await ledger.remove(record.id); return 'accepted'; }
+  let browserCancelled = false;
   try {
     const item = await browser.get(record.downloadId);
     const latest = await ledger.get(record.id); record = { ...record, ...latest };
@@ -35,9 +36,17 @@ export async function finishAccepted(record, reply, browser, native, ledger) {
     record = { ...record, cancelRequested: true };
     await ledger.put(record);
     await browser.cancel(record.downloadId);
+    browserCancelled = true;
     await ledger.put({ ...record, phase: 'browser_cancelled' });
     await ledger.remove(record.id); return 'accepted';
   } catch {
+    // Once Chrome cancellation succeeded, responsibility must stay with Rusty
+    // even if a later storage operation fails. The pre-cancel record survives.
+    if (browserCancelled) return 'needs_attention';
+    if (record.cancelRequested) {
+      try { const current = await browser.get(record.downloadId); if (current?.state === 'interrupted' && current.error === 'USER_CANCELED') return 'needs_attention'; }
+      catch { return 'needs_attention'; }
+    }
     if (reply.created_new) await abortCapture(native, record.id);
     return fallback(record, browser, native, ledger, { keepAttention: true });
   }
@@ -50,21 +59,27 @@ export async function handoff(downloadId, request, browser, native, ledger, now 
   let record = { id, downloadId, phase: 'offered', pausedByUs: false, expiresAtMs };
   await ledger.put(record);
   if (downloadId != null) {
+    let pauseConfirmed = false;
     try {
       const item = await browser.get(downloadId);
       if (!item || item.state !== 'in_progress' || item.paused) { await ledger.remove(id); return 'continued_in_chrome'; }
       await browser.pause(downloadId);
+      pauseConfirmed = true;
       const latest = await ledger.get(id);
       record = { ...record, ...latest, phase: 'paused', pausedByUs: !latest?.userPaused };
       await ledger.put(record);
       const paused = await browser.get(downloadId);
       if (!paused || paused.state !== 'in_progress' || !paused.paused || !record.pausedByUs) return fallback(record, browser, native, ledger);
-    } catch { await ledger.remove(id); return 'continued_in_chrome'; }
+    } catch {
+      if (pauseConfirmed) return fallback({ ...record, pausedByUs: !record.ownershipLost }, browser, native, ledger);
+      await ledger.remove(id); return 'continued_in_chrome';
+    }
   }
   if (now() >= expiresAtMs) return fallback(record, browser, native, ledger);
   record = { ...record, phase: 'pending' }; await ledger.put(record);
   let reply;
-  try { reply = await native.send({ id, op: 'capture', payload: { ...request, id: undefined, expires_at_ms: expiresAtMs } }); }
+  const { id: envelopeId, expires_at_ms: originalDeadline, ...payload } = request;
+  try { reply = await native.send({ id, op: 'capture', payload: { ...payload, expires_at_ms: expiresAtMs } }); }
   catch { reply = await nativeStatus(native, id); }
   if (reply.status === 'accepted') return finishAccepted(record, reply, browser, native, ledger);
   if (reply.status === 'pending' && now() < expiresAtMs) return 'needs_attention';

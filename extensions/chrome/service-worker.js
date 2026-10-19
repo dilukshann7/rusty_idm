@@ -81,7 +81,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
   };
   action().then(respond, () => respond({ ok: false })); return true;
 });
-chrome.permissions.onRemoved.addListener(() => { void loadPreferences().then(updateAlarm).catch(showFailure); });
+chrome.permissions.onRemoved.addListener(() => { void loadPreferences().then(async () => { if (!preferences.captureEnabled) await observations.clear(); await updateAlarm(); }).catch(showFailure); });
 chrome.runtime.onInstalled.addListener(() => { void ensureMenu().then(loadPreferences).then(recover).catch(showFailure); });
 chrome.runtime.onStartup.addListener(() => { void loadPreferences().then(recover).catch(showFailure); });
 chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === 'rusty-handoff-recovery') void recover().catch(showFailure); });

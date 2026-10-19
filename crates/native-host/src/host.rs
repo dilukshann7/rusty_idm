@@ -40,7 +40,7 @@ pub fn run_host<R: Read + Send, W: Write + Send>(
             Ok(())
         });
         let active = Arc::new(AtomicUsize::new(0));
-        let launch = Arc::new(Mutex::new(false));
+        let launch = Arc::new(Mutex::new((None::<std::process::Child>, None::<Instant>)));
         let mut workers = Vec::new();
         let mut input_error = None;
         loop {
@@ -83,7 +83,7 @@ pub fn run_host<R: Read + Send, W: Write + Send>(
                     let mut client = match PipeClient::connect(&session, Duration::from_millis(100))
                     {
                         Ok(client) => client,
-                        Err(_) if ping => {
+                        Err(e) if ping && matches!(e.raw_os_error(), Some(2 | 231)) => {
                             tx.send(Reply::new(
                                 id.clone(),
                                 ReplyStatus::Ok {
@@ -94,13 +94,33 @@ pub fn run_host<R: Read + Send, W: Write + Send>(
                             .map_err(|_| std::io::Error::other("Output closed"))?;
                             return Ok(());
                         }
-                        Err(_) => {
+                        Err(e) if matches!(e.raw_os_error(), Some(2 | 231)) => {
+                            if matches!(
+                                operation,
+                                Operation::Status { .. } | Operation::Abort { .. }
+                            ) {
+                                tx.send(Reply::new(id.clone(), ReplyStatus::Unknown))
+                                    .map_err(|_| std::io::Error::other("Output closed"))?;
+                                return Ok(());
+                            }
+                            if !matches!(operation, Operation::Capture(_)) {
+                                return Err(e);
+                            }
                             {
                                 let mut launched = launch.lock().unwrap_or_else(|p| p.into_inner());
-                                if !*launched {
+                                let running = match launched.0.as_mut() {
+                                    Some(child) => child.try_wait()?.is_none(),
+                                    None => false,
+                                };
+                                let recent = launched
+                                    .1
+                                    .is_some_and(|last| last.elapsed() < Duration::from_secs(10));
+                                if !running && !recent {
                                     use std::os::windows::process::CommandExt;
-                                    gui_command(&config).creation_flags(0x08000000).spawn()?;
-                                    *launched = true;
+                                    launched.0 = Some(
+                                        gui_command(&config).creation_flags(0x08000000).spawn()?,
+                                    );
+                                    launched.1 = Some(Instant::now());
                                 }
                             }
                             PipeClient::connect(
@@ -108,6 +128,7 @@ pub fn run_host<R: Read + Send, W: Write + Send>(
                                 Duration::from_secs(10).saturating_sub(start.elapsed()),
                             )?
                         }
+                        Err(e) => return Err(e),
                     };
                     let replies = client.request(operation)?;
                     loop {

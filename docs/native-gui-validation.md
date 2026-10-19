@@ -231,3 +231,9 @@ packages, Rust formatting/parsing, native assets, extension JSON/imports/icons,
 JavaScript syntax and PowerShell parsing. `git diff --check` is also required.
 Compilation, runtime tests, live GUI/Chrome behavior, wrong-user transport attempts
 and registration/unregistration remain Not run; no working binary is claimed.
+
+Final source checks passed for 58 Rust files and all four workspace packages.
+The partial independent GPT-6.1 Sol review identified type/concurrency issues;
+corrections and regression tests were authored, followed by author source review.
+The independent review ended at a usage limit. Runtime RED/GREEN, the full test
+suite, compiled binaries and live Chrome/setup acceptance remain Not run.

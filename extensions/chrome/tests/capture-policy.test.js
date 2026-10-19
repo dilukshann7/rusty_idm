@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyDownload } from '../capture-policy.js';
+import { classifyDownload, Observations } from '../capture-policy.js';
 const now = 100000;
 const item = { id: 1, url: 'https://example.org/a', finalUrl: 'https://example.org/a', state: 'in_progress', danger: 'safe', paused: false, incognito: false, referrer: '', startTime: new Date(now).toISOString(), filename: 'C:\\Downloads\\a.zip' };
 const chain = { requestId: 'one', urls: [item.url], startedAt: now, lastAt: now, allGet: true, headersObserved: true, credentials: false, referrer: '' };
@@ -17,4 +17,14 @@ test('queries_are_preserved_and_paths_are_not_filename_hints', () => {
   const url = 'https://example.org/a?signature=private';
   const result = classify({ ...item, url, finalUrl: url }, [{ ...chain, urls: [url] }]);
   assert.equal(result.request.url, url); assert.equal(result.request.filename_hint, 'a.zip');
+});
+test('observation_backpressure_fails_open_and_never_stores_credential_values', async () => {
+  let stored = {}; const storage = { async get() { return structuredClone(stored); }, async set(value) { stored = structuredClone(value); } };
+  const observations = new Observations(storage, () => now);
+  const jobs = [];
+  for (let i = 0; i < 130; i++) jobs.push(observations.update({ requestId: String(i), url: item.url, method: 'GET', timeStamp: now }, 'before'));
+  await Promise.all(jobs);
+  assert.deepEqual(await observations.list(), []);
+  await observations.update({ requestId: '1', requestHeaders: [{ name: 'Cookie', value: 'secret-cookie' }] }, 'headers');
+  assert.equal(JSON.stringify(stored).includes('secret-cookie'), false);
 });

@@ -20,3 +20,27 @@ test('expired_prompt_cannot_submit_later', async () => { const f = fixture({ sta
 test('two_simultaneous_requests_remain_distinct', async () => { const f = fixture({ status: 'unknown' }); const id = '12345678-1234-4234-8234-123456789abd'; f.data.set(id, { ...f.record, id, downloadId: 2 }); const r = await recoverPending(f.browser, f.native, f.ledger, 100); assert.equal(new Set(r.continued).size, 2); });
 test('completed_browser_files_are_kept_and_existing_jobs_are_not_aborted', async () => { const f = fixture({ complete: true, createdNew: false }); await recoverPending(f.browser, f.native, f.ledger, 100); assert.equal(f.calls.includes('cancel'), false); assert.equal(f.calls.includes('abort'), false); });
 test('session_ledger_serializes_simultaneous_writes', async () => { let value = {}; const ledger = new SessionLedger({ async get() { return structuredClone(value); }, async set(v) { value = structuredClone(v); } }); await Promise.all([ledger.put({ id: 'one' }), ledger.put({ id: 'two' })]); assert.equal((await ledger.list()).length, 2); });
+test('cancelled_chrome_copy_never_causes_owned_job_abort_on_disconnect', async () => {
+  const f = fixture({ unreachable: true });
+  Object.assign(f.record, { cancelRequested: true, phase: 'accepted', receipt: { job_id: 4, created_new: true } });
+  Object.assign(f.item, { state: 'interrupted', paused: false, error: 'USER_CANCELED' });
+  const report = await recoverPending(f.browser, f.native, f.ledger, 100);
+  assert.equal(f.calls.includes('abort'), false); assert.equal(f.data.size, 1); assert.deepEqual(report.needsAttention, [f.record.id]);
+});
+test('worker_restart_after_cancel_keeps_the_accepted_rusty_job', async () => {
+  const f = fixture(); Object.assign(f.record, { cancelRequested: true, phase: 'accepted' });
+  Object.assign(f.item, { state: 'interrupted', paused: false, error: 'USER_CANCELED' });
+  const report = await recoverPending(f.browser, f.native, f.ledger, 100);
+  assert.equal(f.calls.includes('abort'), false); assert.equal(f.calls.includes('cancel'), false); assert.deepEqual(report.resolved, [f.record.id]);
+});
+test('a_fallback_decision_is_not_reversed_by_an_existing_job_receipt', async () => {
+  const f = fixture({ createdNew: false }); f.record.phase = 'fallback_pending';
+  const report = await recoverPending(f.browser, f.native, f.ledger, 100);
+  assert.equal(f.calls.includes('cancel'), false); assert.equal(f.item.paused, false); assert.deepEqual(report.continued, [f.record.id]);
+});
+test('cancelled_browser_copy_is_preserved_even_when_the_record_was_in_fallback', async () => {
+  const f = fixture({ unreachable: true }); Object.assign(f.record, { cancelRequested: true, phase: 'fallback_pending' });
+  Object.assign(f.item, { state: 'interrupted', paused: false, error: 'USER_CANCELED' });
+  const report = await recoverPending(f.browser, f.native, f.ledger, 100);
+  assert.equal(f.calls.includes('abort'), false); assert.deepEqual(report.needsAttention, [f.record.id]);
+});
