@@ -121,3 +121,16 @@ files, workspace manifests/lock, manifest XML, resource IDs and handoff links.
 There are 42 written Rust test cases; none were executed by the agent. The final
 source passed rustfmt parsing/formatting after the diagnostic corrections. No
 compiler/test/app/server command was launched to establish a passing runtime result.
+
+## Duplicate links and approved overwrite, 2026-10-19
+
+The user's duplicate-dialog reference supersedes the initial replacement
+deferral. [Duplicate handling](duplicate-downloads.md) records the compact dialog,
+three real choices, persistent preference, private lookup index, serialized
+restart and guarded Windows backup/commit/rollback implementation. Retained
+original backups are included in details and shutdown recovery reports.
+
+Formatting and source checks are the permitted verification. Independent
+source review found no blocking duplicate-flow issue. New tests are authored
+but not executed; native replacement, GUI rendering and final compilation
+remain unverified. No build, test, app, fixture or server was launched.

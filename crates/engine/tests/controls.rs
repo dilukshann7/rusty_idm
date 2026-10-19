@@ -236,12 +236,13 @@ fn paused_job_releases_slot_and_resume_waits_its_turn_then_shutdown_cleans_all()
     let dir = tempfile::tempdir().unwrap();
     let engine = spawn_engine(Arc::new(|| {}));
     for id in 1..=3 {
-        let request = validate_request(
+        let mut request = validate_request(
             &fixture.url,
             dir.path().join(format!("{id}.bin")),
             ReplacementPolicy::Deny,
         )
         .unwrap();
+        request.allow_duplicate = true;
         engine.try_send(Command::Submit(request)).unwrap();
         engine
             .try_send(Command::SetSpeedLimit(JobId(id), Some(1024)))

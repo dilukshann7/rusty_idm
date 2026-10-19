@@ -12,6 +12,8 @@ pub struct Settings {
     pub default_destination: PathBuf,
     #[serde(default)]
     pub category_destinations: std::collections::BTreeMap<String, PathBuf>,
+    #[serde(default)]
+    pub duplicate_choice: Option<crate::duplicates::DuplicateChoice>,
 }
 #[derive(Debug)]
 pub struct SettingsError(pub String);
@@ -159,6 +161,7 @@ pub fn defaults() -> Result<Settings, SettingsError> {
         Ok(Settings {
             schema_version: 1,
             category_destinations: Default::default(),
+            duplicate_choice: None,
             default_destination: PathBuf::from(folder),
         })
     }

@@ -1,6 +1,23 @@
 use super::*;
 
 #[test]
+fn duplicate_matching_ignores_fragment_but_preserves_query_and_authorization() {
+    let make = |url| {
+        validate_request(
+            url,
+            PathBuf::from("C:/Downloads/file.bin"),
+            ReplacementPolicy::Deny,
+        )
+        .unwrap()
+    };
+    let a = make("https://example.com/file?token=one#chapter");
+    assert!(a.same_source(&make("https://example.com/file?token=one#different")));
+    assert!(!a.same_source(&make("https://example.com/file?token=two")));
+    assert!(!a.same_source(&a.clone().with_authorization("user".into(), "secret".into())));
+    assert!(!format!("{a:?}").contains("token=one"));
+}
+
+#[test]
 fn cancel_waiting_is_terminal() {
     assert_eq!(
         transition(JobState::Waiting, StateAction::Cancel).unwrap(),

@@ -1,4 +1,4 @@
-use crate::{JobId, JobSnapshot};
+use crate::{DownloadRequest, JobId, JobSnapshot};
 use std::{
     collections::BTreeMap,
     sync::{
@@ -25,6 +25,8 @@ struct Queue {
     jobs: BTreeMap<JobId, Pending>,
     error: Option<String>,
     shutdown: bool,
+    // Private requests never leave the engine; snapshots expose no credentials.
+    known: BTreeMap<JobId, (DownloadRequest, Option<JobSnapshot>)>,
 }
 pub(crate) struct EventBus {
     queue: Mutex<Queue>,
@@ -32,6 +34,36 @@ pub(crate) struct EventBus {
     wake: Arc<dyn Fn() + Send + Sync>,
 }
 impl EventBus {
+    pub fn register_request(&self, id: JobId, request: &DownloadRequest) {
+        self.queue
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .known
+            .insert(id, (request.clone(), None));
+    }
+    pub fn find_duplicate(&self, request: &DownloadRequest) -> Option<JobSnapshot> {
+        self.queue
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .known
+            .values()
+            .rev()
+            .find_map(|(existing, snapshot)| {
+                existing
+                    .same_source(request)
+                    .then(|| snapshot.clone())
+                    .flatten()
+            })
+    }
+    pub fn destinations(&self) -> Vec<std::path::PathBuf> {
+        self.queue
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .known
+            .values()
+            .map(|(request, _)| request.destination.clone())
+            .collect()
+    }
     pub fn new(wake: Arc<dyn Fn() + Send + Sync>) -> Self {
         Self {
             queue: Mutex::new(Queue::default()),
@@ -44,6 +76,9 @@ impl EventBus {
             let mut queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
             match event {
                 Event::JobChanged(snapshot) => {
+                    if let Some((_, latest)) = queue.known.get_mut(&snapshot.id) {
+                        *latest = Some(snapshot.clone());
+                    }
                     let slot = queue.jobs.entry(snapshot.id).or_default();
                     if snapshot.state.is_terminal() {
                         slot.latest = None;
@@ -53,6 +88,7 @@ impl EventBus {
                     }
                 }
                 Event::JobRemoved(id) => {
+                    queue.known.remove(&id);
                     queue.jobs.entry(id).or_default().removed = true;
                 }
                 Event::CommandRejected { message } => queue.error = Some(message),

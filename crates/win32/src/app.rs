@@ -4,6 +4,7 @@ use crate::{
     controls::{scale, Controls},
     details::DetailsWindows,
     dialogs,
+    duplicates::{self, DuplicateChoice},
     lifecycle::Lifecycle,
     platform::{self, message, resource, ComApartment},
     presenter::{Category, ViewModel},
@@ -165,6 +166,157 @@ struct AppState {
     recovery_reported: bool,
 }
 impl AppState {
+    fn resolve_duplicate(
+        &mut self,
+        window: &MainWindow,
+        download: &mut dialogs::AddedDownload,
+    ) -> Result<bool, AppError> {
+        let owner = window.hwnd;
+        // Modal dialog callbacks only enqueue signals. Drain completed transfers
+        // now so decisions use the engine's latest entry, not a stale row.
+        self.events(window);
+        if !self.lifecycle.accepts_submissions() {
+            return Ok(false);
+        }
+        let existing = self
+            .engine
+            .as_ref()
+            .and_then(|engine| engine.find_duplicate(&download.request));
+        let disk = match rusty_engine::inspect_destination(&download.request.destination) {
+            Ok(identity) => identity,
+            Err(error) => {
+                message(Some(owner), "Cannot use destination", &error.message, false);
+                return Ok(false);
+            }
+        };
+        let in_use = self.view.jobs.values().any(|job| {
+            job.state.is_active()
+                && duplicates::same_destination(&job.destination, &download.request.destination)
+        });
+        if existing.is_none() && disk.is_none() && !in_use {
+            return Ok(true);
+        }
+        let choice = if let Some(choice) = self.settings.duplicate_choice {
+            choice
+        } else {
+            let Some((choice, remember)) = dialogs::show_duplicate(
+                owner,
+                &download.request.display_url(),
+                DuplicateChoice::Existing,
+            )?
+            else {
+                return Ok(false);
+            };
+            if remember {
+                let mut updated = self.settings.clone();
+                updated.duplicate_choice = Some(choice);
+                match settings::save(&updated) {
+                    Ok(()) => self.settings = updated,
+                    Err(error) => message(
+                        Some(owner),
+                        "Duplicate preference",
+                        &format!(
+                            "This choice will be used now, but could not be saved.\n\n{error}"
+                        ),
+                        false,
+                    ),
+                };
+            }
+            choice
+        };
+        self.events(window);
+        if !self.lifecycle.accepts_submissions() {
+            return Ok(false);
+        }
+        match choice {
+            DuplicateChoice::Numbered => {
+                let reserved = self
+                    .engine
+                    .as_ref()
+                    .map(EngineHandle::destinations)
+                    .unwrap_or_default();
+                match duplicates::numbered_destination(&download.request.destination, &reserved) {
+                    Ok(path) => {
+                        download.request.destination = path;
+                        download.request.allow_duplicate = true;
+                        download.request.replacement = rusty_engine::ReplacementPolicy::Deny;
+                        Ok(true)
+                    }
+                    Err(error) => {
+                        message(
+                            Some(owner),
+                            "Cannot number filename",
+                            &error.to_string(),
+                            false,
+                        );
+                        Ok(false)
+                    }
+                }
+            }
+            DuplicateChoice::Overwrite if existing.is_some() => {
+                let existing = existing.expect("matched existing entry");
+                self.command(owner, Command::Restart(existing.id));
+                // The actor serializes restart after cancellation/cleanup and
+                // reopens status with the new attempt; don't display stale completion.
+                Ok(false)
+            }
+            DuplicateChoice::Overwrite => {
+                if self.view.jobs.values().any(|job| {
+                    job.state.is_active()
+                        && duplicates::same_destination(
+                            &job.destination,
+                            &download.request.destination,
+                        )
+                }) {
+                    message(Some(owner), "Filename in use", "Another active download uses this filename. Stop it first, or choose a numbered copy.", false);
+                    return Ok(false);
+                }
+                download.request.replacement =
+                    match rusty_engine::inspect_destination(&download.request.destination) {
+                        Ok(Some(identity)) => rusty_engine::ReplacementPolicy::Approved(identity),
+                        Ok(None) => rusty_engine::ReplacementPolicy::Deny,
+                        Err(error) => {
+                            message(Some(owner), "Cannot replace file", &error.message, false);
+                            return Ok(false);
+                        }
+                    };
+                download.request.allow_duplicate = true;
+                Ok(true)
+            }
+            DuplicateChoice::Existing => {
+                if let Some(existing) = existing {
+                    let latest = self
+                        .engine
+                        .as_ref()
+                        .and_then(|engine| engine.find_duplicate(&download.request))
+                        .unwrap_or(existing);
+                    if latest.state == rusty_engine::JobState::Completed
+                        && !latest.destination.is_file()
+                    {
+                        self.command(owner, Command::Restart(latest.id));
+                    } else {
+                        if !latest.state.is_terminal() || latest.state.can_retry() {
+                            self.command(owner, Command::Activate(latest.id));
+                        }
+                        self.details.show_existing(owner, &latest)?;
+                    }
+                } else if download.request.destination.is_file() {
+                    message(
+                        Some(owner),
+                        "Download complete",
+                        &format!(
+                            "The file is already available.\n\n{}",
+                            download.request.destination.display()
+                        ),
+                        false,
+                    );
+                } else {
+                    message(Some(owner), "Filename in use", "Another download is using this filename. Choose a numbered copy to add this link.", false);
+                }
+                Ok(false)
+            }
+        }
+    }
     fn command(&self, owner: HWND, command: Command) -> bool {
         if let Some(engine) = &self.engine {
             if let Err(error) = engine.try_send(command) {
@@ -311,7 +463,12 @@ impl AppState {
                 let actions = self.view.actions(selected);
                 match id {
                     ADD => {
-                        if let Some(download) = dialogs::show_add_download(owner, &self.settings)? {
+                        if let Some(mut download) =
+                            dialogs::show_add_download(owner, &self.settings)?
+                        {
+                            if !self.resolve_duplicate(window, &mut download)? {
+                                return Ok(());
+                            }
                             let category = download
                                 .request
                                 .category

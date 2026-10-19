@@ -24,7 +24,16 @@ then review Download File Info (category, suggested filename/Save As, Browse,
 remembered category folder and description). Start Download submits immediately.
 Download Later adds a held entry for this session; select it and use
 **Downloads → Start / Resume Download** when ready. Cancelling either dialog submits nothing.
-Only folder preferences are saved; URLs, authorization and job history are not.
+Only folder and duplicate-link preferences are saved; URLs, authorization and job
+history are not.
+
+Duplicate links open a compact dialog with numbered-copy, overwrite and
+show/resume-existing choices. Remembered choices can be changed under
+**Options → Downloads**. Numbered filenames avoid both files on disk and reserved
+download destinations. Duplicate matching retains query/auth distinctions;
+the dialog shows a sanitized address. Duplicate preferences also persist, while
+the list and matching history remain session-only. See
+[duplicate handling](docs/duplicate-downloads.md) for behavior and verification.
 
 A compact download-status dialog opens automatically for each transfer attempt,
 with percentage/filename title, aligned status fields, native progress, tabs and

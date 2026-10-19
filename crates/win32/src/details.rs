@@ -55,6 +55,15 @@ pub struct DetailsWindows {
     attempts: AutoOpenTracker,
 }
 impl DetailsWindows {
+    pub fn show_existing(&mut self, owner: HWND, snapshot: &JobSnapshot) -> Result<(), AppError> {
+        if let Some(detail) = self.windows.get(&snapshot.id) {
+            detail.close_on_completion.set(false);
+            if let Ok(checkbox) = item(detail.hwnd.get(), COMPLETION_CLOSE) {
+                send(checkbox, BM_SETCHECK, BST_UNCHECKED.0 as usize, 0);
+            }
+        }
+        self.show_or_update(owner, snapshot)
+    }
     pub fn observe(&mut self, owner: HWND, snapshot: &JobSnapshot) -> Result<(), AppError> {
         if self.attempts.should_open(snapshot) {
             self.show_or_update(owner, snapshot)?;

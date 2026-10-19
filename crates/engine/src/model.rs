@@ -52,13 +52,22 @@ pub struct DownloadRequest {
     pub category: Option<String>,
     pub description: String,
     pub(crate) authorization: Option<Authorization>,
+    /// Set only after the caller explicitly chooses an additional copy.
+    pub allow_duplicate: bool,
 }
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Authorization {
     pub login: String,
     pub password: String,
 }
 impl DownloadRequest {
+    pub fn same_source(&self, other: &Self) -> bool {
+        let mut a = self.url.clone();
+        let mut b = other.url.clone();
+        a.set_fragment(None);
+        b.set_fragment(None);
+        a == b && self.authorization == other.authorization
+    }
     pub fn source_host(&self) -> &str {
         self.url.host_str().unwrap_or("")
     }
@@ -293,6 +302,7 @@ pub fn validate_request(
         category: None,
         description: String::new(),
         authorization: None,
+        allow_duplicate: false,
     })
 }
 

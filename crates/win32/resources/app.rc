@@ -98,7 +98,24 @@ BEGIN
     PUSHBUTTON "Cancel", IDCANCEL, 214, 130, 70, 14, WS_TABSTOP
 END
 
-202 DIALOGEX 0, 0, 330, 74
+206 DIALOGEX 0, 0, 270, 165
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+EXSTYLE WS_EX_CONTROLPARENT
+CAPTION "Duplicate download link"
+FONT 8, "Tahoma"
+BEGIN
+    EDITTEXT 2401, 8, 8, 254, 14, ES_READONLY | ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "This download link is already in the download list.", -1, 8, 30, 254, 10
+    LTEXT "Please choose what you want to do:", -1, 8, 42, 254, 10
+    CONTROL "Add the duplicate with a &numbered filename", 2402, "Button", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 12, 60, 246, 12
+    CONTROL "&Overwrite the existing download", 2403, "Button", BS_AUTORADIOBUTTON | WS_TABSTOP, 12, 78, 246, 12
+    CONTROL "If the existing download is &complete, show it;\notherwise, resume it", 2404, "Button", BS_AUTORADIOBUTTON | BS_MULTILINE | WS_TABSTOP, 12, 94, 246, 24
+    DEFPUSHBUTTON "OK", IDOK, 151, 123, 50, 14, WS_GROUP | WS_TABSTOP
+    PUSHBUTTON "Cancel", IDCANCEL, 210, 123, 50, 14, WS_TABSTOP
+    CONTROL "&Remember my selection (Options > Downloads)", 2405, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 8, 146, 254, 11
+END
+
+202 DIALOGEX 0, 0, 330, 139
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 EXSTYLE WS_EX_CONTROLPARENT
 CAPTION "Options"
@@ -107,9 +124,13 @@ BEGIN
     LTEXT "Default save &folder:", -1, 8, 8, 314, 9
     EDITTEXT 2102, 8, 20, 260, 13, ES_AUTOHSCROLL | WS_TABSTOP
     PUSHBUTTON "&Browse...", 2103, 274, 20, 48, 14, WS_TABSTOP
-    LTEXT "Folders are remembered; history lasts for this session.", -1, 8, 40, 314, 10
-    DEFPUSHBUTTON "&Save", IDOK, 220, 56, 48, 14, WS_TABSTOP
-    PUSHBUTTON "Cancel", IDCANCEL, 274, 56, 48, 14, WS_TABSTOP
+    GROUPBOX "Downloads", -1, 8, 42, 314, 61
+    CONTROL "&Ask what to do with duplicate links", 2406, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 16, 55, 296, 11
+    LTEXT "Otherwise:", 2408, 16, 78, 45, 9
+    COMBOBOX 2407, 66, 74, 246, 70, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT "Folders and duplicate preferences are remembered.", -1, 8, 109, 314, 10
+    DEFPUSHBUTTON "&Save", IDOK, 220, 121, 48, 14, WS_TABSTOP
+    PUSHBUTTON "Cancel", IDCANCEL, 274, 121, 48, 14, WS_TABSTOP
 END
 
 203 DIALOGEX 0, 0, 380, 145

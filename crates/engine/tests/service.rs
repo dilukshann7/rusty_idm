@@ -50,12 +50,15 @@ impl TransferExecutor for Held {
     }
 }
 fn request(name: impl Into<std::path::PathBuf>) -> DownloadRequest {
-    validate_request(
+    let mut request = validate_request(
         "https://example.com/file",
         name.into(),
         ReplacementPolicy::Deny,
     )
-    .unwrap()
+    .unwrap();
+    // These admission tests deliberately submit independent copies of one URL.
+    request.allow_duplicate = true;
+    request
 }
 fn collect_until(engine: &EngineHandle, check: impl Fn(&[Event]) -> bool) -> Vec<Event> {
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -68,6 +71,123 @@ fn collect_until(engine: &EngineHandle, check: impl Fn(&[Event]) -> bool) -> Vec
         assert!(Instant::now() < deadline, "event deadline: {events:?}");
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+#[test]
+fn duplicate_lookup_stays_current_after_drain_and_default_submission_is_not_duplicated() {
+    let dir = tempfile::tempdir().unwrap();
+    let started = Arc::new(AtomicUsize::new(0));
+    let engine = spawn_engine_with_executor(
+        Arc::new(|| {}),
+        Arc::new(Held {
+            started: started.clone(),
+            cleanup_gate: None,
+        }),
+    );
+    let mut first = request(dir.path().join("first.bin"));
+    first.allow_duplicate = false;
+    engine.try_send(Command::Submit(first.clone())).unwrap();
+    collect_until(&engine, |events| {
+        events
+            .iter()
+            .any(|e| matches!(e, Event::JobChanged(s) if s.state == JobState::Running))
+    });
+    assert_eq!(engine.find_duplicate(&first).unwrap().id, JobId(1));
+    let mut duplicate = first.clone();
+    duplicate.destination = dir.path().join("other.bin");
+    engine.try_send(Command::Submit(duplicate.clone())).unwrap();
+    collect_until(&engine, |events| {
+        events
+            .iter()
+            .any(|e| matches!(e, Event::CommandRejected { .. }))
+    });
+    assert_eq!(started.load(Ordering::SeqCst), 1);
+    assert_eq!(engine.destinations(), vec![first.destination.clone()]);
+    engine.try_send(Command::Activate(JobId(1))).unwrap();
+    engine.try_send(Command::Remove(JobId(1))).unwrap();
+    collect_until(&engine, |events| {
+        events
+            .iter()
+            .any(|e| matches!(e, Event::JobRemoved(JobId(1))))
+    });
+    assert!(engine.find_duplicate(&duplicate).is_none());
+    engine.try_send(Command::Shutdown).unwrap();
+    collect_until(&engine, |events| {
+        events.iter().any(|e| matches!(e, Event::ShutdownComplete))
+    });
+    engine.join().unwrap();
+}
+
+#[test]
+fn overwrite_running_entry_restarts_same_id_only_after_cleanup() {
+    let dir = tempfile::tempdir().unwrap();
+    let started = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let engine = spawn_engine_with_executor(
+        Arc::new(|| {}),
+        Arc::new(Held {
+            started: started.clone(),
+            cleanup_gate: Some(gate.clone()),
+        }),
+    );
+    let original = request(dir.path().join("file.bin"));
+    engine.try_send(Command::Submit(original.clone())).unwrap();
+    collect_until(&engine, |_| started.load(Ordering::SeqCst) == 1);
+    engine.try_send(Command::Restart(JobId(1))).unwrap();
+    collect_until(&engine, |events| {
+        events
+            .iter()
+            .any(|e| matches!(e, Event::JobChanged(s) if s.state == JobState::Cancelling))
+    });
+    assert_eq!(started.load(Ordering::SeqCst), 1);
+    gate.add_permits(1);
+    collect_until(&engine, |_| started.load(Ordering::SeqCst) == 2);
+    assert_eq!(engine.find_duplicate(&original).unwrap().id, JobId(1));
+    assert_eq!(engine.destinations().len(), 1);
+    engine.try_send(Command::Shutdown).unwrap();
+    gate.add_permits(1);
+    collect_until(&engine, |events| {
+        events.iter().any(|e| matches!(e, Event::ShutdownComplete))
+    });
+    engine.join().unwrap();
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn cancel_all_cancels_a_pending_overwrite_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let started = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let engine = spawn_engine_with_executor(
+        Arc::new(|| {}),
+        Arc::new(Held {
+            started: started.clone(),
+            cleanup_gate: Some(gate.clone()),
+        }),
+    );
+    engine
+        .try_send(Command::Submit(request(dir.path().join("file.bin"))))
+        .unwrap();
+    collect_until(&engine, |_| started.load(Ordering::SeqCst) == 1);
+    engine.try_send(Command::Restart(JobId(1))).unwrap();
+    collect_until(&engine, |events| {
+        events
+            .iter()
+            .any(|e| matches!(e, Event::JobChanged(s) if s.state == JobState::Cancelling))
+    });
+    engine.try_send(Command::CancelAll).unwrap();
+    gate.add_permits(1);
+    collect_until(&engine, |events| {
+        events
+            .iter()
+            .any(|e| matches!(e, Event::JobChanged(s) if s.state == JobState::Cancelled))
+    });
+    assert_eq!(started.load(Ordering::SeqCst), 1);
+    engine.try_send(Command::Shutdown).unwrap();
+    collect_until(&engine, |events| {
+        events.iter().any(|e| matches!(e, Event::ShutdownComplete))
+    });
+    engine.join().unwrap();
 }
 #[test]
 fn two_running_one_waiting_and_waiting_cancel_never_executes() {

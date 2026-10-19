@@ -22,6 +22,7 @@ fn unicode_settings_roundtrip() {
     let settings = Settings {
         schema_version: 1,
         category_destinations: Default::default(),
+        duplicate_choice: None,
         default_destination: folder.clone(),
     };
     save_to(&path, &settings).unwrap();
@@ -35,6 +36,7 @@ fn failed_save_preserves_prior_settings() {
     let settings = Settings {
         schema_version: 1,
         category_destinations: Default::default(),
+        duplicate_choice: None,
         default_destination: dir.path().into(),
     };
     save_to(&path, &settings).unwrap();
@@ -50,6 +52,7 @@ fn failed_save_preserves_prior_settings() {
     let valid = Settings {
         schema_version: 1,
         category_destinations: Default::default(),
+        duplicate_choice: None,
         default_destination: dir.path().into(),
     };
     assert!(save_to(&blocked_parent.join("settings.json"), &valid).is_err());
@@ -64,6 +67,7 @@ fn failed_atomic_replace_preserves_prior_file_and_removes_temporary() {
     let old = Settings {
         schema_version: 1,
         category_destinations: Default::default(),
+        duplicate_choice: None,
         default_destination: dir.path().into(),
     };
     save_to(&path, &old).unwrap();
@@ -73,6 +77,7 @@ fn failed_atomic_replace_preserves_prior_file_and_removes_temporary() {
     let new = Settings {
         schema_version: 1,
         category_destinations: Default::default(),
+        duplicate_choice: None,
         default_destination: folder,
     };
     let lock = std::fs::OpenOptions::new()
@@ -94,6 +99,7 @@ fn legacy_settings_still_load_and_category_paths_roundtrip() {
     std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
     let mut settings = load_from(&path).unwrap();
     assert!(settings.category_destinations.is_empty());
+    assert!(settings.duplicate_choice.is_none());
     settings
         .category_destinations
         .insert("documents".into(), dir.path().to_owned());
@@ -105,4 +111,52 @@ fn legacy_settings_still_load_and_category_paths_roundtrip() {
             .get("documents"),
         Some(&dir.path().to_owned())
     );
+}
+
+#[test]
+fn duplicate_preference_roundtrips_without_storing_a_link() {
+    use crate::duplicates::DuplicateChoice;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    let mut settings = Settings {
+        schema_version: 1,
+        category_destinations: Default::default(),
+        duplicate_choice: None,
+        default_destination: dir.path().into(),
+    };
+    for (choice, expected) in [
+        (DuplicateChoice::Numbered, "numbered"),
+        (DuplicateChoice::Overwrite, "overwrite"),
+        (DuplicateChoice::Existing, "existing"),
+    ] {
+        settings.duplicate_choice = Some(choice);
+        save_to(&path, &settings).unwrap();
+        let loaded = load_from(&path).unwrap();
+        assert_eq!(
+            serde_json::to_value(loaded.duplicate_choice).unwrap(),
+            serde_json::json!(expected)
+        );
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved.as_object().unwrap().len(), 4);
+    }
+    settings.duplicate_choice = None;
+    save_to(&path, &settings).unwrap();
+    assert!(load_from(&path).unwrap().duplicate_choice.is_none());
+}
+
+#[test]
+fn unknown_duplicate_preference_preserves_saved_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    let invalid = serde_json::json!({
+        "schema_version": 1,
+        "default_destination": dir.path(),
+        "duplicate_choice": "unknown_action",
+    });
+    let data = serde_json::to_vec(&invalid).unwrap();
+    std::fs::write(&path, &data).unwrap();
+    assert!(load_from(&path).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), data);
 }

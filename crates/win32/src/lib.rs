@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod download_form;
+pub mod duplicates;
 pub mod lifecycle;
 pub mod presenter;
 pub mod progress;

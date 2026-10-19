@@ -1,11 +1,12 @@
 use crate::{
     commands::*,
     download_form::{self, CATEGORIES},
+    duplicates::DuplicateChoice,
     platform::{self, item, message, resource, set_text, text, wide},
     settings::Settings,
     AppError,
 };
-use rusty_engine::{inspect_destination, validate_request, DownloadRequest, ReplacementPolicy};
+use rusty_engine::{validate_request, DownloadRequest, ReplacementPolicy};
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},
@@ -16,7 +17,7 @@ use windows::{
         Foundation::{ERROR_CANCELLED, HWND, LPARAM, WPARAM},
         System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER},
         UI::{
-            Controls::{BST_CHECKED, BST_UNCHECKED, EM_SETLIMITTEXT},
+            Controls::{BST_CHECKED, BST_UNCHECKED, EM_SETLIMITTEXT, EM_SETSEL},
             Input::KeyboardAndMouse::{EnableWindow, SetFocus},
             Shell::*,
             WindowsAndMessaging::*,
@@ -41,6 +42,7 @@ struct Draft {
     description: String,
     remember: bool,
     deferred: bool,
+    duplicate_choice: Option<DuplicateChoice>,
 }
 struct Context {
     mode: Mode,
@@ -114,23 +116,6 @@ pub fn show_add_download(
             );
             continue;
         }
-        // All destination I/O occurs after the dialog callback has returned.
-        match inspect_destination(&request.destination) {
-            Ok(None) => {}
-            Ok(Some(_)) => {
-                message(
-                    Some(owner),
-                    "Existing file preserved",
-                    "A file already exists at that path. Choose a different filename or Cancel.",
-                    false,
-                );
-                continue;
-            }
-            Err(error) => {
-                message(Some(owner), "Cannot use destination", &error.message, false);
-                continue;
-            }
-        }
         if !request.destination.parent().is_some_and(Path::is_dir) {
             message(
                 Some(owner),
@@ -156,6 +141,7 @@ pub fn show_add_download(
 pub fn show_options(owner: HWND, settings: &Settings) -> Result<Option<Settings>, AppError> {
     let mut draft = Draft {
         path: settings.default_destination.to_string_lossy().into_owned(),
+        duplicate_choice: settings.duplicate_choice.clone(),
         ..Default::default()
     };
     loop {
@@ -175,6 +161,7 @@ pub fn show_options(owner: HWND, settings: &Settings) -> Result<Option<Settings>
         }
         let mut updated = settings.clone();
         updated.default_destination = folder;
+        updated.duplicate_choice = draft.duplicate_choice;
         return Ok(Some(updated));
     }
 }
@@ -244,6 +231,16 @@ fn add_choice(dialog: HWND, id: i32, choice: &str) {
 fn enable_authorization(dialog: HWND) {
     let enabled = checked(dialog, USE_AUTHORIZATION);
     for id in [LOGIN_EDIT, PASSWORD_EDIT, LOGIN_LABEL, PASSWORD_LABEL] {
+        if let Ok(control) = item(dialog, id) {
+            unsafe {
+                let _ = EnableWindow(control, enabled);
+            }
+        }
+    }
+}
+fn enable_duplicate_action(dialog: HWND) {
+    let enabled = !checked(dialog, DUPLICATE_ASK);
+    for id in [DUPLICATE_ACTION, DUPLICATE_ACTION_LABEL] {
         if let Ok(control) = item(dialog, id) {
             unsafe {
                 let _ = EnableWindow(control, enabled);
@@ -353,6 +350,23 @@ unsafe fn dialog_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                 }
                 Mode::Options => {
                     set_value(hwnd, PATH_EDIT, &draft.path);
+                    set_checked(hwnd, DUPLICATE_ASK, draft.duplicate_choice.is_none());
+                    for action in [
+                        "Add a numbered filename",
+                        "Overwrite the existing download",
+                        "Show completed download or resume it",
+                    ] {
+                        add_choice(hwnd, DUPLICATE_ACTION, action);
+                    }
+                    let selected = match draft.duplicate_choice.as_ref() {
+                        Some(DuplicateChoice::Numbered) => 0,
+                        Some(DuplicateChoice::Overwrite) => 1,
+                        Some(DuplicateChoice::Existing) | None => 2,
+                    };
+                    if let Ok(combo) = item(hwnd, DUPLICATE_ACTION) {
+                        platform::send(combo, CB_SETCURSEL, selected, 0);
+                    }
+                    enable_duplicate_action(hwnd);
                 }
             }
             return 1;
@@ -383,7 +397,21 @@ unsafe fn dialog_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                                 result.remember = checked(hwnd, REMEMBER_PATH);
                                 result.deferred = id == DOWNLOAD_LATER;
                             }
-                            Mode::Options => result.path = value(hwnd, PATH_EDIT),
+                            Mode::Options => {
+                                result.path = value(hwnd, PATH_EDIT);
+                                result.duplicate_choice = if checked(hwnd, DUPLICATE_ASK) {
+                                    None
+                                } else {
+                                    let selected = item(hwnd, DUPLICATE_ACTION)
+                                        .map(|combo| platform::send(combo, CB_GETCURSEL, 0, 0).0)
+                                        .unwrap_or(2);
+                                    Some(match selected {
+                                        0 => DuplicateChoice::Numbered,
+                                        1 => DuplicateChoice::Overwrite,
+                                        _ => DuplicateChoice::Existing,
+                                    })
+                                };
+                            }
                         }
                         *context.result.borrow_mut() = Some(result);
                         let _ = EndDialog(hwnd, 1);
@@ -395,6 +423,10 @@ unsafe fn dialog_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                     }
                     USE_AUTHORIZATION => {
                         enable_authorization(hwnd);
+                        return 1;
+                    }
+                    DUPLICATE_ASK => {
+                        enable_duplicate_action(hwnd);
                         return 1;
                     }
                     CATEGORY_ADD => {
@@ -500,6 +532,97 @@ fn pick(owner: HWND, mode: Mode, current: &Path) -> Result<Option<PathBuf>, AppE
         CoTaskMemFree(Some(result.0.cast()));
         Ok(Some(path))
     }
+}
+
+struct DuplicateContext {
+    display_url: String,
+    initial: DuplicateChoice,
+    result: RefCell<Option<(DuplicateChoice, bool)>>,
+}
+
+pub fn show_duplicate(
+    owner: HWND,
+    display_url: &str,
+    initial: DuplicateChoice,
+) -> Result<Option<(DuplicateChoice, bool)>, AppError> {
+    let context = Box::new(DuplicateContext {
+        display_url: display_url.to_owned(),
+        initial,
+        result: RefCell::new(None),
+    });
+    let result = unsafe {
+        DialogBoxParamW(
+            Some(platform::instance()?),
+            resource(DUPLICATE_DIALOG),
+            Some(owner),
+            Some(duplicate_proc),
+            LPARAM((&*context as *const DuplicateContext) as isize),
+        )
+    };
+    if result == -1 {
+        return Err(windows::core::Error::from_thread().into());
+    }
+    Ok(context.result.into_inner())
+}
+
+unsafe extern "system" fn duplicate_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> isize {
+    std::panic::catch_unwind(|| unsafe {
+        if msg == WM_INITDIALOG {
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, lparam.0);
+            let context = &*(lparam.0 as *const DuplicateContext);
+            set_value(hwnd, DUPLICATE_URL, &context.display_url);
+            let selected = match &context.initial {
+                DuplicateChoice::Numbered => DUPLICATE_NUMBERED,
+                DuplicateChoice::Overwrite => DUPLICATE_OVERWRITE,
+                DuplicateChoice::Existing => DUPLICATE_EXISTING,
+            };
+            set_checked(hwnd, selected, true);
+            if let Ok(edit) = item(hwnd, DUPLICATE_URL) {
+                let _ = SetFocus(Some(edit));
+                platform::send(edit, EM_SETSEL, 0, -1);
+            }
+            return 0;
+        }
+        let pointer = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const DuplicateContext;
+        if pointer.is_null() {
+            return 0;
+        }
+        match msg {
+            WM_COMMAND if (wparam.0 & 0xffff) == 1 => {
+                let choice = if checked(hwnd, DUPLICATE_NUMBERED) {
+                    DuplicateChoice::Numbered
+                } else if checked(hwnd, DUPLICATE_OVERWRITE) {
+                    DuplicateChoice::Overwrite
+                } else {
+                    DuplicateChoice::Existing
+                };
+                let context = &*pointer;
+                // End the RefCell borrow before EndDialog sends destruction messages.
+                *context.result.borrow_mut() = Some((choice, checked(hwnd, DUPLICATE_REMEMBER)));
+                let _ = EndDialog(hwnd, 1);
+                1
+            }
+            WM_COMMAND if (wparam.0 & 0xffff) == 2 => {
+                let _ = EndDialog(hwnd, 0);
+                1
+            }
+            WM_CLOSE => {
+                let _ = EndDialog(hwnd, 0);
+                1
+            }
+            WM_NCDESTROY => {
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+                0
+            }
+            _ => 0,
+        }
+    })
+    .unwrap_or(0)
 }
 
 pub fn show_recovery_notice(owner: HWND, report: &str) -> Result<(), AppError> {

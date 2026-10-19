@@ -32,6 +32,7 @@ fn remembers_only_the_selected_category_folder_and_uses_it_next_time() {
         schema_version: 1,
         default_destination: "C:/Downloads".into(),
         category_destinations: Default::default(),
+        duplicate_choice: None,
     };
     remember_folder(
         &mut settings,
