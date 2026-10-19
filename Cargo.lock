@@ -849,10 +849,12 @@ version = "0.1.0"
 dependencies = [
  "embed-resource",
  "percent-encoding",
+ "rusty-browser-bridge",
  "rusty-engine",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
  "url",
  "windows",
 ]

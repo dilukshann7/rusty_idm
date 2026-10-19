@@ -10,6 +10,15 @@ use crate::{
     presenter::{Category, ViewModel},
     settings::{self, Settings},
 };
+use crate::{
+    browser_integration::{AppInstance, BrowserController, InstanceOutcome},
+    download_intent::{DownloadIntent, ExistingAction},
+};
+use rusty_browser_bridge::{
+    lease::{CaptureLease, LeaseState},
+    protocol::DeclineCode,
+    windows::{PipeServer, UserSession},
+};
 use rusty_engine::{spawn_engine, Command, CommandError, EngineHandle, Event};
 use std::{
     cell::{Cell, RefCell},
@@ -51,6 +60,7 @@ enum Action {
     Layout,
     Dpi(u32, RECT),
     Engine,
+    Browser,
     Close,
 }
 #[derive(Default)]
@@ -65,7 +75,8 @@ impl Signals {
         let duplicate = actions.iter().any(|old| {
             matches!(
                 (old, &action),
-                (Action::Engine, Action::Engine)
+                (Action::Browser, Action::Browser)
+                    | (Action::Engine, Action::Engine)
                     | (Action::Selection, Action::Selection)
                     | (Action::Layout, Action::Layout)
                     | (Action::Close, Action::Close)
@@ -155,6 +166,7 @@ impl Drop for MainWindow {
 }
 
 struct AppState {
+    browser: Option<BrowserController>,
     engine: Option<EngineHandle>,
     view: ViewModel,
     controls: Controls,
@@ -166,17 +178,20 @@ struct AppState {
     recovery_reported: bool,
 }
 impl AppState {
-    fn resolve_duplicate(
+    fn resolve_download_intent(
         &mut self,
         window: &MainWindow,
-        download: &mut dialogs::AddedDownload,
-    ) -> Result<bool, AppError> {
+        mut download: dialogs::AddedDownload,
+        lease: Option<&CaptureLease>,
+    ) -> Result<DownloadIntent, AppError> {
         let owner = window.hwnd;
         // Modal dialog callbacks only enqueue signals. Drain completed transfers
         // now so decisions use the engine's latest entry, not a stale row.
         self.events(window);
-        if !self.lifecycle.accepts_submissions() {
-            return Ok(false);
+        if !self.lifecycle.accepts_submissions()
+            || lease.is_some_and(|l| l.state() != LeaseState::Pending)
+        {
+            return Ok(DownloadIntent::Cancelled);
         }
         let existing = self
             .engine
@@ -186,7 +201,7 @@ impl AppState {
             Ok(identity) => identity,
             Err(error) => {
                 message(Some(owner), "Cannot use destination", &error.message, false);
-                return Ok(false);
+                return Ok(DownloadIntent::Cancelled);
             }
         };
         let in_use = self.view.jobs.values().any(|job| {
@@ -194,18 +209,19 @@ impl AppState {
                 && duplicates::same_destination(&job.destination, &download.request.destination)
         });
         if existing.is_none() && disk.is_none() && !in_use {
-            return Ok(true);
+            return Ok(DownloadIntent::New(download));
         }
         let choice = if let Some(choice) = self.settings.duplicate_choice {
             choice
         } else {
-            let Some((choice, remember)) = dialogs::show_duplicate(
+            let Some((choice, remember)) = dialogs::show_duplicate_with_lease(
                 owner,
                 &download.request.display_url(),
                 DuplicateChoice::Existing,
+                lease,
             )?
             else {
-                return Ok(false);
+                return Ok(DownloadIntent::Cancelled);
             };
             if remember {
                 let mut updated = self.settings.clone();
@@ -225,8 +241,10 @@ impl AppState {
             choice
         };
         self.events(window);
-        if !self.lifecycle.accepts_submissions() {
-            return Ok(false);
+        if !self.lifecycle.accepts_submissions()
+            || lease.is_some_and(|l| l.state() != LeaseState::Pending)
+        {
+            return Ok(DownloadIntent::Cancelled);
         }
         match choice {
             DuplicateChoice::Numbered => {
@@ -240,7 +258,7 @@ impl AppState {
                         download.request.destination = path;
                         download.request.allow_duplicate = true;
                         download.request.replacement = rusty_engine::ReplacementPolicy::Deny;
-                        Ok(true)
+                        Ok(DownloadIntent::New(download))
                     }
                     Err(error) => {
                         message(
@@ -249,16 +267,16 @@ impl AppState {
                             &error.to_string(),
                             false,
                         );
-                        Ok(false)
+                        Ok(DownloadIntent::Cancelled)
                     }
                 }
             }
             DuplicateChoice::Overwrite if existing.is_some() => {
                 let existing = existing.expect("matched existing entry");
-                self.command(owner, Command::Restart(existing.id));
-                // The actor serializes restart after cancellation/cleanup and
-                // reopens status with the new attempt; don't display stale completion.
-                Ok(false)
+                Ok(DownloadIntent::Existing {
+                    job_id: existing.id,
+                    action: ExistingAction::Restart,
+                })
             }
             DuplicateChoice::Overwrite => {
                 if self.view.jobs.values().any(|job| {
@@ -269,7 +287,7 @@ impl AppState {
                         )
                 }) {
                     message(Some(owner), "Filename in use", "Another active download uses this filename. Stop it first, or choose a numbered copy.", false);
-                    return Ok(false);
+                    return Ok(DownloadIntent::Cancelled);
                 }
                 download.request.replacement =
                     match rusty_engine::inspect_destination(&download.request.destination) {
@@ -277,11 +295,11 @@ impl AppState {
                         Ok(None) => rusty_engine::ReplacementPolicy::Deny,
                         Err(error) => {
                             message(Some(owner), "Cannot replace file", &error.message, false);
-                            return Ok(false);
+                            return Ok(DownloadIntent::Cancelled);
                         }
                     };
                 download.request.allow_duplicate = true;
-                Ok(true)
+                Ok(DownloadIntent::New(download))
             }
             DuplicateChoice::Existing => {
                 if let Some(existing) = existing {
@@ -290,16 +308,19 @@ impl AppState {
                         .as_ref()
                         .and_then(|engine| engine.find_duplicate(&download.request))
                         .unwrap_or(existing);
-                    if latest.state == rusty_engine::JobState::Completed
+                    let action = if latest.state == rusty_engine::JobState::Completed
                         && !latest.destination.is_file()
                     {
-                        self.command(owner, Command::Restart(latest.id));
+                        ExistingAction::Restart
+                    } else if !latest.state.is_terminal() || latest.state.can_retry() {
+                        ExistingAction::Activate
                     } else {
-                        if !latest.state.is_terminal() || latest.state.can_retry() {
-                            self.command(owner, Command::Activate(latest.id));
-                        }
-                        self.details.show_existing(owner, &latest)?;
-                    }
+                        ExistingAction::Show
+                    };
+                    return Ok(DownloadIntent::Existing {
+                        job_id: latest.id,
+                        action,
+                    });
                 } else if download.request.destination.is_file() {
                     message(
                         Some(owner),
@@ -313,7 +334,7 @@ impl AppState {
                 } else {
                     message(Some(owner), "Filename in use", "Another download is using this filename. Choose a numbered copy to add this link.", false);
                 }
-                Ok(false)
+                Ok(DownloadIntent::Cancelled)
             }
         }
     }
@@ -339,6 +360,9 @@ impl AppState {
         let active = self.view.active();
         let accepted = !active || message(Some(owner), "Stop downloads and exit?", "Stop all running and waiting downloads, clean up their partial files, and exit Rusty?", true);
         if self.lifecycle.begin_close(active, accepted) {
+            if let Some(browser) = &self.browser {
+                browser.close();
+            }
             self.send_shutdown(owner);
         }
     }
@@ -426,7 +450,11 @@ impl AppState {
     fn handle(&mut self, window: &MainWindow, action: Action) -> Result<(), AppError> {
         let owner = window.hwnd;
         match action {
-            Action::Engine => self.events(window),
+            Action::Engine => {
+                self.events(window);
+                self.browser_events(window)?;
+            }
+            Action::Browser => self.browser_events(window)?,
             Action::Close => self.close(owner),
             Action::Layout => self.controls.layout(owner),
             Action::Dpi(dpi, rectangle) => {
@@ -463,34 +491,9 @@ impl AppState {
                 let actions = self.view.actions(selected);
                 match id {
                     ADD => {
-                        if let Some(mut download) =
-                            dialogs::show_add_download(owner, &self.settings)?
-                        {
-                            if !self.resolve_duplicate(window, &mut download)? {
-                                return Ok(());
-                            }
-                            let category = download
-                                .request
-                                .category
-                                .clone()
-                                .unwrap_or_else(|| "General".into());
-                            let destination = download.request.destination.clone();
-                            if self.command(owner, Command::Submit(download.request))
-                                && download.remember_path
-                            {
-                                let mut updated = self.settings.clone();
-                                crate::download_form::remember_folder(
-                                    &mut updated,
-                                    &category,
-                                    &destination,
-                                );
-                                match settings::save(&updated) {
-                                    Ok(()) => self.settings = updated,
-                                    Err(error) => {
-                                        message(Some(owner), "Download added", &format!("The download was added, but its folder could not be remembered.\n\n{error}"), false);
-                                    }
-                                }
-                            }
+                        if let Some(download) = dialogs::show_add_download(owner, &self.settings)? {
+                            let intent = self.resolve_download_intent(window, download, None)?;
+                            self.execute_manual_intent(owner, intent)?;
                         }
                     }
                     START if actions.start => {
@@ -601,6 +604,12 @@ impl AppState {
 }
 
 pub fn run() -> Result<(), AppError> {
+    let session = UserSession::current()
+        .map_err(|_| AppError("Cannot determine browser session identity.".into()))?;
+    let _instance = match AppInstance::acquire_or_activate(&session)? {
+        InstanceOutcome::Primary(instance) => instance,
+        InstanceOutcome::Forwarded => return Ok(()),
+    };
     let _com = ComApartment::new()?;
     unsafe {
         let controls = INITCOMMONCONTROLSEX {
@@ -625,8 +634,21 @@ pub fn run() -> Result<(), AppError> {
     let wake = Arc::new(WakeTarget::new());
     let window = MainWindow::new(wake.clone())?;
     let controls = Controls::new(window.hwnd)?;
-    let engine = spawn_engine(Arc::new(move || wake.wake()));
+    let engine_wake = wake.clone();
+    let engine = spawn_engine(Arc::new(move || engine_wake.wake()));
+    let browser = BrowserController::new(engine.client(), Arc::new(move || wake.wake()));
+    let pipe = match PipeServer::start(session, browser.router()) {
+        Ok(pipe) => pipe,
+        Err(_) => {
+            drop(browser);
+            let _ = engine.join();
+            return Err(AppError(
+                "Cannot own the browser integration endpoint.".into(),
+            ));
+        }
+    };
     let mut app = AppState {
+        browser: Some(browser),
         engine: Some(engine),
         view: ViewModel::default(),
         controls,
@@ -648,6 +670,11 @@ pub fn run() -> Result<(), AppError> {
         message(Some(window.hwnd), "Settings warning", &format!("{warning}\n\nUsing Windows Downloads for this session. Save a folder through Options to update settings."), false);
     }
     let result = message_loop(&window, &mut app);
+    if let Some(browser) = &app.browser {
+        browser.close();
+    }
+    drop(pipe);
+    drop(app.browser.take());
     app.details.close_all();
     window.destroy();
     // On an exceptional message-loop exit, dropping the sender in join() also
@@ -777,6 +804,7 @@ unsafe fn window_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                         _ => {}
                     }
                 }
+                bridge::BROWSER_WAKE => signals.push(Action::Browser),
                 bridge::ENGINE_WAKE | WM_TIMER => {
                     signals.push(Action::Engine);
                     return LRESULT(0);
@@ -793,5 +821,124 @@ unsafe fn window_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             }
         }
         DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+}
+
+impl AppState {
+    fn remember_download(&mut self, owner: HWND, download: &dialogs::AddedDownload) {
+        if download.remember_path {
+            let mut updated = self.settings.clone();
+            crate::download_form::remember_folder(
+                &mut updated,
+                download.request.category.as_deref().unwrap_or("General"),
+                &download.request.destination,
+            );
+            match settings::save(&updated) {
+                Ok(()) => self.settings = updated,
+                Err(e) => message(Some(owner), "Download folder", &e.to_string(), false),
+            }
+        }
+    }
+    fn execute_manual_intent(
+        &mut self,
+        owner: HWND,
+        intent: DownloadIntent,
+    ) -> Result<(), AppError> {
+        match intent {
+            DownloadIntent::New(download) => {
+                if self.command(owner, Command::Submit(download.request.clone())) {
+                    self.remember_download(owner, &download);
+                }
+            }
+            DownloadIntent::Existing { job_id, action } => {
+                match action {
+                    ExistingAction::Restart => {
+                        self.command(owner, Command::Restart(job_id));
+                    }
+                    ExistingAction::Activate => {
+                        self.command(owner, Command::Activate(job_id));
+                    }
+                    ExistingAction::Show => {}
+                }
+                if action != ExistingAction::Restart {
+                    if let Some(job) = self.view.jobs.get(&job_id) {
+                        self.details.show_existing(owner, job)?;
+                    }
+                }
+            }
+            DownloadIntent::Cancelled => {}
+        }
+        Ok(())
+    }
+    fn browser_events(&mut self, window: &MainWindow) -> Result<(), AppError> {
+        let Some(browser) = self.browser.as_ref() else {
+            return Ok(());
+        };
+        if browser.take_activation() {
+            unsafe {
+                let _ = ShowWindow(window.hwnd, SW_RESTORE);
+                let _ = SetForegroundWindow(window.hwnd);
+            }
+        }
+        let captures = browser.drain();
+        for incoming in captures {
+            let id = incoming.capture.id.clone();
+            let intent = if self.lifecycle.accepts_submissions()
+                && incoming.lease.state() == LeaseState::Pending
+            {
+                match dialogs::show_browser_download(
+                    window.hwnd,
+                    &self.settings,
+                    &incoming.capture,
+                    &incoming.lease,
+                ) {
+                    Ok(Some(download)) => {
+                        self.resolve_download_intent(window, download, Some(&incoming.lease))
+                    }
+                    Ok(None) => Ok(DownloadIntent::Cancelled),
+                    Err(e) => Err(e),
+                }
+            } else {
+                Ok(DownloadIntent::Cancelled)
+            };
+            let intent = match intent {
+                Ok(intent) => intent,
+                Err(_) => {
+                    self.browser
+                        .as_ref()
+                        .expect("controller")
+                        .decline(&id, DeclineCode::InvalidRequest);
+                    continue;
+                }
+            };
+            if let DownloadIntent::New(download) = &intent {
+                self.remember_download(window.hwnd, download);
+            }
+            if let Some(action) = intent.into_submission() {
+                if incoming.lease.state() == LeaseState::Pending {
+                    if let Err(e) = self.browser.as_ref().expect("controller").submit(
+                        id.clone(),
+                        action,
+                        incoming.lease,
+                        incoming.reply,
+                    ) {
+                        self.browser.as_ref().expect("controller").decline(
+                            &id,
+                            if e == CommandError::QueueFull {
+                                DeclineCode::Busy
+                            } else {
+                                DeclineCode::AppClosing
+                            },
+                        );
+                    }
+                }
+            } else {
+                self.browser
+                    .as_ref()
+                    .expect("controller")
+                    .decline(&id, DeclineCode::UserCancelled);
+            }
+        }
+        Ok(())
     }
 }

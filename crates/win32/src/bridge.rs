@@ -5,6 +5,7 @@ use windows::Win32::{
 };
 pub const ENGINE_WAKE: u32 = WM_APP + 1;
 pub const DETAIL_CANCEL: u32 = WM_APP + 2;
+pub const BROWSER_WAKE: u32 = WM_APP + 3;
 pub const HOUSEKEEPING_TIMER: usize = 1;
 
 pub struct WakeTarget {
