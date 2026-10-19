@@ -558,7 +558,7 @@ unsafe fn detail_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                         if (STATUS_STATE..=STATUS_RESUME).contains(&control_id) {
                             COLORREF(0x00FF0000)
                         } else {
-                            GetSysColor(COLOR_WINDOWTEXT)
+                            COLORREF(GetSysColor(COLOR_WINDOWTEXT))
                         },
                     );
                     SetBkMode(dc, TRANSPARENT);
