@@ -1,0 +1,17 @@
+[package]
+name = "rusty-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio.workspace = true
+tokio-util.workspace = true
+reqwest.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile = "=3.23.0"
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
