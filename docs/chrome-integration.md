@@ -5,6 +5,15 @@ host, user/logon/session secured pipe, File Info integration, actor-confirmed
 receipts and session recovery. **Compilation, runtime tests, Chrome loading,
 host registration and end-to-end acceptance have not run.**
 
+Setup preparation update, 2026-10-19: a Windows debug build of `rusty-win32`
+and `rusty-native-host` succeeded using the locked offline dependencies. Copies
+were staged under `%LOCALAPPDATA%\RustyIDM\bin`, and the unpacked extension was
+staged under `%LOCALAPPDATA%\RustyIDM\chrome-extension`. Binary copies matched
+their build hashes. Chrome was opened to its extensions page. Loading the
+extension and obtaining its real ID are pending before native-host registration.
+The build emitted one unused-function warning for `show_duplicate`. Runtime
+tests and live handoff acceptance remain unrun.
+
 ## Setup when ready
 
 These are deferred instructions for an explicitly authorized build/setup pass.

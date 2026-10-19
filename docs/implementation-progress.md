@@ -165,3 +165,15 @@ The partial independent GPT-6.1 Sol review identified type/concurrency issues;
 corrections and regression tests were authored, followed by author source review.
 The independent review ended at a usage limit. Runtime RED/GREEN, the full test
 suite, compiled binaries and live Chrome/setup acceptance remain Not run.
+
+
+## Chrome setup preparation, 2026-10-19
+
+User requested installation. `cargo build --locked --offline -p rusty-win32
+-p rusty-native-host --target-dir D:\\Programming\\Rust\\rusty_idm\\target`
+succeeded for Windows in the debug profile. One dead-code warning names the
+unused `show_duplicate` wrapper. No tests or development server were run.
+Binaries and unpacked extension files were staged under the current user's
+LocalAppData RustyIDM directory; both binary copy hashes matched build outputs.
+Chrome's extensions page was opened for the user to load the unpacked folder.
+Native-host registration awaits the extension's actual Chrome ID.

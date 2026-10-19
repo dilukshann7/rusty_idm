@@ -58,8 +58,9 @@ No build, Rust test, app or server command was launched by this implementation
 session. VS Code's existing rust-analyzer independently ran a background check;
 its saved diagnostics exposed missing imports/native flag operators, which were
 corrected in source. Automatic editor checks/build-script loading are now disabled
-in this workspace. **A clean compilation of the final source, test execution and
-GUI validation remain pending.** No working executable is claimed.
+in this workspace. **Windows debug compilation of the GUI and native host passed during Chrome
+setup preparation on 2026-10-19. Runtime test execution, GUI validation and
+live Chrome handoff acceptance remain pending.**
 Direct dependency versions are pinned and Cargo.lock is included. The source
 milestone was completed before this local Git repository was initialized.
 
@@ -94,7 +95,8 @@ Source now includes an opt-in Chrome extension, Windows native messaging host,
 secured local pipe, File Info handoff, actor receipts and session recovery.
 See [Chrome setup and validation](docs/chrome-integration.md) for setup commands,
 supported public GET downloads and the unexecuted acceptance matrix.
-Compilation, runtime tests and real browser behavior remain unverified.
+Windows debug compilation passed. Runtime tests and real browser behavior
+remain unverified.
 
 Durable history, resume after application exit, segmentation, named queues, tray
 operation, installers and automatic updates remain future milestones.
