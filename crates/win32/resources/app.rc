@@ -1,0 +1,180 @@
+#include <windows.h>
+#include <commctrl.h>
+
+1 RT_MANIFEST "resources/app.manifest"
+
+301 ICON "resources/icons/add.ico"
+302 ICON "resources/icons/stop.ico"
+303 ICON "resources/icons/stop_all.ico"
+304 ICON "resources/icons/delete.ico"
+305 ICON "resources/icons/options.ico"
+306 ICON "resources/icons/add-disabled.ico"
+307 ICON "resources/icons/stop-disabled.ico"
+308 ICON "resources/icons/stop_all-disabled.ico"
+309 ICON "resources/icons/delete-disabled.ico"
+310 ICON "resources/icons/options-disabled.ico"
+
+101 MENU
+BEGIN
+    POPUP "&Tasks"
+    BEGIN
+        MENUITEM "&Add URL...\tCtrl+N", 1001
+        MENUITEM SEPARATOR
+        MENUITEM "E&xit\tAlt+F4", 1009
+    END
+    POPUP "&File"
+    BEGIN
+        MENUITEM "&Open File", 1006
+        MENUITEM "Open &Folder", 1007
+        MENUITEM "&Delete Entry\tDel", 1004
+    END
+    POPUP "&Downloads"
+    BEGIN
+        MENUITEM "Start / &Resume Download", 1013
+        MENUITEM "&Stop", 1002
+        MENUITEM "Stop &All", 1003
+        MENUITEM "&Retry from Beginning", 1005
+        MENUITEM "Transfer &Details\tEnter", 1010
+        MENUITEM SEPARATOR
+        MENUITEM "&Options...", 1008
+    END
+    POPUP "&View"
+    BEGIN
+        MENUITEM "&All Downloads", 1012
+    END
+    POPUP "&Help"
+    BEGIN
+        MENUITEM "&About Rusty", 1011
+    END
+END
+
+102 ACCELERATORS
+BEGIN
+    "N", 1001, VIRTKEY, CONTROL
+    VK_DELETE, 1004, VIRTKEY
+    VK_RETURN, 1010, VIRTKEY
+END
+
+201 DIALOGEX 0, 0, 340, 58
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+EXSTYLE WS_EX_CONTROLPARENT
+CAPTION "Enter New Address to Download"
+FONT 8, "Tahoma"
+BEGIN
+    LTEXT "&Address", -1, 8, 10, 31, 9
+    COMBOBOX 2101, 42, 7, 236, 90, CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON "OK", IDOK, 286, 7, 46, 14, WS_TABSTOP
+    PUSHBUTTON "Cancel", IDCANCEL, 286, 26, 46, 14, WS_TABSTOP
+    GROUPBOX "", -1, 8, 24, 270, 30
+    CONTROL "Use &authorization", 2104, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 13, 23, 100, 10
+    LTEXT "&Login", 2112, 46, 38, 27, 9, WS_DISABLED
+    EDITTEXT 2105, 76, 35, 70, 13, ES_AUTOHSCROLL | WS_TABSTOP | WS_DISABLED
+    LTEXT "&Password", 2113, 180, 38, 37, 9, WS_DISABLED
+    EDITTEXT 2106, 220, 35, 50, 13, ES_AUTOHSCROLL | ES_PASSWORD | WS_TABSTOP | WS_DISABLED
+END
+
+205 DIALOGEX 0, 0, 348, 146
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
+EXSTYLE WS_EX_CONTROLPARENT
+CAPTION "Download File Info"
+FONT 8, "Tahoma"
+BEGIN
+    LTEXT "URL", -1, 8, 12, 46, 9, SS_RIGHT
+    EDITTEXT 2101, 58, 8, 226, 14, ES_READONLY | ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "&Category", -1, 8, 33, 46, 9, SS_RIGHT
+    COMBOBOX 2107, 58, 29, 106, 98, CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON "+", 2114, 168, 29, 16, 14, WS_TABSTOP
+    LTEXT "Save &As", -1, 8, 53, 46, 9, SS_RIGHT
+    COMBOBOX 2102, 58, 49, 208, 98, CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON "...", 2103, 274, 49, 16, 14, WS_TABSTOP
+    CONTROL "", 2115, "Static", SS_ICON | SS_CENTERIMAGE, 307, 40, 24, 24
+    GROUPBOX "", -1, 58, 68, 226, 33
+    CONTROL "&Remember this path for this category", 2108, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 62, 66, 216, 11
+    EDITTEXT 2111, 64, 84, 214, 13, ES_READONLY | ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "&Description", -1, 6, 112, 48, 9, SS_RIGHT
+    EDITTEXT 2109, 58, 108, 226, 14, ES_AUTOHSCROLL | WS_TABSTOP
+    PUSHBUTTON "Download &Later", 2110, 58, 130, 68, 14, WS_TABSTOP
+    DEFPUSHBUTTON "&Start Download", IDOK, 136, 130, 68, 14, WS_TABSTOP
+    PUSHBUTTON "Cancel", IDCANCEL, 214, 130, 70, 14, WS_TABSTOP
+END
+
+202 DIALOGEX 0, 0, 330, 74
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+EXSTYLE WS_EX_CONTROLPARENT
+CAPTION "Options"
+FONT 8, "Tahoma"
+BEGIN
+    LTEXT "Default save &folder:", -1, 8, 8, 314, 9
+    EDITTEXT 2102, 8, 20, 260, 13, ES_AUTOHSCROLL | WS_TABSTOP
+    PUSHBUTTON "&Browse...", 2103, 274, 20, 48, 14, WS_TABSTOP
+    LTEXT "Folders are remembered; history lasts for this session.", -1, 8, 40, 314, 10
+    DEFPUSHBUTTON "&Save", IDOK, 220, 56, 48, 14, WS_TABSTOP
+    PUSHBUTTON "Cancel", IDCANCEL, 274, 56, 48, 14, WS_TABSTOP
+END
+
+203 DIALOGEX 0, 0, 380, 145
+STYLE DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
+EXSTYLE WS_EX_CONTROLPARENT
+CAPTION "Download Status"
+FONT 8, "Tahoma"
+BEGIN
+    CONTROL "Download pages", 2206, WC_TABCONTROL, WS_TABSTOP | WS_CLIPSIBLINGS, 10, 6, 360, 98
+    CONTROL "", 2207, "Edit", ES_READONLY | ES_AUTOHSCROLL | WS_TABSTOP, 20, 24, 340, 10
+    LTEXT "Status", 2214, 20, 35, 45, 9
+    LTEXT "", 2208, 69, 35, 286, 9, SS_NOPREFIX
+    LTEXT "File size", 2215, 20, 48, 66, 9
+    LTEXT "", 2209, 92, 48, 263, 9, SS_NOPREFIX
+    LTEXT "Downloaded", 2216, 20, 58, 66, 9
+    LTEXT "", 2210, 92, 58, 263, 9, SS_NOPREFIX
+    LTEXT "Transfer rate", 2217, 20, 68, 66, 9
+    LTEXT "", 2211, 92, 68, 263, 9, SS_NOPREFIX
+    LTEXT "Time left", 2218, 20, 78, 66, 9
+    LTEXT "", 2212, 92, 78, 263, 9, SS_NOPREFIX
+    LTEXT "Resume capability", 2219, 20, 88, 69, 9
+    LTEXT "No", 2213, 92, 88, 263, 9
+    CONTROL "Enable speed &limiter", 2223, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 20, 29, 200, 12
+    EDITTEXT 2224, 20, 49, 58, 14, ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "KB/sec", 2225, 84, 52, 40, 10
+    PUSHBUTTON "&Apply", 2226, 134, 49, 50, 14, WS_TABSTOP
+    LTEXT "Limit applies to this download. Uncheck and Apply for unlimited speed.", 2220, 20, 74, 330, 22
+    CONTROL "&Close this dialog when the download completes", 2221, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 20, 30, 330, 12
+    LTEXT "The completed file stays in the download list.", 2222, 20, 49, 330, 12
+    CONTROL "Transfer progress", 2202, PROGRESS_CLASS, WS_BORDER | PBS_SMOOTH, 10, 110, 360, 10
+    PUSHBUTTON "Show &details >>", 2204, 18, 126, 84, 14, WS_TABSTOP
+    PUSHBUTTON "&Pause", 2205, 235, 126, 50, 14, WS_TABSTOP | WS_DISABLED
+    PUSHBUTTON "&Cancel", 2203, 303, 126, 50, 14, WS_TABSTOP
+    EDITTEXT 2201, 10, 152, 360, 70, ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_READONLY | WS_VSCROLL | WS_HSCROLL | WS_TABSTOP
+END
+
+204 DIALOGEX 0, 0, 380, 185
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Retained Partial Files"
+FONT 8, "Tahoma"
+BEGIN
+    LTEXT "Partial files remain on disk. Copy recovery paths before closing Rusty.", -1, 8, 8, 364, 18
+    EDITTEXT 2301, 8, 30, 364, 126, ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_READONLY | WS_VSCROLL | WS_HSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON "&Close Rusty", IDOK, 300, 166, 72, 14, WS_TABSTOP
+END
+
+1 VERSIONINFO
+ FILEVERSION 0,1,0,0
+ PRODUCTVERSION 0,1,0,0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription", "Rusty Download Manager\0"
+            VALUE "ProductName", "Rusty Download Manager\0"
+            VALUE "FileVersion", "0.1.0\0"
+            VALUE "ProductVersion", "0.1.0\0"
+            VALUE "OriginalFilename", "rusty-win32.exe\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
