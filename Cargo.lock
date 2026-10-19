@@ -835,6 +835,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusty-native-host"
+version = "0.1.0"
+dependencies = [
+ "rusty-browser-bridge",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rusty-win32"
 version = "0.1.0"
 dependencies = [

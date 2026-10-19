@@ -1,0 +1,10 @@
+[package]
+name = "rusty-native-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rusty-browser-bridge = { path = "../browser-bridge" }
+serde.workspace = true
+serde_json.workspace = true

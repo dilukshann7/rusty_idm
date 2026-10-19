@@ -11,7 +11,7 @@ try {
     $metadataText = & $cargoTool metadata --locked --offline --no-deps --format-version 1
     if ($LASTEXITCODE -ne 0) { throw 'Cargo manifest inspection failed.' }
     $metadata = $metadataText | ConvertFrom-Json
-    $expectedPackages = @('rusty-engine', 'rusty-win32', 'rusty-browser-bridge') | Sort-Object
+    $expectedPackages = @('rusty-engine', 'rusty-win32', 'rusty-browser-bridge', 'rusty-native-host') | Sort-Object
     $actualPackages = @($metadata.packages | Where-Object { $_.id -in $metadata.workspace_members } | ForEach-Object { $_.name }) | Sort-Object
     if (Compare-Object $expectedPackages $actualPackages) { throw 'Unexpected workspace package set.' }
 
