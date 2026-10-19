@@ -176,4 +176,8 @@ unused `show_duplicate` wrapper. No tests or development server were run.
 Binaries and unpacked extension files were staged under the current user's
 LocalAppData RustyIDM directory; both binary copy hashes matched build outputs.
 Chrome's extensions page was opened for the user to load the unpacked folder.
-Native-host registration awaits the extension's actual Chrome ID.
+The user supplied the loaded extension ID `ipolekmihgpdbmelheajogmgnjgmenol`.
+The registration script ran, its HKCU manifest/origin was read back and verified,
+and the installed host returned one valid correlated `ok` ping frame with version
+0.1.0, GUI not running and empty stderr. Automatic capture remains off.
+Unregister, full test suites and actual Chrome download handoff remain unrun.

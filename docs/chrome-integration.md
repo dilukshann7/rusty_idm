@@ -2,15 +2,19 @@
 
 Source implements an opt-in Manifest V3 extension, Windows native messaging
 host, user/logon/session secured pipe, File Info integration, actor-confirmed
-receipts and session recovery. **Compilation, runtime tests, Chrome loading,
-host registration and end-to-end acceptance have not run.**
+receipts and session recovery. Windows debug compilation and per-user host
+registration succeeded. A correlated framed native-host ping passed. Runtime
+test suites and end-to-end download acceptance have not run.
 
 Setup preparation update, 2026-10-19: a Windows debug build of `rusty-win32`
 and `rusty-native-host` succeeded using the locked offline dependencies. Copies
 were staged under `%LOCALAPPDATA%\RustyIDM\bin`, and the unpacked extension was
 staged under `%LOCALAPPDATA%\RustyIDM\chrome-extension`. Binary copies matched
-their build hashes. Chrome was opened to its extensions page. Loading the
-extension and obtaining its real ID are pending before native-host registration.
+their build hashes. Chrome was opened to its extensions page. The user loaded the unpacked extension
+and provided its ID, `ipolekmihgpdbmelheajogmgnjgmenol`. The native host was then
+registered for that exact origin. A direct framed ping to the installed binary
+passed, reporting version 0.1.0 and GUI not running, with empty stderr. The
+automatic capture preference was left off.
 The build emitted one unused-function warning for `show_duplicate`. Runtime
 tests and live handoff acceptance remain unrun.
 
@@ -48,7 +52,8 @@ GUI process forwards activation to the first instance.
 Unregister removes only matching owned files/key and refuses unrelated or
 modified registrations. Both scripts support `-WhatIf` and `-Confirm`.
 Pester is optional tooling for authored setup tests, not a product dependency.
-No setup script was executed and Pester was not installed.
+The registration script ran during installation. Unregister and Pester tests
+were not executed; Pester was not installed.
 
 ## Use and handoff
 
@@ -129,6 +134,7 @@ Invoke-Pester ./scripts/tests/chrome-host-registration.Tests.ps1
 
 | Acceptance case | Runtime result |
 | --- | --- |
+| Installed host configuration, registry origin and correlated stdio ping | Pass |
 | Direct public GET and link context menu | Not run |
 | Signed query preserved and UI/log redaction | Not run |
 | Cookie/Authorization/POST/blob/incognito untouched | Not run |

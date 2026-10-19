@@ -54,8 +54,7 @@ verification boundary.
 
 Source implementation only. Rust formatting/syntax and source/resource checks
 are recorded in [the validation record](docs/native-gui-validation.md).
-No build, Rust test, app or server command was launched by this implementation
-session. VS Code's existing rust-analyzer independently ran a background check;
+The initial source implementation did not launch builds, tests, apps or servers. VS Code's existing rust-analyzer independently ran a background check;
 its saved diagnostics exposed missing imports/native flag operators, which were
 corrected in source. Automatic editor checks/build-script loading are now disabled
 in this workspace. **Windows debug compilation of the GUI and native host passed during Chrome
