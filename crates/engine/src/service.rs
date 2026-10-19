@@ -343,7 +343,7 @@ fn has_retained_partial(job: &Job) -> bool {
     job.snapshot
         .error
         .as_ref()
-        .is_some_and(|e| e.retained_partial.is_some())
+        .is_some_and(|e| e.retained_partial.is_some() || e.retained_original.is_some())
 }
 fn cancel_job(job: &mut Job, bus: &EventBus) {
     match job.snapshot.state {

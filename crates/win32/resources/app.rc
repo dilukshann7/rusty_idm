@@ -148,10 +148,10 @@ END
 
 204 DIALOGEX 0, 0, 380, 185
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Retained Partial Files"
+CAPTION "Retained Recovery Files"
 FONT 8, "Tahoma"
 BEGIN
-    LTEXT "Partial files remain on disk. Copy recovery paths before closing Rusty.", -1, 8, 8, 364, 18
+    LTEXT "Recovery files remain on disk. Copy their paths before closing Rusty.", -1, 8, 8, 364, 18
     EDITTEXT 2301, 8, 30, 364, 126, ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_READONLY | WS_VSCROLL | WS_HSCROLL | WS_TABSTOP
     DEFPUSHBUTTON "&Close Rusty", IDOK, 300, 166, 72, 14, WS_TABSTOP
 END

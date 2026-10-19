@@ -80,13 +80,19 @@ pub fn format_transfer(job: &JobSnapshot) -> TransferText {
     let error = job
         .error
         .as_ref()
-        .map(|e| match &e.retained_partial {
-            Some(path) => format!(
-                "\r\n\r\n{}\r\nRetained partial: {}",
+        .map(|e| {
+            format!(
+                "\r\n\r\n{}{}{}",
                 e.message,
-                path.display()
-            ),
-            None => format!("\r\n\r\n{}", e.message),
+                e.retained_partial
+                    .as_ref()
+                    .map(|p| format!("\r\nRetained partial: {}", p.display()))
+                    .unwrap_or_default(),
+                e.retained_original
+                    .as_ref()
+                    .map(|p| format!("\r\nOriginal backup: {}", p.display()))
+                    .unwrap_or_default()
+            )
         })
         .unwrap_or_default();
     let details = format!(

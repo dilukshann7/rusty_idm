@@ -124,3 +124,33 @@ async fn authorization_is_applied_only_when_explicitly_supplied() {
     assert_eq!(result, TransferOutcome::Completed { bytes: 2 });
     assert_eq!(std::fs::read(target).unwrap(), b"ok");
 }
+
+#[cfg(windows)]
+#[tokio::test]
+async fn approved_http_replacement_publishes_complete_body_and_preserves_original_on_failure() {
+    let fixture = support::Fixture::new(support::respond);
+    for path in ["/data", "/broken"] {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("file.bin");
+        std::fs::write(&target, b"original").unwrap();
+        let identity = rusty_engine::inspect_destination(&target).unwrap().unwrap();
+        let request = validate_request(
+            &format!("{}{path}", fixture.url),
+            target.clone(),
+            ReplacementPolicy::Approved(identity),
+        )
+        .unwrap();
+        let result = transfer(request, CancellationToken::new(), Arc::new(|_| {})).await;
+        if path == "/data" {
+            assert_eq!(
+                result.unwrap(),
+                TransferOutcome::Completed { bytes: 65_536 }
+            );
+            assert_eq!(std::fs::read(&target).unwrap(), support::bytes());
+        } else {
+            assert!(result.is_err());
+            assert_eq!(std::fs::read(&target).unwrap(), b"original");
+        }
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+}

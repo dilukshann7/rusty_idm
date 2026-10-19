@@ -59,6 +59,7 @@ async fn duplicate_jobs_cannot_replace_each_other() {
     assert_eq!(std::fs::read(target).unwrap(), b"first");
 }
 
+#[cfg(not(windows))]
 #[tokio::test]
 async fn approved_replacement_is_explicitly_disabled() {
     let dir = tempfile::tempdir().unwrap();
@@ -71,6 +72,94 @@ async fn approved_replacement_is_explicitly_disabled() {
             .is_err()
     );
     assert_eq!(std::fs::read(target).unwrap(), b"original");
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn approved_replacement_preserves_original_until_completed_and_cleans_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("result.bin");
+    std::fs::write(&target, b"original").unwrap();
+    let identity = inspect_destination(&target).unwrap().unwrap();
+    let mut output = OutputFile::prepare(&target, &ReplacementPolicy::Approved(identity))
+        .await
+        .unwrap();
+    output.write(b"download").await.unwrap();
+    assert_eq!(std::fs::read(&target).unwrap(), b"original");
+    output.finalize().await.unwrap();
+    assert_eq!(std::fs::read(&target).unwrap(), b"download");
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn approved_replacement_abort_drop_and_cancel_preserve_original() {
+    use rusty_engine::transfer::TransferControl;
+    use tokio_util::sync::CancellationToken;
+
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("result.bin");
+    std::fs::write(&target, b"original").unwrap();
+    for mode in 0..3 {
+        let identity = inspect_destination(&target).unwrap().unwrap();
+        let mut output = OutputFile::prepare(&target, &ReplacementPolicy::Approved(identity))
+            .await
+            .unwrap();
+        let partial = output.partial_path().to_owned();
+        output.write(b"incomplete").await.unwrap();
+        match mode {
+            0 => output.abort().await.unwrap(),
+            1 => drop(output),
+            _ => {
+                let control = TransferControl::new(CancellationToken::new());
+                assert!(control.try_cancel());
+                assert!(!output.finalize_controlled(control).await.unwrap());
+            }
+        }
+        assert_eq!(std::fs::read(&target).unwrap(), b"original");
+        assert!(!partial.exists());
+    }
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn approved_replacement_rejects_changed_contents_or_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("result.bin");
+    std::fs::write(&target, b"original").unwrap();
+    let identity = inspect_destination(&target).unwrap().unwrap();
+    std::fs::write(&target, b"changed length").unwrap();
+    let error = OutputFile::prepare(&target, &ReplacementPolicy::Approved(identity))
+        .await
+        .err()
+        .expect("stale contents approval must be rejected");
+    assert_eq!(error.kind, ErrorKind::DestinationChanged);
+    let identity = inspect_destination(&target).unwrap().unwrap();
+    std::fs::rename(&target, dir.path().join("old.bin")).unwrap();
+    std::fs::write(&target, b"changed length").unwrap();
+    assert!(
+        OutputFile::prepare(&target, &ReplacementPolicy::Approved(identity))
+            .await
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&target).unwrap(), b"changed length");
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn approved_original_cannot_be_changed_renamed_or_removed_during_download() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("result.bin");
+    std::fs::write(&target, b"original").unwrap();
+    let identity = inspect_destination(&target).unwrap().unwrap();
+    let output = OutputFile::prepare(&target, &ReplacementPolicy::Approved(identity))
+        .await
+        .unwrap();
+    assert!(std::fs::write(&target, b"external").is_err());
+    assert!(std::fs::rename(&target, dir.path().join("moved.bin")).is_err());
+    assert!(std::fs::remove_file(&target).is_err());
+    output.abort().await.unwrap();
+    assert_eq!(std::fs::read(&target).unwrap(), b"original");
 }
 
 #[cfg(windows)]

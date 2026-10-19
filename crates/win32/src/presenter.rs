@@ -109,9 +109,9 @@ impl ViewModel {
             remove: job.is_some_and(|s| s.state != JobState::Cancelling),
             retry: job.is_some_and(|s| {
                 s.state.can_retry()
-                    && s.error
-                        .as_ref()
-                        .is_none_or(|e| e.retained_partial.is_none())
+                    && s.error.as_ref().is_none_or(|e| {
+                        e.retained_partial.is_none() && e.retained_original.is_none()
+                    })
             }),
             open_file: job.is_some_and(|s| s.state == JobState::Completed),
             open_folder: job.is_some_and(|s| s.state.is_terminal()),
@@ -127,12 +127,23 @@ impl ViewModel {
             .values()
             .filter_map(|job| {
                 let error = job.error.as_ref()?;
-                let path = error.retained_partial.as_ref()?;
+                if error.retained_partial.is_none() && error.retained_original.is_none() {
+                    return None;
+                }
                 Some(format!(
-                    "{}\r\n{}\r\nPartial: {}",
+                    "{}\r\n{}{}{}",
                     job.filename,
                     error.message,
-                    path.display()
+                    error
+                        .retained_partial
+                        .as_ref()
+                        .map(|p| format!("\r\nPartial: {}", p.display()))
+                        .unwrap_or_default(),
+                    error
+                        .retained_original
+                        .as_ref()
+                        .map(|p| format!("\r\nOriginal backup: {}", p.display()))
+                        .unwrap_or_default()
                 ))
             })
             .collect();
@@ -170,9 +181,19 @@ pub fn format_snapshot(job: &JobSnapshot) -> RowText {
     let description = job
         .error
         .as_ref()
-        .map(|e| match &e.retained_partial {
-            Some(path) => format!("{} Partial: {}", e.message, path.display()),
-            None => e.message.clone(),
+        .map(|e| {
+            format!(
+                "{}{}{}",
+                e.message,
+                e.retained_partial
+                    .as_ref()
+                    .map(|p| format!(" Partial: {}", p.display()))
+                    .unwrap_or_default(),
+                e.retained_original
+                    .as_ref()
+                    .map(|p| format!(" Original backup: {}", p.display()))
+                    .unwrap_or_default()
+            )
         })
         .unwrap_or_else(|| {
             if job.description.is_empty() {

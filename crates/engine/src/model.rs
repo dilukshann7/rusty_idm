@@ -110,6 +110,7 @@ pub struct JobError {
     pub kind: ErrorKind,
     pub message: String,
     pub retained_partial: Option<PathBuf>,
+    pub retained_original: Option<PathBuf>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorKind {
@@ -129,10 +130,15 @@ impl JobError {
             kind,
             message: message.into(),
             retained_partial: None,
+            retained_original: None,
         }
     }
     pub fn retained(mut self, path: PathBuf) -> Self {
         self.retained_partial = Some(path);
+        self
+    }
+    pub fn original_retained(mut self, path: PathBuf) -> Self {
+        self.retained_original = Some(path);
         self
     }
 }

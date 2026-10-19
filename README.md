@@ -13,11 +13,11 @@ cancellation, removal of list entries, retry
 from the beginning, native destination pickers, transfer details, explicit file
 and folder opening, and a saved default destination. History is session-only.
 
-Existing files are preserved. Each download reserves a unique partial beside the
-destination; the final move refuses to replace a target that appears meanwhile.
-Existing-file replacement is explicitly disabled until a safe replacement
-transaction can be verified. A failed finalization retains its partial and shows
-the recovery path; choose a new filename through Add URL for a fresh download.
+Each download reserves a unique partial beside the destination. Ordinary downloads
+refuse to replace a target that appears meanwhile. Explicit duplicate overwrite
+guards the approved original until the new partial is complete and synced, then
+uses handle-based backup/commit/rollback. Failed finalization exposes recovery
+paths for retained partials and original backups.
 
 Add URL uses two native dialogs: enter the address and optional HTTP authorization,
 then review Download File Info (category, suggested filename/Save As, Browse,
