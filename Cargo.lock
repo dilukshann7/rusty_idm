@@ -826,6 +826,7 @@ name = "rusty-engine"
 version = "0.1.0"
 dependencies = [
  "reqwest",
+ "rusty-browser-bridge",
  "tempfile",
  "tokio",
  "tokio-util",
