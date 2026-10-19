@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/engine", "crates/win32"]
+members = ["crates/engine", "crates/win32", "crates/browser-bridge"]
 resolver = "2"
 
 [workspace.package]
