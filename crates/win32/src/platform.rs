@@ -21,6 +21,9 @@ pub fn wide(text: impl AsRef<OsStr>) -> Vec<u16> {
 pub fn resource(id: u16) -> PCWSTR {
     PCWSTR(id as usize as *const u16)
 }
+pub fn app_icon() -> windows::core::Result<HICON> {
+    unsafe { LoadIconW(Some(instance()?), resource(crate::commands::APP_ICON)) }
+}
 pub fn instance() -> windows::core::Result<windows::Win32::Foundation::HINSTANCE> {
     unsafe { Ok(GetModuleHandleW(None)?.into()) }
 }

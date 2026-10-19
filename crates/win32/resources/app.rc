@@ -2,6 +2,7 @@
 #include <commctrl.h>
 
 1 RT_MANIFEST "resources/app.manifest"
+501 ICON "../../assets/branding/rusty.ico"
 
 301 ICON "resources/icons/add.ico"
 302 ICON "resources/icons/stop.ico"
@@ -20,7 +21,7 @@ BEGIN
     BEGIN
         MENUITEM "&Add URL...\tCtrl+N", 1001
         MENUITEM SEPARATOR
-        MENUITEM "E&xit\tAlt+F4", 1009
+        MENUITEM "E&xit Rusty", 1009
     END
     POPUP "&File"
     BEGIN

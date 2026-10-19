@@ -520,7 +520,10 @@ pub enum InstanceOutcome {
     Forwarded,
 }
 impl AppInstance {
-    pub fn acquire_or_activate(session: &UserSession) -> Result<InstanceOutcome, crate::AppError> {
+    pub fn acquire_or_activate(
+        session: &UserSession,
+        activate: bool,
+    ) -> Result<InstanceOutcome, crate::AppError> {
         use windows::{
             core::PCWSTR,
             Win32::{
@@ -546,7 +549,11 @@ impl AppInstance {
                     )
                 })?;
             client
-                .request(Operation::Activate)
+                .request(if activate {
+                    Operation::Activate
+                } else {
+                    Operation::Ping
+                })
                 .and_then(|replies| replies.recv())
                 .map_err(|_| {
                     crate::AppError("Cannot activate the existing Rusty instance.".into())

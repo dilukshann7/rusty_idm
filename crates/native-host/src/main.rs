@@ -12,6 +12,16 @@ fn main() {
 }
 #[cfg(windows)]
 fn run() -> std::io::Result<()> {
+    let _installer_guard = rusty_browser_bridge::windows::OwnedHandle(
+        unsafe {
+            windows::Win32::System::Threading::CreateMutexW(
+                None,
+                false,
+                windows::core::w!("Local\\RustyDownloadManager.NativeHost.Running"),
+            )
+        }
+        .map_err(std::io::Error::from)?,
+    );
     use rusty_native_host::{config::HostConfig, host::run_host};
     let root = std::env::var_os("LOCALAPPDATA")
         .ok_or_else(|| std::io::Error::other("Missing local application directory"))?;

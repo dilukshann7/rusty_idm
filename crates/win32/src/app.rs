@@ -11,6 +11,7 @@ use crate::{
     platform::{self, message, resource, ComApartment},
     presenter::{Category, ViewModel},
     settings::{self, DoubleClickAction, Settings},
+    tray::{self, TrayIcon},
 };
 use crate::{
     browser_integration::{AppInstance, BrowserController, InstanceOutcome},
@@ -66,12 +67,18 @@ enum Action {
     Engine,
     Browser,
     Close,
+    Minimize,
+    TrayMenu,
+    RestoreTray,
+    EndSession,
 }
 #[derive(Default)]
 struct Signals {
     actions: RefCell<VecDeque<Action>>,
     alive: Cell<bool>,
     overflow: Cell<bool>,
+    taskbar_created: Cell<u32>,
+    session_shutdown: RefCell<Option<rusty_engine::EngineClient>>,
 }
 impl Signals {
     fn push(&self, action: Action) {
@@ -84,6 +91,9 @@ impl Signals {
                     | (Action::Selection, Action::Selection)
                     | (Action::Layout, Action::Layout)
                     | (Action::Close, Action::Close)
+                    | (Action::RestoreTray, Action::RestoreTray)
+                    | (Action::TrayMenu, Action::TrayMenu)
+                    | (Action::EndSession, Action::EndSession)
             )
         });
         if duplicate {
@@ -117,7 +127,7 @@ impl MainWindow {
                 hInstance: instance,
                 lpszClassName: w!("RustyDownloadManager.Main"),
                 hCursor: LoadCursorW(None, IDC_ARROW)?,
-                hIcon: LoadIconW(None, IDI_APPLICATION)?,
+                hIcon: platform::app_icon()?,
                 hbrBackground: GetSysColorBrush(COLOR_WINDOW),
                 ..Default::default()
             };
@@ -125,11 +135,14 @@ impl MainWindow {
                 return Err(windows::core::Error::from_thread().into());
             }
             let signals = Box::<Signals>::default();
+            signals
+                .taskbar_created
+                .set(RegisterWindowMessageW(w!("TaskbarCreated")));
             let dpi = GetDpiForSystem().max(96);
             let hwnd = CreateWindowExW(
                 WS_EX_CONTROLPARENT,
                 class.lpszClassName,
-                w!("Rusty Download Manager"),
+                w!("Rusty Download Manager 0.1.0"),
                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
@@ -181,11 +194,13 @@ struct AppState {
     controls: Controls,
     details: DetailsWindows,
     completions: CompletionWindows,
+    tray: TrayIcon,
     settings: Settings,
     category: Category,
     lifecycle: Lifecycle,
     shutdown_sent: bool,
     recovery_reported: bool,
+    session_ending: bool,
 }
 impl AppState {
     fn resolve_download_intent(
@@ -461,7 +476,7 @@ impl AppState {
         if self.lifecycle == Lifecycle::Closed {
             if !self.recovery_reported {
                 self.recovery_reported = true;
-                if let Some(report) = self.view.recovery_notice() {
+                if let Some(report) = self.view.recovery_notice().filter(|_| !self.session_ending) {
                     if let Err(error) = dialogs::show_recovery_notice(window.hwnd, &report) {
                         message(
                             Some(window.hwnd),
@@ -472,6 +487,7 @@ impl AppState {
                     }
                 }
             }
+            self.tray.remove();
             self.completions.close_all();
             self.details.close_all();
             window.destroy();
@@ -485,7 +501,41 @@ impl AppState {
                 self.browser_events(window)?;
             }
             Action::Browser => self.browser_events(window)?,
-            Action::Close => self.close(owner),
+            Action::Close => {
+                if self.tray.available() {
+                    unsafe {
+                        let _ = ShowWindow(owner, SW_HIDE);
+                    }
+                } else {
+                    self.close(owner);
+                }
+            }
+            Action::Minimize => {
+                if self.tray.available() {
+                    unsafe {
+                        let _ = ShowWindow(owner, SW_HIDE);
+                    }
+                }
+            }
+            Action::EndSession => {
+                self.session_ending = true;
+                if self.lifecycle.begin_close(self.view.active(), true) {
+                    if let Some(browser) = &self.browser {
+                        browser.close();
+                    }
+                    self.send_shutdown(owner);
+                }
+            }
+            Action::RestoreTray => {
+                if !self.tray.install() {
+                    platform::bring_to_front(owner);
+                }
+            }
+            Action::TrayMenu if self.lifecycle.accepts_submissions() => {
+                if let Some(command) = self.tray.show_menu()? {
+                    self.handle(window, Action::Command(command))?;
+                }
+            }
             Action::Layout => self.controls.layout(owner),
             Action::Dpi(dpi, rectangle) => {
                 self.controls.change_dpi(dpi)?;
@@ -556,6 +606,7 @@ impl AppState {
                 let selected = self.controls.selected();
                 let actions = self.view.actions(selected);
                 match id {
+                    SHOW_MANAGER => platform::bring_to_front(owner),
                     ADD => {
                         if let Some(download) = dialogs::show_add_download(owner, &self.settings)? {
                             let intent = self.resolve_download_intent(window, download, None)?;
@@ -580,7 +631,7 @@ impl AppState {
                             .refresh(owner, &self.view, self.category, false);
                     }
                     ABOUT => {
-                        message(Some(owner), "About Rusty", "Rusty Download Manager 0.1\n\nNative Windows controls and single-stream HTTP/HTTPS downloads.\nTwo simultaneous downloads. History lasts for this session.\n\nPause/resume, speed limits, guarded replacement and opt-in Chrome capture.\nChrome integration requires separate extension/native-host setup.", false);
+                        message(Some(owner), "About Rusty Download Manager", "Rusty Download Manager 0.1.0\n\nNative Windows controls and single-stream HTTP/HTTPS downloads.\nTwo simultaneous downloads. History lasts for this session.\n\nPause/resume, speed limits, guarded replacement and Chrome capture.\nClose the manager to keep Rusty in the tray. Use Exit to stop it.\nChrome integration requires one-time extension setup.", false);
                     }
                     _ => self.download_command(window, selected, id)?,
                 }
@@ -709,9 +760,20 @@ impl AppState {
 }
 
 pub fn run() -> Result<(), AppError> {
+    // Standard installer mutex: setup refuses to replace running executables.
+    let _installer_guard = rusty_browser_bridge::windows::OwnedHandle(unsafe {
+        windows::Win32::System::Threading::CreateMutexW(
+            None,
+            false,
+            w!("Local\\RustyDownloadManager.Running"),
+        )?
+    });
+    let background = std::env::args_os()
+        .skip(1)
+        .any(|argument| argument == "--background");
     let session = UserSession::current()
         .map_err(|_| AppError("Cannot determine browser session identity.".into()))?;
-    let _instance = match AppInstance::acquire_or_activate(&session)? {
+    let _instance = match AppInstance::acquire_or_activate(&session, !background)? {
         InstanceOutcome::Primary(instance) => instance,
         InstanceOutcome::Forwarded => return Ok(()),
     };
@@ -741,6 +803,7 @@ pub fn run() -> Result<(), AppError> {
     let controls = Controls::new(window.hwnd)?;
     let engine_wake = wake.clone();
     let engine = spawn_engine(Arc::new(move || engine_wake.wake()));
+    *window.signals.session_shutdown.borrow_mut() = Some(engine.client());
     let browser = BrowserController::new(engine.client(), Arc::new(move || wake.wake_browser()));
     let pipe = match PipeServer::start(session, browser.router()) {
         Ok(pipe) => pipe,
@@ -759,17 +822,27 @@ pub fn run() -> Result<(), AppError> {
         controls,
         details: DetailsWindows::default(),
         completions: CompletionWindows::default(),
+        tray: TrayIcon::new(window.hwnd),
         settings,
         category: Category::All,
         lifecycle: Lifecycle::Open,
         shutdown_sent: false,
         recovery_reported: false,
+        session_ending: false,
     };
     app.controls.layout(window.hwnd);
     app.controls
         .refresh(window.hwnd, &app.view, app.category, false);
+    let tray_ready = app.tray.install();
     unsafe {
-        let _ = ShowWindow(window.hwnd, SW_SHOW);
+        let _ = ShowWindow(
+            window.hwnd,
+            if background && tray_ready {
+                SW_HIDE
+            } else {
+                SW_SHOW
+            },
+        );
         let _ = windows::Win32::Graphics::Gdi::UpdateWindow(window.hwnd);
     }
     if let Some(warning) = warning {
@@ -781,6 +854,7 @@ pub fn run() -> Result<(), AppError> {
     }
     drop(pipe);
     drop(app.browser.take());
+    app.tray.remove();
     app.completions.close_all();
     app.details.close_all();
     window.destroy();
@@ -873,8 +947,14 @@ unsafe fn window_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                     signals.push(Action::Close);
                     return LRESULT(0);
                 }
-                WM_QUERYENDSESSION => {
-                    signals.push(Action::Close);
+                WM_QUERYENDSESSION => return LRESULT(1),
+                WM_ENDSESSION if wparam.0 != 0 => {
+                    // Atomic cancellation is independent of the outer message
+                    // loop, including while a modal file-info dialog is open.
+                    if let Some(client) = signals.session_shutdown.borrow().as_ref() {
+                        client.request_shutdown();
+                    }
+                    signals.push(Action::EndSession);
                     return LRESULT(0);
                 }
                 WM_COMMAND => {
@@ -888,7 +968,28 @@ unsafe fn window_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                     }));
                     return LRESULT(0);
                 }
-                WM_SIZE => signals.push(Action::Layout),
+                WM_SIZE => {
+                    if wparam.0 == SIZE_MINIMIZED as usize {
+                        // Main-window ownership is handled outside the callback.
+                        signals.push(Action::Minimize);
+                    } else {
+                        signals.push(Action::Layout);
+                    }
+                }
+                tray::TRAY_CALLBACK => {
+                    match (lparam.0 as u32) & 0xffff {
+                        WM_CONTEXTMENU => signals.push(Action::TrayMenu),
+                        windows::Win32::UI::Shell::NIN_SELECT
+                        | tray::TRAY_KEY_SELECT
+                        | WM_LBUTTONDBLCLK => signals.push(Action::Command(SHOW_MANAGER)),
+                        _ => {}
+                    }
+                    return LRESULT(0);
+                }
+                msg if msg != 0 && msg == signals.taskbar_created.get() => {
+                    signals.push(Action::RestoreTray);
+                    return LRESULT(0);
+                }
                 WM_DPICHANGED if lparam.0 != 0 => {
                     signals.push(Action::Dpi(
                         (wparam.0 & 0xffff) as u32,
@@ -1017,7 +1118,6 @@ impl AppState {
             let intent = if self.lifecycle.accepts_submissions()
                 && incoming.lease.state() == LeaseState::Pending
             {
-                platform::bring_to_front(window.hwnd);
                 match dialogs::show_browser_download(
                     window.hwnd,
                     &self.settings,

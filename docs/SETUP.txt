@@ -1,0 +1,12 @@
+Rusty Download Manager 0.1.0
+
+Rusty runs in the Windows notification area after setup. Closing the manager
+hides it; use the tray icon to reopen it or Exit. Sign-in startup is selected
+by default on the previous setup page. Windows must be awake and signed in.
+
+Chrome requires one-time user approval. Choose Connect Chrome, load the bundled
+extension as instructed, register its ID, and enable Capture public downloads
+in its popup. Existing integration and capture preferences are preserved.
+
+Downloads/history last for this process session; restart-resume is not supported.
+This local release is unsigned. No automatic publishing or updating is enabled.

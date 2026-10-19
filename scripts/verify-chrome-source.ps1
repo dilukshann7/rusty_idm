@@ -32,7 +32,7 @@ foreach ($file in Get-ChildItem -LiteralPath $extension -Recurse -Filter '*.js')
         if (-not (Test-Path -LiteralPath (Join-Path $file.DirectoryName $match.Groups[1].Value))) { throw 'Missing local JavaScript import.' }
     }
 }
-foreach ($relative in @('scripts/register-chrome-host.ps1','scripts/unregister-chrome-host.ps1','scripts/verify-chrome-source.ps1','scripts/tests/chrome-host-registration.Tests.ps1')) {
+foreach ($relative in @('scripts/register-chrome-host.ps1','scripts/unregister-chrome-host.ps1','scripts/verify-chrome-source.ps1','scripts/tests/chrome-host-registration.Tests.ps1','scripts/release-integration.ps1','scripts/chrome-integration.ps1','scripts/build-release.ps1','scripts/generate-branding.ps1')) {
     $tokens = $null; $errors = $null
     [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $taskRoot $relative), [ref]$tokens, [ref]$errors) | Out-Null
     if ($errors.Count) { throw "PowerShell syntax errors in $relative" }

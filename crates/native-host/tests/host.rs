@@ -10,7 +10,7 @@ fn unicode_spaced_gui_path_is_not_shell_expanded() {
     assert_eq!(command.get_program(), config.gui_exe.as_os_str());
     assert_eq!(
         command.get_args().collect::<Vec<_>>(),
-        vec!["--browser-integration"]
+        vec!["--browser-integration", "--background"]
     );
     assert!(config
         .validate_origin("chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/")

@@ -29,6 +29,8 @@ pub mod download_intent;
 mod icons;
 #[cfg(windows)]
 pub mod platform;
+#[cfg(windows)]
+mod tray;
 
 #[cfg(windows)]
 pub use app::{run, AppError};

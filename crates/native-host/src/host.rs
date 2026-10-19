@@ -6,6 +6,7 @@ use std::{
 pub fn gui_command(config: &HostConfig) -> Command {
     let mut command = Command::new(&config.gui_exe);
     command.arg("--browser-integration");
+    command.arg("--background");
     command
 }
 #[cfg(windows)]

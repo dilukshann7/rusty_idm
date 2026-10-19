@@ -219,3 +219,17 @@ checkbox is explanatory text, and the completion resource shrank from 348x170 to
 The source verifier passed for all 60 Rust files, native resources and other
 workspace assets; `git diff --check` passed. No compilation, installation, GUI
 launch, visual acceptance or test suite was run for this revision.
+
+## v0.1.0 release packaging, 2026-10-19
+
+Implemented the approved original branding, versioned executable identity,
+background/tray lifecycle, hidden/idempotent launch, login startup integration,
+guarded current-user installer/removal and visible Chrome setup helper. The
+existing compact completion/progress and context-menu changes are in the release.
+
+The Windows optimized build, Inno Setup compilation, source checks, artifact
+versions, archive contents/CRCs, static-CRT import inspection and SHA-256 checks
+passed. Bundled licenses cover 145 resolved dependencies. A GPT-6.1 Sol source
+review's Important shutdown finding was fixed and rechecked. No tests, app/setup
+launch, publishing or installation changes were performed for this release.
+See [exact release evidence and pending live acceptance](v0.1.0-release-validation.md).

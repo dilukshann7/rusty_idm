@@ -419,7 +419,7 @@ unsafe fn detail_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                 }
             }
             select_page(hwnd);
-            if let Ok(icon) = LoadIconW(None, IDI_APPLICATION) {
+            if let Ok(icon) = platform::app_icon() {
                 send(hwnd, WM_SETICON, ICON_SMALL as usize, icon.0 as isize);
             }
             let _ = ShowWindow(hwnd, SW_SHOW);

@@ -96,6 +96,10 @@ pub struct EngineClient {
     closing: Arc<AtomicBool>,
 }
 impl EngineClient {
+    /// Nonblocking session-end signal; also works while GUI modal loops are open.
+    pub fn request_shutdown(&self) {
+        self.closing.store(true, Ordering::Release);
+    }
     pub fn try_external(&self, command: ExternalCommand) -> Result<(), CommandError> {
         if self.closing.load(Ordering::Acquire) {
             return Err(CommandError::Closed);
@@ -222,6 +226,19 @@ async fn actor(
     let mut tick = tokio::time::interval(Duration::from_millis(100));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
+        // The GUI's WM_ENDSESSION callback can only signal, never borrow its
+        // AppState or join this thread. Observe that signal independently of
+        // the bounded command queue; the tick bounds an idle actor's wakeup.
+        if !shutdown && closing.load(Ordering::Acquire) {
+            shutdown = true;
+            receiver.close();
+            for job in jobs.values_mut() {
+                job.restart = false;
+                job.resume_after_pause = false;
+                cancel_job(job, &bus);
+            }
+            waiting.clear();
+        }
         if shutdown && tasks.is_empty() {
             bus.publish(Event::ShutdownComplete);
             break;

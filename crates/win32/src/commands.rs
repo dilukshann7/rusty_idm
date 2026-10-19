@@ -1,4 +1,6 @@
 pub const ADD: u16 = 1001;
+pub const APP_ICON: u16 = 501;
+pub const SHOW_MANAGER: u16 = 1023;
 pub const STOP: u16 = 1002;
 pub const STOP_ALL: u16 = 1003;
 pub const REMOVE: u16 = 1004;

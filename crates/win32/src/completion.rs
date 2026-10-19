@@ -62,7 +62,6 @@ impl CompletionWindows {
     pub fn show(&mut self, owner: HWND, snapshot: &JobSnapshot) -> Result<(), AppError> {
         // A retry may finish while its previous completion window is still open.
         self.windows.remove(&snapshot.id);
-        platform::bring_to_front(owner);
         let context = Box::new(CompleteWindow {
             hwnd: Cell::new(HWND::default()),
             icon: Cell::new(HICON::default()),
@@ -141,6 +140,9 @@ unsafe fn dialog_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, lparam.0);
             let context = &*(lparam.0 as *const CompleteWindow);
             context.hwnd.set(hwnd);
+            if let Ok(icon) = platform::app_icon() {
+                platform::send(hwnd, WM_SETICON, ICON_SMALL as usize, icon.0 as isize);
+            }
             let hundredths = context.snapshot.received as u128 * 100 / 1_048_576;
             value(
                 hwnd,

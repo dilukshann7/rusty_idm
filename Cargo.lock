@@ -838,9 +838,11 @@ dependencies = [
 name = "rusty-native-host"
 version = "0.1.0"
 dependencies = [
+ "embed-resource",
  "rusty-browser-bridge",
  "serde",
  "serde_json",
+ "windows",
 ]
 
 [[package]]
