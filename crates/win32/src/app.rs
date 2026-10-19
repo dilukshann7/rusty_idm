@@ -29,7 +29,7 @@ use std::{
     sync::Arc,
 };
 use windows::{
-    core::{w, PCWSTR},
+    core::w,
     Win32::{
         Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
         Graphics::Gdi::{GetSysColorBrush, COLOR_WINDOW},
@@ -689,7 +689,9 @@ impl AppState {
             DETAILS => {
                 self.details.show_or_update(owner, job)?;
             }
-            OPEN_FILE if actions.open_file => self.open(owner, Some(id), false)?,
+            OPEN_FILE if actions.open_file => {
+                completion::open_completed(owner, &job.destination, completion::OpenAction::Open)?;
+            }
             OPEN_WITH if actions.open_file => {
                 completion::open_completed(
                     owner,
@@ -697,7 +699,9 @@ impl AppState {
                     completion::OpenAction::OpenWith,
                 )?;
             }
-            OPEN_FOLDER => self.open(owner, Some(id), true)?,
+            OPEN_FOLDER => {
+                completion::open_completed(owner, &job.destination, completion::OpenAction::OpenFolder)?;
+            }
             REDOWNLOAD if context_menu::can_redownload(job) => {
                 if message(Some(owner), "Redownload?",
                     &format!("Download {} again from the beginning?\n\nAn existing destination file will be replaced only if the download succeeds.", job.filename), true)
@@ -711,49 +715,6 @@ impl AppState {
                 }
             }
             _ => {}
-        }
-        Ok(())
-    }
-    fn open(
-        &self,
-        owner: HWND,
-        selected: Option<rusty_engine::JobId>,
-        folder: bool,
-    ) -> Result<(), AppError> {
-        let Some(job) = selected.and_then(|id| self.view.jobs.get(&id)) else {
-            return Ok(());
-        };
-        let path = if folder {
-            job.destination
-                .parent()
-                .ok_or_else(|| AppError("No containing folder is available.".into()))?
-        } else {
-            &job.destination
-        };
-        if if folder {
-            !path.is_dir()
-        } else {
-            !path.is_file()
-        } {
-            return Err(AppError(
-                "The selected file or folder no longer exists.".into(),
-            ));
-        }
-        let path = platform::wide(path);
-        let result = unsafe {
-            windows::Win32::UI::Shell::ShellExecuteW(
-                Some(owner),
-                w!("open"),
-                PCWSTR(path.as_ptr()),
-                None,
-                None,
-                SW_SHOWNORMAL,
-            )
-        };
-        if result.0 as isize <= 32 {
-            return Err(AppError(
-                "Windows could not open the selected file or folder.".into(),
-            ));
         }
         Ok(())
     }
@@ -1086,7 +1047,7 @@ impl AppState {
                 }
                 if action != ExistingAction::Restart {
                     if let Some(job) = self.view.jobs.get(&job_id) {
-                        self.details.show_existing(owner, job)?;
+                        self.details.show_or_update(owner, job)?;
                     }
                 }
             }
@@ -1108,7 +1069,7 @@ impl AppState {
             if self.lifecycle.accepts_submissions() {
                 for id in presentations {
                     if let Some(snapshot) = self.view.jobs.get(&id) {
-                        self.details.show_existing(window.hwnd, snapshot)?;
+                        self.details.show_or_update(window.hwnd, snapshot)?;
                     }
                 }
             }

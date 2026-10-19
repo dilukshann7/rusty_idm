@@ -75,7 +75,7 @@ def write_package_readme(payload):
         "Read the [user guide](docs/USER_GUIDE.md) for Chrome capture, background "
         "startup and portable execution. See [release notes](docs/RELEASE_NOTES.md), "
         "[third-party notices](THIRD_PARTY.md) and [license](LICENSE).\n\n"
-        "Windows 10/11 x64. Unsigned local release. History is session-only. "
+        "Windows 10/11 x64. Unsigned release. History is session-only. "
         "Chrome needs one-time extension and website-access approval. Portable "
         "execution does not enable startup or register Chrome automatically.\n",
         encoding="utf-8",

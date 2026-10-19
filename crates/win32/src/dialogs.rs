@@ -587,13 +587,6 @@ struct DuplicateContext {
     lease: Option<CaptureLease>,
 }
 
-pub fn show_duplicate(
-    owner: HWND,
-    display_url: &str,
-    initial: DuplicateChoice,
-) -> Result<Option<(DuplicateChoice, bool)>, AppError> {
-    show_duplicate_with_lease(owner, display_url, initial, None)
-}
 pub fn show_duplicate_with_lease(
     owner: HWND,
     display_url: &str,

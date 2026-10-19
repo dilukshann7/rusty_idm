@@ -1,9 +1,0 @@
-REA evidence: ev_285c79f52c0bf141d1813f2a8ab00dfc097236fa322700a26a20074c04c0d2e2
-Assembly excerpt only; full record in overlap-evidence.json.
-0x568120: CALL 0x00565920
-0x568125: MOV ECX, dword ptr [ESP + 0x20]
-0x568129: MOV dword ptr [ESI + 0xbc], EBX
-0x56812f: MOV dword ptr [ECX], 0xfffffff5
-0x568135: JMP 0x005681e9
-0x56813a: CALL dword ptr [0x0067c4d0]
-0x568140: MOV EDX, dword ptr [ESP + 0x18]
