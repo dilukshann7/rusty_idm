@@ -16,6 +16,8 @@ pub mod browser_integration;
 #[cfg(windows)]
 mod completion;
 #[cfg(windows)]
+mod context_menu;
+#[cfg(windows)]
 mod controls;
 #[cfg(windows)]
 mod details;

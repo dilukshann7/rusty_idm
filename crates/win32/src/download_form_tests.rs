@@ -34,6 +34,7 @@ fn remembers_only_the_selected_category_folder_and_uses_it_next_time() {
         category_destinations: Default::default(),
         duplicate_choice: None,
         show_completion_dialog: true,
+        double_click_action: Default::default(),
     };
     remember_folder(
         &mut settings,

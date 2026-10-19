@@ -90,6 +90,10 @@ server is needed. Test HTTP fixtures bind loopback and run only within tests.
 
 ## Chrome download capture
 
+The download list has a native [right-click menu](docs/download-context-menu.md)
+with file actions, Redownload, transfer controls, Properties and a saved
+double-click preference. Unsupported operations are shown disabled.
+
 Successful downloads now show a compact [completion dialog](docs/completion-dialog.md)
 with file-opening actions and an optional saved opt-out.
 

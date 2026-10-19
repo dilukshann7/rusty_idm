@@ -55,6 +55,42 @@ BEGIN
     VK_RETURN, 1010, VIRTKEY
 END
 
+208 MENU
+BEGIN
+    POPUP "Download"
+    BEGIN
+        MENUITEM "&Open", 1006
+        MENUITEM "Open &with...", 1014
+        MENUITEM "Open &folder", 1007
+        MENUITEM SEPARATOR
+        MENUITEM "&Move/Rename (Ctrl-M)", 1015, GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "&Redownload", 1016
+        MENUITEM SEPARATOR
+        MENUITEM "Res&ume Download", 1013
+        MENUITEM "&Stop Download", 1002
+        MENUITEM SEPARATOR
+        MENUITEM "Refresh download &address", 1017, GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "Remo&ve", 1004
+        MENUITEM SEPARATOR
+        POPUP "Add to &queue", GRAYED
+        BEGIN
+            MENUITEM "Main download queue", 1018, GRAYED
+        END
+        MENUITEM "Delete from queue", 1019, GRAYED
+        MENUITEM SEPARATOR
+        POPUP "On &Double click"
+        BEGIN
+            MENUITEM "Open", 1020
+            MENUITEM "Open folder", 1021
+            MENUITEM "Properties", 1022
+        END
+        MENUITEM SEPARATOR
+        MENUITEM "&Properties", 1010
+    END
+END
+
 201 DIALOGEX 0, 0, 340, 58
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 EXSTYLE WS_EX_CONTROLPARENT

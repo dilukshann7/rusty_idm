@@ -10,7 +10,8 @@ use std::{collections::BTreeMap, mem::size_of};
 use windows::{
     core::{PCWSTR, PWSTR},
     Win32::{
-        Foundation::{HWND, LPARAM, RECT},
+        Foundation::{HWND, LPARAM, POINT, RECT},
+        Graphics::Gdi::{ClientToScreen, ScreenToClient},
         UI::{Controls::*, HiDpi::GetDpiForWindow, WindowsAndMessaging::*},
     },
 };
@@ -211,6 +212,84 @@ impl Controls {
             TVGN_CARET as usize,
             self.categories[0].0,
         );
+    }
+    /// Select the row under the pointer; empty space must not reuse an old row.
+    /// Keyboard invocation anchors the menu beneath the selected row.
+    pub fn context_target(&self, mut screen: POINT) -> Option<(JobId, POINT)> {
+        let row = if screen.x == -1 && screen.y == -1 {
+            let row = send(
+                self.list,
+                LVM_GETNEXTITEM,
+                usize::MAX,
+                LVNI_SELECTED as isize,
+            )
+            .0;
+            if row < 0 {
+                return None;
+            }
+            send(self.list, LVM_ENSUREVISIBLE, row as usize, 0);
+            let mut rect = RECT {
+                left: LVIR_BOUNDS as i32,
+                ..Default::default()
+            };
+            if send(
+                self.list,
+                LVM_GETITEMRECT,
+                row as usize,
+                &mut rect as *mut _ as isize,
+            )
+            .0 == 0
+            {
+                return None;
+            }
+            screen = POINT {
+                x: rect.left + scale(16, self.dpi),
+                y: rect.bottom,
+            };
+            if !unsafe { ClientToScreen(self.list, &mut screen) }.as_bool() {
+                return None;
+            }
+            row
+        } else {
+            let mut client = screen;
+            if !unsafe { ScreenToClient(self.list, &mut client) }.as_bool() {
+                return None;
+            }
+            let mut hit = LVHITTESTINFO {
+                pt: client,
+                ..Default::default()
+            };
+            let row = send(
+                self.list,
+                LVM_SUBITEMHITTEST,
+                0,
+                &mut hit as *mut _ as isize,
+            )
+            .0;
+            if row < 0 {
+                return None;
+            }
+            row
+        };
+        let id = *self.rows.get(row as usize)?;
+        let mut item = LVITEMW {
+            stateMask: LIST_VIEW_ITEM_STATE_FLAGS(LVIS_SELECTED.0 | LVIS_FOCUSED.0),
+            ..Default::default()
+        };
+        send(
+            self.list,
+            LVM_SETITEMSTATE,
+            usize::MAX,
+            &item as *const _ as isize,
+        );
+        item.state = item.stateMask;
+        send(
+            self.list,
+            LVM_SETITEMSTATE,
+            row as usize,
+            &item as *const _ as isize,
+        );
+        Some((id, screen))
     }
     pub fn refresh(&mut self, owner: HWND, view: &ViewModel, category: Category, closing: bool) {
         let selected = self.selected();

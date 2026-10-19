@@ -16,6 +16,16 @@ pub struct Settings {
     pub duplicate_choice: Option<crate::duplicates::DuplicateChoice>,
     #[serde(default = "show_completion_by_default")]
     pub show_completion_dialog: bool,
+    #[serde(default)]
+    pub double_click_action: DoubleClickAction,
+}
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DoubleClickAction {
+    Open,
+    OpenFolder,
+    #[default]
+    Properties,
 }
 fn show_completion_by_default() -> bool {
     true
@@ -168,6 +178,7 @@ pub fn defaults() -> Result<Settings, SettingsError> {
             category_destinations: Default::default(),
             duplicate_choice: None,
             show_completion_dialog: true,
+            double_click_action: DoubleClickAction::default(),
             default_destination: PathBuf::from(folder),
         })
     }

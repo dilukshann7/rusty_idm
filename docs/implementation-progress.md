@@ -193,3 +193,17 @@ Windows debug compilation and source checks (59 Rust files) passed. The installe
 GUI was replaced and its hash matched the build output. No test suite, live
 completion/button/persistence exercise or visual comparison was run. See
 [completion behavior](completion-dialog.md).
+
+## Download list context menu, 2026-10-19
+
+Added the screenshot's native popup layout, mouse/keyboard targeting, file actions,
+confirmed guarded Redownload, transfer controls, Properties and a persisted
+double-click preference. Move/Rename, address refresh and queue operations remain
+disabled because these features are not implemented. See
+[context menu behavior](download-context-menu.md).
+
+Source verification passed for 60 Rust files, resources, manifests, native assets,
+extension syntax and document links; `git diff --check` passed. This change was
+not compiled, installed or launched, and no test suite was run, following the
+user's execution constraint. Existing test fixtures only received the required
+settings field/schema-count adjustment. Live menu/action acceptance is deferred.

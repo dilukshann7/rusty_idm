@@ -2,6 +2,7 @@ use crate::completion::{self, CompletionAction, CompletionWindows};
 use crate::{
     bridge::{self, WakeTarget},
     commands::*,
+    context_menu,
     controls::{scale, Controls},
     details::DetailsWindows,
     dialogs,
@@ -9,7 +10,7 @@ use crate::{
     lifecycle::Lifecycle,
     platform::{self, message, resource, ComApartment},
     presenter::{Category, ViewModel},
-    settings::{self, Settings},
+    settings::{self, DoubleClickAction, Settings},
 };
 use crate::{
     browser_integration::{AppInstance, BrowserController, InstanceOutcome},
@@ -29,7 +30,7 @@ use std::{
 use windows::{
     core::{w, PCWSTR},
     Win32::{
-        Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
+        Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
         Graphics::Gdi::{GetSysColorBrush, COLOR_WINDOW},
         UI::{Controls::*, HiDpi::*, WindowsAndMessaging::*},
     },
@@ -56,6 +57,8 @@ impl From<settings::SettingsError> for AppError {
 
 enum Action {
     Command(u16),
+    ContextMenu(POINT),
+    DoubleClick,
     Category(Category),
     Selection,
     Layout,
@@ -86,7 +89,12 @@ impl Signals {
         if duplicate {
             return;
         }
-        if actions.len() >= 128 && matches!(action, Action::Command(_)) {
+        if actions.len() >= 128
+            && matches!(
+                action,
+                Action::Command(_) | Action::ContextMenu(_) | Action::DoubleClick
+            )
+        {
             self.overflow.set(true);
             return;
         }
@@ -508,6 +516,42 @@ impl AppState {
                     .actions(owner, &self.view, self.lifecycle != Lifecycle::Open)
             }
             Action::Command(EXIT) => self.close(owner),
+            Action::ContextMenu(position) if self.lifecycle.accepts_submissions() => {
+                if let Some((selected, position)) = self.controls.context_target(position) {
+                    let command = self
+                        .view
+                        .jobs
+                        .get(&selected)
+                        .map(|job| {
+                            context_menu::show(
+                                owner,
+                                position,
+                                job,
+                                &self.view.actions(Some(selected)),
+                                self.settings.double_click_action,
+                            )
+                        })
+                        .transpose()?
+                        .flatten();
+                    // Timers only queued signals during TrackPopupMenu. Apply the
+                    // latest engine state before acting on this captured job.
+                    self.events(window);
+                    if self.lifecycle.accepts_submissions() {
+                        if let Some(command) = command {
+                            self.download_command(window, Some(selected), command)?;
+                        }
+                    }
+                }
+            }
+            Action::DoubleClick if self.lifecycle.accepts_submissions() => {
+                let selected = self.controls.selected();
+                let command = match self.settings.double_click_action {
+                    DoubleClickAction::Open if self.view.actions(selected).open_file => OPEN_FILE,
+                    DoubleClickAction::OpenFolder => OPEN_FOLDER,
+                    _ => DETAILS,
+                };
+                self.download_command(window, selected, command)?;
+            }
             Action::Command(id) if self.lifecycle.accepts_submissions() => {
                 let selected = self.controls.selected();
                 let actions = self.view.actions(selected);
@@ -518,21 +562,6 @@ impl AppState {
                             self.execute_manual_intent(owner, intent)?;
                         }
                     }
-                    START if actions.start => {
-                        if let Some(id) = selected {
-                            let command = if self
-                                .view
-                                .jobs
-                                .get(&id)
-                                .is_some_and(|s| s.state == rusty_engine::JobState::Paused)
-                            {
-                                Command::Resume(id)
-                            } else {
-                                Command::Start(id)
-                            };
-                            self.command(owner, command);
-                        }
-                    }
                     OPTIONS => {
                         if let Some(settings) = dialogs::show_options(owner, &self.settings)? {
                             settings::save(&settings)?;
@@ -541,31 +570,9 @@ impl AppState {
                                 .set_show_again(self.settings.show_completion_dialog);
                         }
                     }
-                    STOP if actions.stop => {
-                        if let Some(id) = selected {
-                            self.command(owner, Command::Cancel(id));
-                        }
-                    }
                     STOP_ALL if actions.stop_all => {
                         self.command(owner, Command::CancelAll);
                     }
-                    REMOVE if actions.remove => {
-                        if let Some(id) = selected {
-                            self.command(owner, Command::Remove(id));
-                        }
-                    }
-                    RETRY if actions.retry => {
-                        if let Some(id) = selected {
-                            self.command(owner, Command::Retry(id));
-                        }
-                    }
-                    DETAILS if actions.details => {
-                        if let Some(snapshot) = selected.and_then(|id| self.view.jobs.get(&id)) {
-                            self.details.show_or_update(owner, snapshot)?;
-                        }
-                    }
-                    OPEN_FILE if actions.open_file => self.open(owner, selected, false)?,
-                    OPEN_FOLDER if actions.open_folder => self.open(owner, selected, true)?,
                     CATEGORY_ALL => {
                         self.controls.select_all_category();
                         self.category = Category::All;
@@ -575,7 +582,81 @@ impl AppState {
                     ABOUT => {
                         message(Some(owner), "About Rusty", "Rusty Download Manager 0.1\n\nNative Windows controls and single-stream HTTP/HTTPS downloads.\nTwo simultaneous downloads. History lasts for this session.\n\nPause/resume, speed limits, guarded replacement and opt-in Chrome capture.\nChrome integration requires separate extension/native-host setup.", false);
                     }
-                    _ => {}
+                    _ => self.download_command(window, selected, id)?,
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    fn download_command(
+        &mut self,
+        window: &MainWindow,
+        selected: Option<rusty_engine::JobId>,
+        command: u16,
+    ) -> Result<(), AppError> {
+        let owner = window.hwnd;
+        if let Some(preference) = match command {
+            DOUBLE_CLICK_OPEN => Some(DoubleClickAction::Open),
+            DOUBLE_CLICK_FOLDER => Some(DoubleClickAction::OpenFolder),
+            DOUBLE_CLICK_PROPERTIES => Some(DoubleClickAction::Properties),
+            _ => None,
+        } {
+            let mut settings = self.settings.clone();
+            settings.double_click_action = preference;
+            settings::save(&settings)?;
+            self.settings = settings;
+            return Ok(());
+        }
+        let Some(id) = selected else {
+            return Ok(());
+        };
+        let Some(job) = self.view.jobs.get(&id) else {
+            return Ok(());
+        };
+        let actions = self.view.actions(Some(id));
+        match command {
+            START if actions.start => {
+                self.command(
+                    owner,
+                    if job.state == rusty_engine::JobState::Paused {
+                        Command::Resume(id)
+                    } else {
+                        Command::Start(id)
+                    },
+                );
+            }
+            STOP if actions.stop => {
+                self.command(owner, Command::Cancel(id));
+            }
+            REMOVE if actions.remove => {
+                self.command(owner, Command::Remove(id));
+            }
+            RETRY if actions.retry => {
+                self.command(owner, Command::Retry(id));
+            }
+            DETAILS => {
+                self.details.show_or_update(owner, job)?;
+            }
+            OPEN_FILE if actions.open_file => self.open(owner, Some(id), false)?,
+            OPEN_WITH if actions.open_file => {
+                completion::open_completed(
+                    owner,
+                    &job.destination,
+                    completion::OpenAction::OpenWith,
+                )?;
+            }
+            OPEN_FOLDER => self.open(owner, Some(id), true)?,
+            REDOWNLOAD if context_menu::can_redownload(job) => {
+                if message(Some(owner), "Redownload?",
+                    &format!("Download {} again from the beginning?\n\nAn existing destination file will be replaced only if the download succeeds.", job.filename), true)
+                {
+                    self.events(window);
+                    if self.lifecycle.accepts_submissions()
+                        && self.view.jobs.get(&id).is_some_and(context_menu::can_redownload)
+                    {
+                        self.command(owner, Command::Restart(id));
+                    }
                 }
             }
             _ => {}
@@ -800,6 +881,13 @@ unsafe fn window_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                     signals.push(Action::Command((wparam.0 & 0xffff) as u16));
                     return LRESULT(0);
                 }
+                WM_CONTEXTMENU if GetDlgCtrlID(HWND(wparam.0 as *mut _)) == LIST as i32 => {
+                    signals.push(Action::ContextMenu(POINT {
+                        x: (lparam.0 as u16 as i16) as i32,
+                        y: ((lparam.0 >> 16) as u16 as i16) as i32,
+                    }));
+                    return LRESULT(0);
+                }
                 WM_SIZE => signals.push(Action::Layout),
                 WM_DPICHANGED if lparam.0 != 0 => {
                     signals.push(Action::Dpi(
@@ -827,7 +915,13 @@ unsafe fn window_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                             }
                         }
                         (LIST, LVN_ITEMCHANGED) => signals.push(Action::Selection),
-                        (LIST, NM_DBLCLK | NM_RETURN) => signals.push(Action::Command(DETAILS)),
+                        (LIST, NM_DBLCLK) => {
+                            let item = &*(lparam.0 as *const NMITEMACTIVATE);
+                            if item.iItem >= 0 {
+                                signals.push(Action::DoubleClick);
+                            }
+                        }
+                        (LIST, NM_RETURN) => signals.push(Action::Command(DETAILS)),
                         _ => {}
                     }
                 }
