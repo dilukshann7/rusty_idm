@@ -219,3 +219,21 @@ ranges/changed files/weak validators/unknown lengths, invalid ranges, cancelled
 paused transfers, live throttle removal, and three-job admission/shutdown. Pure
 tests cover validation, pacing interrupts, state transitions and presenter actions.
 None were executed; compilation, test execution and GUI interaction remain Not run.
+
+
+## Chrome capture source implementation, 2026-10-19
+
+[Chrome integration](chrome-integration.md) records the new extension, native host,
+secured transport, actor receipts, compact dialog integration and session recovery.
+All eight plan components are implemented in source. Authored Rust/JavaScript/Pester
+tests remain unexecuted. The source verifier covers all four exact workspace
+packages, Rust formatting/parsing, native assets, extension JSON/imports/icons,
+JavaScript syntax and PowerShell parsing. `git diff --check` is also required.
+Compilation, runtime tests, live GUI/Chrome behavior, wrong-user transport attempts
+and registration/unregistration remain Not run; no working binary is claimed.
+
+Final source checks passed for 58 Rust files and all four workspace packages.
+The partial independent GPT-6.1 Sol review identified type/concurrency issues;
+corrections and regression tests were authored, followed by author source review.
+The independent review ended at a usage limit. Runtime RED/GREEN, the full test
+suite, compiled binaries and live Chrome/setup acceptance remain Not run.

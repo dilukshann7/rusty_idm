@@ -5,6 +5,7 @@ use windows::Win32::{
 };
 pub const ENGINE_WAKE: u32 = WM_APP + 1;
 pub const DETAIL_CANCEL: u32 = WM_APP + 2;
+pub const BROWSER_WAKE: u32 = WM_APP + 3;
 pub const HOUSEKEEPING_TIMER: usize = 1;
 
 pub struct WakeTarget {
@@ -35,6 +36,19 @@ impl WakeTarget {
         let target = self.target.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(hwnd) = *target {
             (self.notify)(hwnd);
+        }
+    }
+    pub fn wake_browser(&self) {
+        let target = self.target.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(hwnd) = *target {
+            unsafe {
+                let _ = PostMessageW(
+                    Some(HWND(hwnd as *mut _)),
+                    BROWSER_WAKE,
+                    WPARAM(0),
+                    LPARAM(0),
+                );
+            }
         }
     }
     /// Serializes against the last PostMessage before the main HWND is destroyed.

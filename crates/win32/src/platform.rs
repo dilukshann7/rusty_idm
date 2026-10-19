@@ -21,6 +21,9 @@ pub fn wide(text: impl AsRef<OsStr>) -> Vec<u16> {
 pub fn resource(id: u16) -> PCWSTR {
     PCWSTR(id as usize as *const u16)
 }
+pub fn app_icon() -> windows::core::Result<HICON> {
+    unsafe { LoadIconW(Some(instance()?), resource(crate::commands::APP_ICON)) }
+}
 pub fn instance() -> windows::core::Result<windows::Win32::Foundation::HINSTANCE> {
     unsafe { Ok(GetModuleHandleW(None)?.into()) }
 }
@@ -43,6 +46,21 @@ pub fn text(hwnd: HWND) -> String {
 }
 pub fn item(dialog: HWND, id: i32) -> windows::core::Result<HWND> {
     unsafe { GetDlgItem(Some(dialog), id) }
+}
+/// Called on the GUI thread for an explicit browser handoff or activation.
+pub fn bring_to_front(hwnd: HWND) {
+    unsafe {
+        let _ = ShowWindow(
+            hwnd,
+            if IsIconic(hwnd).as_bool() {
+                SW_RESTORE
+            } else {
+                SW_SHOW
+            },
+        );
+        let _ = BringWindowToTop(hwnd);
+        let _ = SetForegroundWindow(hwnd);
+    }
 }
 pub fn message(owner: Option<HWND>, title: &str, text: &str, confirm: bool) -> bool {
     let title = wide(title);

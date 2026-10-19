@@ -6,6 +6,10 @@ use crate::{
     settings::Settings,
     AppError,
 };
+use rusty_browser_bridge::{
+    lease::{CaptureLease, LeaseState},
+    protocol::CaptureRequest,
+};
 use rusty_engine::{validate_request, DownloadRequest, ReplacementPolicy};
 use std::{
     cell::RefCell,
@@ -43,12 +47,14 @@ struct Draft {
     remember: bool,
     deferred: bool,
     duplicate_choice: Option<DuplicateChoice>,
+    show_completion_dialog: bool,
 }
 struct Context {
     mode: Mode,
     draft: Draft,
     settings: Settings,
     result: RefCell<Option<Draft>>,
+    lease: Option<CaptureLease>,
 }
 pub struct AddedDownload {
     pub request: DownloadRequest,
@@ -65,7 +71,7 @@ pub fn show_add_download(
         ..Default::default()
     };
     loop {
-        let Some(address) = show(owner, Mode::Address, &draft, settings)? else {
+        let Some(address) = show(owner, Mode::Address, &draft, settings, None)? else {
             return Ok(None);
         };
         draft = address;
@@ -82,11 +88,23 @@ pub fn show_add_download(
             }
         }
     }
+    finish_download(owner, settings, draft, None)
+}
+
+fn finish_download(
+    owner: HWND,
+    settings: &Settings,
+    mut draft: Draft,
+    lease: Option<&CaptureLease>,
+) -> Result<Option<AddedDownload>, AppError> {
     loop {
-        let Some(info) = show(owner, Mode::Info, &draft, settings)? else {
+        let Some(info) = show(owner, Mode::Info, &draft, settings, lease)? else {
             return Ok(None);
         };
         draft = info;
+        if lease.is_some_and(|l| l.state() != LeaseState::Pending) {
+            return Ok(None);
+        }
         if draft.category.trim().is_empty() || draft.category.chars().any(char::is_control) {
             message(
                 Some(owner),
@@ -142,10 +160,11 @@ pub fn show_options(owner: HWND, settings: &Settings) -> Result<Option<Settings>
     let mut draft = Draft {
         path: settings.default_destination.to_string_lossy().into_owned(),
         duplicate_choice: settings.duplicate_choice.clone(),
+        show_completion_dialog: settings.show_completion_dialog,
         ..Default::default()
     };
     loop {
-        let Some(chosen) = show(owner, Mode::Options, &draft, settings)? else {
+        let Some(chosen) = show(owner, Mode::Options, &draft, settings, None)? else {
             return Ok(None);
         };
         draft = chosen;
@@ -162,6 +181,7 @@ pub fn show_options(owner: HWND, settings: &Settings) -> Result<Option<Settings>
         let mut updated = settings.clone();
         updated.default_destination = folder;
         updated.duplicate_choice = draft.duplicate_choice;
+        updated.show_completion_dialog = draft.show_completion_dialog;
         return Ok(Some(updated));
     }
 }
@@ -170,12 +190,14 @@ fn show(
     mode: Mode,
     draft: &Draft,
     settings: &Settings,
+    lease: Option<&CaptureLease>,
 ) -> Result<Option<Draft>, AppError> {
     let context = Box::new(Context {
         mode,
         draft: draft.clone(),
         settings: settings.clone(),
         result: RefCell::new(None),
+        lease: lease.cloned(),
     });
     let id = match mode {
         Mode::Address => ADD_DIALOG,
@@ -305,6 +327,9 @@ unsafe fn dialog_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, lparam.0);
             let context = &*(lparam.0 as *const Context);
             let draft = &context.draft;
+            if context.lease.is_some() {
+                SetTimer(Some(hwnd), 7, 250, None);
+            }
             match context.mode {
                 Mode::Address => {
                     if let Ok(edit) = item(hwnd, URL_EDIT) {
@@ -322,7 +347,12 @@ unsafe fn dialog_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                     {
                         platform::send(control, STM_SETICON, icon.0 as usize, 0);
                     }
-                    set_value(hwnd, URL_EDIT, &draft.url);
+                    let display = if context.lease.is_some() {
+                        redact_url(&draft.url)
+                    } else {
+                        draft.url.clone()
+                    };
+                    set_value(hwnd, URL_EDIT, &display);
                     for category in CATEGORIES {
                         add_choice(hwnd, CATEGORY_COMBO, category);
                     }
@@ -366,8 +396,12 @@ unsafe fn dialog_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                     if let Ok(combo) = item(hwnd, DUPLICATE_ACTION) {
                         platform::send(combo, CB_SETCURSEL, selected, 0);
                     }
+                    set_checked(hwnd, OPTION_COMPLETION, draft.show_completion_dialog);
                     enable_duplicate_action(hwnd);
                 }
+            }
+            if context.lease.is_some() {
+                platform::bring_to_front(hwnd);
             }
             return 1;
         }
@@ -376,7 +410,18 @@ unsafe fn dialog_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             return 0;
         }
         let context = &*pointer;
+        if context
+            .lease
+            .as_ref()
+            .is_some_and(|l| l.state() != LeaseState::Pending)
+        {
+            let _ = EndDialog(hwnd, 0);
+            return 1;
+        }
         match msg {
+            WM_TIMER => {
+                return 1;
+            }
             WM_COMMAND => {
                 let id = (wparam.0 & 0xffff) as i32;
                 let notification = ((wparam.0 >> 16) & 0xffff) as u32;
@@ -398,6 +443,7 @@ unsafe fn dialog_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                                 result.deferred = id == DOWNLOAD_LATER;
                             }
                             Mode::Options => {
+                                result.show_completion_dialog = checked(hwnd, OPTION_COMPLETION);
                                 result.path = value(hwnd, PATH_EDIT);
                                 result.duplicate_choice = if checked(hwnd, DUPLICATE_ASK) {
                                     None
@@ -538,6 +584,7 @@ struct DuplicateContext {
     display_url: String,
     initial: DuplicateChoice,
     result: RefCell<Option<(DuplicateChoice, bool)>>,
+    lease: Option<CaptureLease>,
 }
 
 pub fn show_duplicate(
@@ -545,9 +592,18 @@ pub fn show_duplicate(
     display_url: &str,
     initial: DuplicateChoice,
 ) -> Result<Option<(DuplicateChoice, bool)>, AppError> {
+    show_duplicate_with_lease(owner, display_url, initial, None)
+}
+pub fn show_duplicate_with_lease(
+    owner: HWND,
+    display_url: &str,
+    initial: DuplicateChoice,
+    lease: Option<&CaptureLease>,
+) -> Result<Option<(DuplicateChoice, bool)>, AppError> {
     let context = Box::new(DuplicateContext {
         display_url: display_url.to_owned(),
         initial,
+        lease: lease.cloned(),
         result: RefCell::new(None),
     });
     let result = unsafe {
@@ -575,6 +631,9 @@ unsafe extern "system" fn duplicate_proc(
         if msg == WM_INITDIALOG {
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, lparam.0);
             let context = &*(lparam.0 as *const DuplicateContext);
+            if context.lease.is_some() {
+                SetTimer(Some(hwnd), 7, 250, None);
+            }
             set_value(hwnd, DUPLICATE_URL, &context.display_url);
             let selected = match &context.initial {
                 DuplicateChoice::Numbered => DUPLICATE_NUMBERED,
@@ -582,6 +641,9 @@ unsafe extern "system" fn duplicate_proc(
                 DuplicateChoice::Existing => DUPLICATE_EXISTING,
             };
             set_checked(hwnd, selected, true);
+            if context.lease.is_some() {
+                platform::bring_to_front(hwnd);
+            }
             if let Ok(edit) = item(hwnd, DUPLICATE_URL) {
                 let _ = SetFocus(Some(edit));
                 platform::send(edit, EM_SETSEL, 0, -1);
@@ -592,7 +654,16 @@ unsafe extern "system" fn duplicate_proc(
         if pointer.is_null() {
             return 0;
         }
+        if (&*pointer)
+            .lease
+            .as_ref()
+            .is_some_and(|l| l.state() != LeaseState::Pending)
+        {
+            let _ = EndDialog(hwnd, 0);
+            return 1;
+        }
         match msg {
+            WM_TIMER => 1,
             WM_COMMAND if (wparam.0 & 0xffff) == 1 => {
                 let choice = if checked(hwnd, DUPLICATE_NUMBERED) {
                     DuplicateChoice::Numbered
@@ -669,4 +740,41 @@ unsafe extern "system" fn recovery_proc(
         }
     })
     .unwrap_or(0)
+}
+
+fn redact_url(address: &str) -> String {
+    match url::Url::parse(address) {
+        Ok(mut u) => {
+            let _ = u.set_username("");
+            let _ = u.set_password(None);
+            u.set_query(None);
+            u.set_fragment(None);
+            u.into()
+        }
+        Err(_) => "Invalid address".into(),
+    }
+}
+pub fn show_browser_download(
+    owner: HWND,
+    settings: &Settings,
+    capture: &CaptureRequest,
+    lease: &CaptureLease,
+) -> Result<Option<AddedDownload>, AppError> {
+    if lease.state() != LeaseState::Pending {
+        return Ok(None);
+    }
+    let filename =
+        crate::download_form::filename_hint(&capture.url, capture.filename_hint.as_deref())
+            .map_err(|_| AppError("Invalid browser download.".into()))?;
+    let draft = Draft {
+        url: capture.url.clone(),
+        path: download_form::folder_for(settings, "General")
+            .join(filename)
+            .to_string_lossy()
+            .into_owned(),
+        category: "General".into(),
+        remember: true,
+        ..Default::default()
+    };
+    finish_download(owner, settings, draft, Some(lease))
 }

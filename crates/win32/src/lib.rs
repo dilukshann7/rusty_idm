@@ -12,15 +12,25 @@ mod app;
 #[cfg(windows)]
 pub mod bridge;
 #[cfg(windows)]
+pub mod browser_integration;
+#[cfg(windows)]
+mod completion;
+#[cfg(windows)]
+mod context_menu;
+#[cfg(windows)]
 mod controls;
 #[cfg(windows)]
 mod details;
 #[cfg(windows)]
 mod dialogs;
 #[cfg(windows)]
+pub mod download_intent;
+#[cfg(windows)]
 mod icons;
 #[cfg(windows)]
 pub mod platform;
+#[cfg(windows)]
+mod tray;
 
 #[cfg(windows)]
 pub use app::{run, AppError};

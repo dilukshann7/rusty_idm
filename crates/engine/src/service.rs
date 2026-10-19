@@ -1,7 +1,12 @@
+use crate::submissions::*;
 use crate::{
     events::{Event, EventBus},
     transfer::{self, ProgressSink, TransferControl, TransferOutcome, TransferProgress},
     *,
+};
+use rusty_browser_bridge::{
+    lease::LeaseFailure,
+    protocol::{RequestId, MAX_RECEIPTS, RETENTION},
 };
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -21,6 +26,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 pub enum Command {
+    External(ExternalCommand),
     Submit(DownloadRequest),
     Start(JobId),
     Cancel(JobId),
@@ -84,7 +90,38 @@ pub struct EngineHandle {
     closing: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
+#[derive(Clone)]
+pub struct EngineClient {
+    sender: mpsc::Sender<Command>,
+    closing: Arc<AtomicBool>,
+}
+impl EngineClient {
+    /// Nonblocking session-end signal; also works while GUI modal loops are open.
+    pub fn request_shutdown(&self) {
+        self.closing.store(true, Ordering::Release);
+    }
+    pub fn try_external(&self, command: ExternalCommand) -> Result<(), CommandError> {
+        if self.closing.load(Ordering::Acquire) {
+            return Err(CommandError::Closed);
+        }
+        self.sender
+            .try_send(Command::External(command))
+            .map_err(|e| match e {
+                mpsc::error::TrySendError::Full(_) => CommandError::QueueFull,
+                mpsc::error::TrySendError::Closed(_) => CommandError::Closed,
+            })
+    }
+}
 impl EngineHandle {
+    pub fn client(&self) -> EngineClient {
+        EngineClient {
+            sender: self.sender.clone(),
+            closing: self.closing.clone(),
+        }
+    }
+    pub fn try_external(&self, command: ExternalCommand) -> Result<(), CommandError> {
+        self.client().try_external(command)
+    }
     pub fn find_duplicate(&self, request: &DownloadRequest) -> Option<JobSnapshot> {
         self.bus.find_duplicate(request)
     }
@@ -184,10 +221,24 @@ async fn actor(
     let mut task_jobs: HashMap<Id, JobId> = HashMap::new();
     let progress: ProgressMap = Arc::new(Mutex::new(HashMap::new()));
     let mut next_id = 1u64;
+    let mut receipts: HashMap<RequestId, Record> = HashMap::new();
     let mut shutdown = false;
     let mut tick = tokio::time::interval(Duration::from_millis(100));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
+        // The GUI's WM_ENDSESSION callback can only signal, never borrow its
+        // AppState or join this thread. Observe that signal independently of
+        // the bounded command queue; the tick bounds an idle actor's wakeup.
+        if !shutdown && closing.load(Ordering::Acquire) {
+            shutdown = true;
+            receiver.close();
+            for job in jobs.values_mut() {
+                job.restart = false;
+                job.resume_after_pause = false;
+                cancel_job(job, &bus);
+            }
+            waiting.clear();
+        }
         if shutdown && tasks.is_empty() {
             bus.publish(Event::ShutdownComplete);
             break;
@@ -196,18 +247,53 @@ async fn actor(
             biased;
             command = receiver.recv(), if !shutdown => {
                 match command {
+                    Some(Command::External(command)) => {
+                        receipts.retain(|_,r|r.at.elapsed()<RETENTION);
+                        match command {
+                            ExternalCommand::Apply{id,action,lease,reply}=> {
+                                if let Some(record)=receipts.get(&id) { let _=reply.send(if record.action.same(&action) { record.result.clone() } else { Err(SubmissionError::InvalidAction) }); continue; }
+                                if receipts.len()>=MAX_RECEIPTS { let _=reply.send(Err(SubmissionError::Busy)); continue; }
+                                let result=lease.try_accept(|| {
+                                    if closing.load(Ordering::Acquire) { return Err(SubmissionError::Closing); }
+                                    let (job_id,created_new)=match &action {
+                                        SubmissionAction::Submit(request)=>(admit(request.clone(),&mut jobs,&mut waiting,&mut next_id,&bus)?,true),
+                                        SubmissionAction::Show(id)=> { if !jobs.contains_key(id) { return Err(SubmissionError::NotFound); } (*id,false) },
+                                        SubmissionAction::Activate(id)=> { let job=jobs.get_mut(id).ok_or(SubmissionError::NotFound)?; activate_external(job,&mut waiting,&bus)?; (*id,false) },
+                                        SubmissionAction::Restart(id)=> {
+                                            let job=jobs.get(id).ok_or(SubmissionError::NotFound)?;
+                                            if has_retained_partial(job) { return Err(SubmissionError::RecoveryRequired); }
+                                            if jobs.iter().any(|(other_id,other)|other_id!=id && other.snapshot.state.is_active() && same_destination(&job.request.destination,&other.request.destination)) { return Err(SubmissionError::InvalidAction); }
+                                            let job=jobs.get_mut(id).expect("checked");
+                                            // Approval inspection happens before acknowledging this action.
+                                            let identity=inspect_destination(&job.request.destination).map_err(|_|SubmissionError::InvalidAction)?;
+                                            job.request.replacement=identity.map(ReplacementPolicy::Approved).unwrap_or(ReplacementPolicy::Deny);
+                                            if job.snapshot.state.is_terminal() && !bus.terminal_pending(*id) || job.snapshot.state==JobState::Waiting && !job.started {
+                                                let replacement=job.request.replacement.clone(); reset_job(job,replacement); waiting.retain(|j|j!=id); waiting.push_back(*id); bus.publish(Event::JobChanged(job.snapshot.clone()));
+                                            } else { job.restart=true; job.resume_after_pause=false; cancel_job(job,&bus); }
+                                            (*id,false)
+                                        }
+                                    };
+                                    Ok(SubmissionReceipt{id:id.clone(),job_id,created_new})
+                                }).map_err(|e|match e { LeaseFailure::Expired=>SubmissionError::Expired,LeaseFailure::Revoked=>SubmissionError::Revoked,LeaseFailure::AlreadyAccepted=>SubmissionError::InvalidAction,LeaseFailure::Action(e)=>e });
+                                receipts.insert(id,Record{action,result:result.clone(),cancelled:false,at:Instant::now()}); let _=reply.send(result);
+                            },
+                            ExternalCommand::Status{id,reply}=> { let status=receipts.get(&id).map(|r| if r.cancelled { SubmissionStatus::Declined(SubmissionError::Revoked) } else { match &r.result { Ok(receipt)=>SubmissionStatus::Accepted(receipt.clone()),Err(e)=>SubmissionStatus::Declined(*e) } }).unwrap_or(SubmissionStatus::Unknown); let _=reply.send(status); },
+                            ExternalCommand::CancelOwned{id,reply}=> {
+                                let result=match receipts.get_mut(&id) {
+                                    Some(record)=>match &record.result {
+                                        Ok(receipt) if !receipt.created_new=>CancelOwnedResult::NotOwned,
+                                        Ok(_) if record.cancelled=>CancelOwnedResult::Cancelled,
+                                        Ok(receipt)=>match jobs.get_mut(&receipt.job_id) {
+                                            Some(job) if !job.snapshot.state.is_terminal()=>{ job.restart=false; job.resume_after_pause=false; cancel_job(job,&bus); record.cancelled=true; CancelOwnedResult::Cancelled },
+                                            _=>CancelOwnedResult::AlreadyFinished,
+                                        }, _=>CancelOwnedResult::Unknown }, None=>CancelOwnedResult::Unknown }; let _=reply.send(result);
+                            }
+                        }
+                    },
                     None | Some(Command::Shutdown) => { shutdown = true; closing.store(true, Ordering::Release); receiver.close(); for job in jobs.values_mut() { job.restart = false; job.resume_after_pause = false; cancel_job(job, &bus); } waiting.clear(); },
                     Some(Command::Submit(request)) => {
                         if closing.load(Ordering::Acquire) { reject(&bus, "The engine is shutting down."); continue; }
-                        if jobs.len() + bus.removed_pending() >= 1000 { reject(&bus, "The 1,000-entry limit has been reached. Remove inactive entries first."); continue; }
-                        if !request.allow_duplicate && jobs.values().any(|job| job.request.same_source(&request)) { reject(&bus, "This link is already in the download list. Use Add URL again to choose how to handle the duplicate."); continue; }
-                        if jobs.values().any(|job| job.snapshot.state.is_active() && same_destination(&job.request.destination, &request.destination)) { reject(&bus, "Another download is already using that save path. Choose a numbered filename."); continue; }
-                        let id = JobId(next_id); next_id += 1;
-                        bus.register_request(id, &request);
-                        let snapshot = JobSnapshot { id, filename: request.destination.file_name().unwrap_or_default().to_string_lossy().into_owned(), source_host: request.source_host().into(), display_url: request.display_url(), destination: request.destination.clone(), state: JobState::Waiting, received: 0, total: None, resume_capable: false, speed_limit: None, bytes_per_second: 0, eta_seconds: None, last_try: None, error: None, deferred: request.deferred, category: request.category.clone(), description: request.description.clone() };
-                        let deferred = request.deferred;
-                        bus.publish(Event::JobChanged(snapshot.clone()));
-                        jobs.insert(id, Job { request, snapshot, cancel: TransferControl::new(CancellationToken::new()), remove: false, started: false, restart: false, resume_after_pause: false, sample: (Instant::now(), 0) }); if !deferred { waiting.push_back(id); }
+                        if admit(request,&mut jobs,&mut waiting,&mut next_id,&bus).is_err() { reject(&bus,"Download admission rejected. Check duplicates, entry limits and save path."); }
                     },
                     Some(Command::Start(id)) => {
                         if closing.load(Ordering::Acquire) { reject(&bus, "The engine is shutting down."); continue; }
@@ -459,4 +545,147 @@ fn cancel_job(job: &mut Job, bus: &EventBus) {
     job.snapshot.bytes_per_second = 0;
     job.snapshot.eta_seconds = None;
     bus.publish(Event::JobChanged(job.snapshot.clone()));
+}
+
+fn admit(
+    request: DownloadRequest,
+    jobs: &mut BTreeMap<JobId, Job>,
+    waiting: &mut VecDeque<JobId>,
+    next_id: &mut u64,
+    bus: &EventBus,
+) -> Result<JobId, SubmissionError> {
+    if jobs.len() + bus.removed_pending() >= 1000 {
+        return Err(SubmissionError::InvalidAction);
+    }
+    if !request.allow_duplicate && jobs.values().any(|job| job.request.same_source(&request)) {
+        return Err(SubmissionError::InvalidAction);
+    }
+    if jobs.values().any(|job| {
+        job.snapshot.state.is_active()
+            && same_destination(&job.request.destination, &request.destination)
+    }) {
+        return Err(SubmissionError::InvalidAction);
+    }
+    let id = JobId(*next_id);
+    *next_id += 1;
+    bus.register_request(id, &request);
+    let snapshot = JobSnapshot {
+        id,
+        filename: request
+            .destination
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
+        source_host: request.source_host().into(),
+        display_url: request.display_url(),
+        destination: request.destination.clone(),
+        state: JobState::Waiting,
+        received: 0,
+        total: None,
+        resume_capable: false,
+        speed_limit: None,
+        bytes_per_second: 0,
+        eta_seconds: None,
+        last_try: None,
+        error: None,
+        deferred: request.deferred,
+        category: request.category.clone(),
+        description: request.description.clone(),
+    };
+    let deferred = request.deferred;
+    bus.publish(Event::JobChanged(snapshot.clone()));
+    jobs.insert(
+        id,
+        Job {
+            request,
+            snapshot,
+            cancel: TransferControl::new(CancellationToken::new()),
+            remove: false,
+            started: false,
+            restart: false,
+            resume_after_pause: false,
+            sample: (Instant::now(), 0),
+        },
+    );
+    if !deferred {
+        waiting.push_back(id);
+    }
+    Ok(id)
+}
+
+fn activate_external(
+    job: &mut Job,
+    waiting: &mut VecDeque<JobId>,
+    bus: &EventBus,
+) -> Result<(), SubmissionError> {
+    match job.snapshot.state {
+        JobState::Paused => {
+            job.snapshot.state = JobState::Waiting;
+            waiting.push_back(job.snapshot.id);
+        }
+        JobState::Pausing => job.resume_after_pause = true,
+        JobState::Waiting if job.snapshot.deferred => {
+            job.snapshot.deferred = false;
+            job.request.deferred = false;
+            waiting.push_back(job.snapshot.id);
+        }
+        state if state.can_retry() => {
+            if has_retained_partial(job) {
+                return Err(SubmissionError::RecoveryRequired);
+            }
+            if bus.terminal_pending(job.snapshot.id) {
+                return Err(SubmissionError::Busy);
+            }
+            reset_job(job, ReplacementPolicy::Deny);
+            waiting.push_back(job.snapshot.id);
+        }
+        JobState::Cancelling => return Err(SubmissionError::Busy),
+        _ => {}
+    }
+    bus.publish(Event::JobChanged(job.snapshot.clone()));
+    Ok(())
+}
+
+#[cfg(test)]
+mod external_queue_tests {
+    use super::*;
+    #[test]
+    fn queued_command_is_not_an_acknowledgement_and_full_or_closed_queues_reject() {
+        let (sender, receiver) = mpsc::channel(1);
+        let client = EngineClient {
+            sender,
+            closing: Arc::new(AtomicBool::new(false)),
+        };
+        let id = RequestId::parse("12345678-1234-4234-8234-123456789abc").unwrap();
+        let (reply, mut result) = tokio::sync::oneshot::channel();
+        client
+            .try_external(ExternalCommand::Status {
+                id: id.clone(),
+                reply,
+            })
+            .unwrap();
+        assert_eq!(
+            result.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        );
+        let (reply, _rx) = tokio::sync::oneshot::channel();
+        assert_eq!(
+            client.try_external(ExternalCommand::Status {
+                id: id.clone(),
+                reply
+            }),
+            Err(CommandError::QueueFull)
+        );
+        drop(receiver);
+        assert_eq!(
+            result.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+        );
+        let (reply, _rx) = tokio::sync::oneshot::channel();
+        assert_eq!(
+            client.try_external(ExternalCommand::Status { id, reply }),
+            Err(CommandError::Closed)
+        );
+    }
 }

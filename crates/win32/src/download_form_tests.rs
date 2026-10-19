@@ -33,6 +33,8 @@ fn remembers_only_the_selected_category_folder_and_uses_it_next_time() {
         default_destination: "C:/Downloads".into(),
         category_destinations: Default::default(),
         duplicate_choice: None,
+        show_completion_dialog: true,
+        double_click_action: Default::default(),
     };
     remember_folder(
         &mut settings,
@@ -46,5 +48,23 @@ fn remembers_only_the_selected_category_folder_and_uses_it_next_time() {
     assert_eq!(
         folder_for(&settings, "General"),
         std::path::Path::new("C:/Downloads")
+    );
+}
+
+#[test]
+fn browser_filename_hints_cannot_supply_paths_or_reserved_names() {
+    let url = "https://example.org/safe.bin?token=private";
+    assert_eq!(
+        filename_hint(url, Some("C:\\escape\\report.pdf")).unwrap(),
+        "report.pdf"
+    );
+    assert_eq!(
+        filename_hint(url, Some("../../report.pdf")).unwrap(),
+        "report.pdf"
+    );
+    assert_eq!(filename_hint(url, Some("CON.txt")).unwrap(), "safe.bin");
+    assert_eq!(
+        filename_hint(url, Some("bad\nname.zip")).unwrap(),
+        "bad_name.zip"
     );
 }

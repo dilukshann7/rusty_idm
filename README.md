@@ -1,92 +1,55 @@
 # Rusty Download Manager
 
-A Rust download engine and native Win32 desktop application. The first milestone
-uses actual Windows menu, Toolbar, TreeView, ListView, status bar, dialogs and
-Progress Bar controls, with system fonts and per-monitor DPI declarations.
-The compact toolbar includes original colored outline icons above the action
-labels, grey disabled variants, and embedded artwork for multiple display scales.
-Body controls/dialogs use compact Tahoma 8 metrics to follow the supplied reference.
+**v0.1.0 · Windows 10/11 x64 · Native Win32 · Rust**
 
-Implemented source includes HTTP/HTTPS streaming, two simultaneous transfers,
-waiting jobs, progress/speed/ETA, pause/resume, live per-download speed limits,
-cancellation, removal of list entries, retry
-from the beginning, native destination pickers, transfer details, explicit file
-and folder opening, and a saved default destination. History is session-only.
+![Rusty icon](assets/branding/rusty-128.png)
 
-Each download reserves a unique partial beside the destination. Ordinary downloads
-refuse to replace a target that appears meanwhile. Explicit duplicate overwrite
-guards the approved original until the new partial is complete and synced, then
-uses handle-based backup/commit/rollback. Failed finalization exposes recovery
-paths for retained partials and original backups.
+A compact Windows download manager that stays in the notification area and can
+catch supported public downloads from Chrome.
 
-Add URL uses two native dialogs: enter the address and optional HTTP authorization,
-then review Download File Info (category, suggested filename/Save As, Browse,
-remembered category folder and description). Start Download submits immediately.
-Download Later adds a held entry for this session; select it and use
-**Downloads → Start / Resume Download** when ready. Cancelling either dialog submits nothing.
-Only folder and duplicate-link preferences are saved; URLs, authorization and job
-history are not.
+## Install
 
-Duplicate links open a compact dialog with numbered-copy, overwrite and
-show/resume-existing choices. Remembered choices can be changed under
-**Options → Downloads**. Numbered filenames avoid both files on disk and reserved
-download destinations. Duplicate matching retains query/auth distinctions;
-the dialog shows a sanitized address. Duplicate preferences also persist, while
-the list and matching history remain session-only. See
-[duplicate handling](docs/duplicate-downloads.md) for behavior and verification.
+Use `RustyDownloadManager-0.1.0-windows-x64-setup.exe` from the local `dist` folder.
+Setup installs for your Windows user, offers background startup at sign-in, and
+provides a **Connect Chrome** helper. Chrome requires one-time extension and
+website-access approval. Existing integration preferences are preserved on upgrade.
 
-A compact download-status dialog opens automatically for each transfer attempt,
-with percentage/filename title, aligned status fields, native progress, tabs and
-expandable details. Closing it leaves the download running; a retry opens it again.
-Pause keeps the partial file and frees a connection slot; Resume rejoins the
-two-transfer queue. Safe continuation uses a known length and strong ETag with
-HTTP Range/If-Range. If safe continuation is unavailable or the server sends a
-fresh complete response, resuming restarts from zero. Resume capability indicates
-whether byte continuation can be attempted. Speed Limiter accepts a positive
-whole-number KB/sec limit (1 KB = 1024 bytes); Apply updates the running transfer,
-and unchecking then applying removes the limit. The completion tab can close the
-dialog automatically after a successful transfer. See the
-[reference sizing analysis](docs/compact-ui-reference.md) for the layout changes
-and [transfer controls](docs/transfer-controls.md) for behavior and the source-only
-verification boundary.
+Close or minimize the manager to keep it running in the background. Use its
+tray icon to reopen it, add a URL, change options or Exit. Rusty operates while
+Windows is awake and you are signed in. The portable ZIP also runs without an
+installer; it does not configure startup or Chrome automatically.
 
-## Verification status
+See the [user guide](docs/USER_GUIDE.md), [release notes](docs/RELEASE_NOTES.md)
+and `dist/SHA256SUMS.txt`. This is an unsigned local release.
 
-Source implementation only. Rust formatting/syntax and source/resource checks
-are recorded in [the validation record](docs/native-gui-validation.md).
-No build, Rust test, app or server command was launched by this implementation
-session. VS Code's existing rust-analyzer independently ran a background check;
-its saved diagnostics exposed missing imports/native flag operators, which were
-corrected in source. Automatic editor checks/build-script loading are now disabled
-in this workspace. **A clean compilation of the final source, test execution and
-GUI validation remain pending.** No working executable is claimed.
-Direct dependency versions are pinned and Cargo.lock is included. The source
-milestone was completed before this local Git repository was initialized.
+## Features
 
-When explicitly authorized, Windows with a stable Rust MSVC toolchain and Windows
-SDK resource compiler can use these commands from this directory:
+- HTTP/HTTPS downloads with two simultaneous transfers.
+- Pause/resume, per-download speed limits, progress/speed/ETA and cancellation.
+- Compact native dialogs, a [download context menu](docs/download-context-menu.md),
+  and a [completion dialog](docs/completion-dialog.md) with file-opening actions.
+- Duplicate-link choices, numbered copies and guarded file replacement.
+- Chrome capture through an extension, native host and secured local bridge.
+- Tray/background operation, hidden login startup and single-instance launches.
 
-```powershell
-cargo check --workspace
-cargo test --workspace
-cargo run -p rusty-win32
-```
+History is session-only. Restart-resume, segmentation, named queues, Move/Rename,
+address refresh and automatic updates are not included. Chrome capture covers
+supported public GET downloads; private/authenticated/streaming downloads remain
+with the browser. Preferences use LocalAppData, including portable execution.
 
-These are deferred instructions, not commands run during implementation. No dev
-server is needed. Test HTTP fixtures bind loopback and run only within tests.
+## Source and release build
 
-## Source map
+The workspace contains `engine`, `win32`, `browser-bridge` and `native-host` crates.
+Dependencies are pinned in Cargo.lock. Original branding is reproducible with
+`scripts/generate-branding.ps1`; toolbar artwork has a separate generator.
 
-- `crates/engine`: validation, states, safe output, HTTP streaming, admission,
-  cancellation, bounded event delivery, and tests.
-- `crates/win32`: native controls/resources, presenter, dialogs, settings,
-  details, event bridge, lifecycle, and tests.
-- [Native design](docs/superpowers/specs/2026-10-18-rusty-win32-design.md)
-  and [implementation plan](docs/superpowers/plans/2026-10-18-rusty-win32-implementation.md).
-- [Execution record](docs/implementation-progress.md) and
-  [manual acceptance matrix](docs/native-gui-validation.md).
-- [IDM investigation](docs/idm-investigation.md): historical reference evidence,
-  preserved separately from Rusty's implementation.
+With Rust MSVC, the Windows SDK resource compiler, Python and Inno Setup available,
+`scripts/build-release.ps1 -Compiler <path-to-ISCC.exe>` builds the static-CRT
+optimized binaries, stages required files/licenses and produces setup/portable/
+extension artifacts with SHA-256 checksums. It does not launch the app, run the
+installer or run test suites. Generated release files live under ignored `dist/`.
 
-Durable history, resume after application exit, segmentation, named queues, browser capture, tray
-operation, installers and automatic updates remain future milestones.
+See [implementation history](docs/implementation-progress.md),
+[Chrome integration details](docs/chrome-integration.md) and
+[native validation](docs/native-gui-validation.md) for evidence and pending live
+acceptance scenarios. MIT license; see [third-party notices](THIRD_PARTY.md).

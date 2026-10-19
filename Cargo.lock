@@ -811,14 +811,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
+name = "rusty-browser-bridge"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+ "windows",
+]
+
+[[package]]
 name = "rusty-engine"
 version = "0.1.0"
 dependencies = [
  "reqwest",
+ "rusty-browser-bridge",
  "tempfile",
  "tokio",
  "tokio-util",
  "url",
+ "windows",
+]
+
+[[package]]
+name = "rusty-native-host"
+version = "0.1.0"
+dependencies = [
+ "embed-resource",
+ "rusty-browser-bridge",
+ "serde",
+ "serde_json",
  "windows",
 ]
 
@@ -828,10 +851,12 @@ version = "0.1.0"
 dependencies = [
  "embed-resource",
  "percent-encoding",
+ "rusty-browser-bridge",
  "rusty-engine",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
  "url",
  "windows",
 ]

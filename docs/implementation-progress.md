@@ -147,3 +147,89 @@ Formatting and source checks are the permitted verification. Independent
 source review found no blocking duplicate-flow issue. New tests are authored
 but not executed; native replacement, GUI rendering and final compilation
 remain unverified. No build, test, app, fixture or server was launched.
+
+
+## Chrome capture source implementation, 2026-10-19
+
+[Chrome integration](chrome-integration.md) records the new extension, native host,
+secured transport, actor receipts, compact dialog integration and session recovery.
+All eight plan components are implemented in source. Authored Rust/JavaScript/Pester
+tests remain unexecuted. The source verifier covers all four exact workspace
+packages, Rust formatting/parsing, native assets, extension JSON/imports/icons,
+JavaScript syntax and PowerShell parsing. `git diff --check` is also required.
+Compilation, runtime tests, live GUI/Chrome behavior, wrong-user transport attempts
+and registration/unregistration remain Not run; no working binary is claimed.
+
+Final source checks passed for 58 Rust files and all four workspace packages.
+The partial independent GPT-6.1 Sol review identified type/concurrency issues;
+corrections and regression tests were authored, followed by author source review.
+The independent review ended at a usage limit. Runtime RED/GREEN, the full test
+suite, compiled binaries and live Chrome/setup acceptance remain Not run.
+
+
+## Chrome setup preparation, 2026-10-19
+
+User requested installation. `cargo build --locked --offline -p rusty-win32
+-p rusty-native-host --target-dir D:\\Programming\\Rust\\rusty_idm\\target`
+succeeded for Windows in the debug profile. One dead-code warning names the
+unused `show_duplicate` wrapper. No tests or development server were run.
+Binaries and unpacked extension files were staged under the current user's
+LocalAppData RustyIDM directory; both binary copy hashes matched build outputs.
+Chrome's extensions page was opened for the user to load the unpacked folder.
+The user supplied the loaded extension ID `ipolekmihgpdbmelheajogmgnjgmenol`.
+The registration script ran, its HKCU manifest/origin was read back and verified,
+and the installed host returned one valid correlated `ok` ping frame with version
+0.1.0, GUI not running and empty stderr. Automatic capture remains off.
+Unregister, full test suites and actual Chrome download handoff remain unrun.
+
+
+## Download completion dialog, 2026-10-19
+
+Added the compact reference-style modeless completion window, exact byte summary,
+redacted address, saved path, Open/Open with/Open folder/Close and saved opt-out.
+Options can re-enable completion notifications. It triggers only on successful
+completion transitions and can show a subsequent successful retry.
+Windows debug compilation and source checks (59 Rust files) passed. The installed
+GUI was replaced and its hash matched the build output. No test suite, live
+completion/button/persistence exercise or visual comparison was run. See
+[completion behavior](completion-dialog.md).
+
+## Download list context menu, 2026-10-19
+
+Added the screenshot's native popup layout, mouse/keyboard targeting, file actions,
+confirmed guarded Redownload, transfer controls, Properties and a persisted
+double-click preference. Move/Rename, address refresh and queue operations remain
+disabled because these features are not implemented. See
+[context menu behavior](download-context-menu.md).
+
+Source verification passed for 60 Rust files, resources, manifests, native assets,
+extension syntax and document links; `git diff --check` passed. This change was
+not compiled, installed or launched, and no test suite was run, following the
+user's execution constraint. Existing test fixtures only received the required
+settings field/schema-count adjustment. Live menu/action acceptance is deferred.
+
+## Completion window cleanup and compact sizing, 2026-10-19
+
+Progress windows now close automatically on a transition to Completed. A first
+snapshot already marked Completed does not auto-open a progress window. Explicitly
+opened completed Properties remains available. The former close-on-completion
+checkbox is explanatory text, and the completion resource shrank from 348x170 to
+310x132 dialog units, with standard compact buttons, fields and spacing.
+
+The source verifier passed for all 60 Rust files, native resources and other
+workspace assets; `git diff --check` passed. No compilation, installation, GUI
+launch, visual acceptance or test suite was run for this revision.
+
+## v0.1.0 release packaging, 2026-10-19
+
+Implemented the approved original branding, versioned executable identity,
+background/tray lifecycle, hidden/idempotent launch, login startup integration,
+guarded current-user installer/removal and visible Chrome setup helper. The
+existing compact completion/progress and context-menu changes are in the release.
+
+The Windows optimized build, Inno Setup compilation, source checks, artifact
+versions, archive contents/CRCs, static-CRT import inspection and SHA-256 checks
+passed. Bundled licenses cover 145 resolved dependencies. A GPT-6.1 Sol source
+review's Important shutdown finding was fixed and rechecked. No tests, app/setup
+launch, publishing or installation changes were performed for this release.
+See [exact release evidence and pending live acceptance](v0.1.0-release-validation.md).

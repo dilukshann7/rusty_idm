@@ -14,6 +14,21 @@ pub struct Settings {
     pub category_destinations: std::collections::BTreeMap<String, PathBuf>,
     #[serde(default)]
     pub duplicate_choice: Option<crate::duplicates::DuplicateChoice>,
+    #[serde(default = "show_completion_by_default")]
+    pub show_completion_dialog: bool,
+    #[serde(default)]
+    pub double_click_action: DoubleClickAction,
+}
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DoubleClickAction {
+    Open,
+    OpenFolder,
+    #[default]
+    Properties,
+}
+fn show_completion_by_default() -> bool {
+    true
 }
 #[derive(Debug)]
 pub struct SettingsError(pub String);
@@ -162,6 +177,8 @@ pub fn defaults() -> Result<Settings, SettingsError> {
             schema_version: 1,
             category_destinations: Default::default(),
             duplicate_choice: None,
+            show_completion_dialog: true,
+            double_click_action: DoubleClickAction::default(),
             default_destination: PathBuf::from(folder),
         })
     }

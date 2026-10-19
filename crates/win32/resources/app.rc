@@ -2,6 +2,7 @@
 #include <commctrl.h>
 
 1 RT_MANIFEST "resources/app.manifest"
+501 ICON "../../assets/branding/rusty.ico"
 
 301 ICON "resources/icons/add.ico"
 302 ICON "resources/icons/stop.ico"
@@ -20,7 +21,7 @@ BEGIN
     BEGIN
         MENUITEM "&Add URL...\tCtrl+N", 1001
         MENUITEM SEPARATOR
-        MENUITEM "E&xit\tAlt+F4", 1009
+        MENUITEM "E&xit Rusty", 1009
     END
     POPUP "&File"
     BEGIN
@@ -53,6 +54,42 @@ BEGIN
     "N", 1001, VIRTKEY, CONTROL
     VK_DELETE, 1004, VIRTKEY
     VK_RETURN, 1010, VIRTKEY
+END
+
+208 MENU
+BEGIN
+    POPUP "Download"
+    BEGIN
+        MENUITEM "&Open", 1006
+        MENUITEM "Open &with...", 1014
+        MENUITEM "Open &folder", 1007
+        MENUITEM SEPARATOR
+        MENUITEM "&Move/Rename (Ctrl-M)", 1015, GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "&Redownload", 1016
+        MENUITEM SEPARATOR
+        MENUITEM "Res&ume Download", 1013
+        MENUITEM "&Stop Download", 1002
+        MENUITEM SEPARATOR
+        MENUITEM "Refresh download &address", 1017, GRAYED
+        MENUITEM SEPARATOR
+        MENUITEM "Remo&ve", 1004
+        MENUITEM SEPARATOR
+        POPUP "Add to &queue", GRAYED
+        BEGIN
+            MENUITEM "Main download queue", 1018, GRAYED
+        END
+        MENUITEM "Delete from queue", 1019, GRAYED
+        MENUITEM SEPARATOR
+        POPUP "On &Double click"
+        BEGIN
+            MENUITEM "Open", 1020
+            MENUITEM "Open folder", 1021
+            MENUITEM "Properties", 1022
+        END
+        MENUITEM SEPARATOR
+        MENUITEM "&Properties", 1010
+    END
 END
 
 201 DIALOGEX 0, 0, 340, 58
@@ -115,7 +152,26 @@ BEGIN
     CONTROL "&Remember my selection (Options > Downloads)", 2405, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 8, 146, 254, 11
 END
 
-202 DIALOGEX 0, 0, 330, 139
+207 DIALOGEX 0, 0, 310, 132
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
+EXSTYLE WS_EX_CONTROLPARENT
+CAPTION "Download complete"
+FONT 8, "Tahoma"
+BEGIN
+    CONTROL "", 2508, "Static", SS_ICON | SS_CENTERIMAGE, 8, 7, 20, 20
+    LTEXT "Download complete", 2501, 34, 7, 268, 24, SS_NOPREFIX
+    LTEXT "Address", -1, 8, 36, 294, 9
+    EDITTEXT 2502, 8, 47, 294, 13, ES_READONLY | ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "The file saved as", -1, 8, 65, 294, 9
+    EDITTEXT 2503, 8, 76, 294, 13, ES_READONLY | ES_AUTOHSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON "&Open", 2504, 8, 98, 62, 14, WS_TABSTOP
+    PUSHBUTTON "Open &with...", 2505, 78, 98, 62, 14, WS_TABSTOP
+    PUSHBUTTON "Open &folder", 2506, 148, 98, 62, 14, WS_TABSTOP
+    PUSHBUTTON "&Close", IDCANCEL, 240, 98, 62, 14, WS_TABSTOP
+    CONTROL "&Don't show this dialog again", 2507, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 8, 117, 294, 10
+END
+
+202 DIALOGEX 0, 0, 330, 158
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 EXSTYLE WS_EX_CONTROLPARENT
 CAPTION "Options"
@@ -124,13 +180,14 @@ BEGIN
     LTEXT "Default save &folder:", -1, 8, 8, 314, 9
     EDITTEXT 2102, 8, 20, 260, 13, ES_AUTOHSCROLL | WS_TABSTOP
     PUSHBUTTON "&Browse...", 2103, 274, 20, 48, 14, WS_TABSTOP
-    GROUPBOX "Downloads", -1, 8, 42, 314, 61
+    GROUPBOX "Downloads", -1, 8, 42, 314, 80
     CONTROL "&Ask what to do with duplicate links", 2406, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 16, 55, 296, 11
     LTEXT "Otherwise:", 2408, 16, 78, 45, 9
     COMBOBOX 2407, 66, 74, 246, 70, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT "Folders and duplicate preferences are remembered.", -1, 8, 109, 314, 10
-    DEFPUSHBUTTON "&Save", IDOK, 220, 121, 48, 14, WS_TABSTOP
-    PUSHBUTTON "Cancel", IDCANCEL, 274, 121, 48, 14, WS_TABSTOP
+    CONTROL "Show the download &complete dialog", 2509, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 16, 103, 296, 11
+    LTEXT "Folders and download preferences are remembered.", -1, 8, 128, 314, 10
+    DEFPUSHBUTTON "&Save", IDOK, 220, 140, 48, 14, WS_TABSTOP
+    PUSHBUTTON "Cancel", IDCANCEL, 274, 140, 48, 14, WS_TABSTOP
 END
 
 203 DIALOGEX 0, 0, 380, 145
@@ -158,8 +215,8 @@ BEGIN
     LTEXT "KB/sec", 2225, 84, 52, 40, 10
     PUSHBUTTON "&Apply", 2226, 134, 49, 50, 14, WS_TABSTOP
     LTEXT "Limit applies to this download. Uncheck and Apply for unlimited speed.", 2220, 20, 74, 330, 22
-    CONTROL "&Close this dialog when the download completes", 2221, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 20, 30, 330, 12
-    LTEXT "The completed file stays in the download list.", 2222, 20, 49, 330, 12
+    LTEXT "This progress window closes automatically when the download completes.", 2221, 20, 30, 330, 22
+    LTEXT "Completion notifications can be changed in Options > Downloads.", 2222, 20, 58, 330, 22
     CONTROL "Transfer progress", 2202, PROGRESS_CLASS, WS_BORDER | PBS_SMOOTH, 10, 110, 360, 10
     PUSHBUTTON "Show &details >>", 2204, 18, 126, 84, 14, WS_TABSTOP
     PUSHBUTTON "&Pause", 2205, 235, 126, 50, 14, WS_TABSTOP | WS_DISABLED

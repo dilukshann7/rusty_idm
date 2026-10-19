@@ -23,6 +23,8 @@ fn unicode_settings_roundtrip() {
         schema_version: 1,
         category_destinations: Default::default(),
         duplicate_choice: None,
+        show_completion_dialog: true,
+        double_click_action: Default::default(),
         default_destination: folder.clone(),
     };
     save_to(&path, &settings).unwrap();
@@ -37,6 +39,8 @@ fn failed_save_preserves_prior_settings() {
         schema_version: 1,
         category_destinations: Default::default(),
         duplicate_choice: None,
+        show_completion_dialog: true,
+        double_click_action: Default::default(),
         default_destination: dir.path().into(),
     };
     save_to(&path, &settings).unwrap();
@@ -53,6 +57,8 @@ fn failed_save_preserves_prior_settings() {
         schema_version: 1,
         category_destinations: Default::default(),
         duplicate_choice: None,
+        show_completion_dialog: true,
+        double_click_action: Default::default(),
         default_destination: dir.path().into(),
     };
     assert!(save_to(&blocked_parent.join("settings.json"), &valid).is_err());
@@ -68,6 +74,8 @@ fn failed_atomic_replace_preserves_prior_file_and_removes_temporary() {
         schema_version: 1,
         category_destinations: Default::default(),
         duplicate_choice: None,
+        show_completion_dialog: true,
+        double_click_action: Default::default(),
         default_destination: dir.path().into(),
     };
     save_to(&path, &old).unwrap();
@@ -78,6 +86,8 @@ fn failed_atomic_replace_preserves_prior_file_and_removes_temporary() {
         schema_version: 1,
         category_destinations: Default::default(),
         duplicate_choice: None,
+        show_completion_dialog: true,
+        double_click_action: Default::default(),
         default_destination: folder,
     };
     let lock = std::fs::OpenOptions::new()
@@ -123,6 +133,8 @@ fn duplicate_preference_roundtrips_without_storing_a_link() {
         schema_version: 1,
         category_destinations: Default::default(),
         duplicate_choice: None,
+        show_completion_dialog: true,
+        double_click_action: Default::default(),
         default_destination: dir.path().into(),
     };
     for (choice, expected) in [
@@ -139,7 +151,7 @@ fn duplicate_preference_roundtrips_without_storing_a_link() {
         );
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(saved.as_object().unwrap().len(), 4);
+        assert_eq!(saved.as_object().unwrap().len(), 6);
     }
     settings.duplicate_choice = None;
     save_to(&path, &settings).unwrap();

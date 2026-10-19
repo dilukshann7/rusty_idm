@@ -66,3 +66,28 @@ pub fn remember_folder(settings: &mut Settings, category: &str, destination: &Pa
 #[cfg(test)]
 #[path = "download_form_tests.rs"]
 mod tests;
+
+/// A browser-provided name is never interpreted as a path.
+pub fn filename_hint(address: &str, hint: Option<&str>) -> Result<String, JobError> {
+    if let Some(hint) = hint {
+        let basename = hint.rsplit(['/', '\\']).next().unwrap_or("");
+        let name: String = basename
+            .chars()
+            .map(|c| {
+                if c.is_control() || "<>:\"/\\|?*".contains(c) {
+                    '_'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let name = name.trim_end_matches(['.', ' ']);
+        if !name.is_empty()
+            && name.encode_utf16().count() <= 255
+            && validate_request(address, PathBuf::from(name), ReplacementPolicy::Deny).is_ok()
+        {
+            return Ok(name.to_owned());
+        }
+    }
+    suggested_filename(address)
+}

@@ -11,7 +11,9 @@ try {
     $metadataText = & $cargoTool metadata --locked --offline --no-deps --format-version 1
     if ($LASTEXITCODE -ne 0) { throw 'Cargo manifest inspection failed.' }
     $metadata = $metadataText | ConvertFrom-Json
-    if ($metadata.workspace_members.Count -ne 2) { throw 'Expected engine and native GUI workspace members.' }
+    $expectedPackages = @('rusty-engine', 'rusty-win32', 'rusty-browser-bridge', 'rusty-native-host') | Sort-Object
+    $actualPackages = @($metadata.packages | Where-Object { $_.id -in $metadata.workspace_members } | ForEach-Object { $_.name }) | Sort-Object
+    if (Compare-Object $expectedPackages $actualPackages) { throw 'Unexpected workspace package set.' }
 
     $rustSources = (Get-ChildItem -LiteralPath (Join-Path $taskRoot 'crates') -Recurse -Filter '*.rs').FullName
     & $formatTool --check --edition 2021 @rustSources
@@ -57,6 +59,7 @@ try {
             if (-not (Test-Path -LiteralPath $resolved)) { throw "Broken document link in ${file}: $link" }
         }
     }
+    & (Join-Path $PSScriptRoot 'verify-chrome-source.ps1')
     Write-Output ('Source checks passed: {0} Rust files; workspace manifests/lock; XML/resource IDs/icon assets; handoff links.' -f $rustSources.Count)
     Write-Output 'This script performs no compilation, Rust tests, application, fixture or dev-server launch.'
 }
