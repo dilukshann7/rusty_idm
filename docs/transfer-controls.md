@@ -47,7 +47,11 @@ were written before corresponding behavior where practical, but no RED/GREEN or
 runtime result is claimed: Rust tests compile and fixtures launch servers.
 The permitted checks are rustfmt parsing/formatting and `scripts/verify-source.ps1`
 (offline no-dependency Cargo metadata, resource IDs, XML, assets and handoff links).
-An independent source reviewer checks the state/HTTP/filesystem/Win32 paths.
+Rustfmt and the source-check script passed for all 34 Rust files, workspace
+manifests/lock, XML/resource IDs, icon assets and handoff links. There are 66
+written tests across the workspace; none were executed. The independent source
+review found no concrete blocking issue in the state/HTTP/filesystem/Win32 paths
+and checked native API declarations against the cached Windows 0.62.2 source.
 
 Pending runtime cases: repeated pause/resume, paused cancellation/removal/shutdown,
 three jobs with paused slot release and queued resume, safe Range/If-Range bytes,

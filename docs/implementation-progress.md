@@ -122,6 +122,19 @@ There are 42 written Rust test cases; none were executed by the agent. The final
 source passed rustfmt parsing/formatting after the diagnostic corrections. No
 compiler/test/app/server command was launched to establish a passing runtime result.
 
+## Pause/resume and speed limits, 2026-10-19
+
+The user's subsequent instruction enables both capabilities in the existing
+compact status dialog. See [transfer controls](transfer-controls.md) for the
+state, queue, HTTP validation, safe restart and pacing behavior. This supersedes
+the earlier pause/resume deferral. Session persistence and resuming retained
+failure artifacts remain outside this change.
+
+Rustfmt and `scripts/verify-source.ps1` passed for 34 Rust files. The workspace
+now contains 66 written tests, including actual HTTP/control/owned-handle cases;
+none were run. An independent source review found no concrete blocking finding.
+No compiler, test, app, fixture or server was launched during this change.
+
 ## Duplicate links and approved overwrite, 2026-10-19
 
 The user's duplicate-dialog reference supersedes the initial replacement
