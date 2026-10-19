@@ -1,0 +1,45 @@
+REA evidence: ev_d363907f348bb2935eab4d8d2ef0af9ef9d4f0b073449e45b5a196233124ee19
+Decompiler output, not original source or implementation code.
+
+void FUN_00594df0(void)
+
+{
+  int iVar1;
+  int in_ECX;
+  int iVar2;
+  
+  if (*(int *)(in_ECX + 0x148) == 0) {
+    iVar1 = MessageBoxA((HWND)0x0,
+                        "Cannot download this file, maybe this server doesn\'t support download resume. Would you like to download the file from the beginning?"
+                        ,*(LPCSTR *)(*(int *)(in_ECX + 0xc) + 8),0x50044);
+    if (iVar1 == 7) {
+      *(undefined4 *)(in_ECX + 0x1c) = 1;
+      return;
+    }
+  }
+  iVar1 = 0;
+  if (0 < *(int *)(in_ECX + 0x1b0)) {
+    iVar2 = 0;
+    do {
+      if (*(int *)(*(int *)(in_ECX + 0x274) + 0x9c + iVar2) != 0) {
+        (**(code **)(*(int *)(*(int *)(in_ECX + 0x274) + iVar2) + 0xc))();
+      }
+      iVar1 = iVar1 + 1;
+      iVar2 = iVar2 + 0x3488;
+    } while (iVar1 < *(int *)(in_ECX + 0x1b0));
+  }
+  iVar1 = *(int *)(in_ECX + 0xb0);
+  FUN_0055e320();
+  *(undefined4 *)(in_ECX + 200) = 0;
+  *(undefined4 *)(in_ECX + 0xcc) = 0;
+  *(undefined4 *)(in_ECX + 0xd0) = 0;
+  *(undefined4 *)(in_ECX + 0xd4) = 0;
+  *(undefined4 *)(in_ECX + 0x1c8) = 0;
+  *(undefined4 *)(in_ECX + 0x1cc) = 0;
+  if (iVar1 != 0) {
+    FUN_0055e4b0(*(undefined4 *)(in_ECX + 0x274),*(undefined4 *)(*(int *)(in_ECX + 0xc) + 0x30));
+  }
+  return;
+}
+
+

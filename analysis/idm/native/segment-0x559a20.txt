@@ -1,0 +1,46 @@
+REA evidence: ev_6b424294d78c6785529b923289141a3d6f9beb162c15e0c09e9c5bc6e5da7360
+Decompiler output, not original source or implementation code.
+
+undefined4 FUN_00559a20(undefined4 param_1)
+
+{
+  int iVar1;
+  int in_ECX;
+  longlong lVar2;
+  uint uStack_30;
+  uint local_20;
+  int local_1c;
+  undefined1 *local_14;
+  void *local_10;
+  undefined1 *puStack_c;
+  undefined4 local_8;
+  
+  puStack_c = &LAB_00664670;
+  local_10 = ExceptionList;
+  uStack_30 = DAT_007608e0 ^ (uint)&stack0xfffffffc;
+  local_14 = (undefined1 *)&uStack_30;
+  local_8 = 0;
+  if (*(int *)(in_ECX + 0xcc) != 0) {
+    return 1;
+  }
+  ExceptionList = &local_10;
+  iVar1 = FUN_005586d0(&local_20,param_1);
+  if (iVar1 != 0) {
+    lVar2 = __allmul(*(undefined4 *)(in_ECX + 0xc0),*(undefined4 *)(in_ECX + 0xc4),2,0);
+    iVar1 = (int)((ulonglong)(lVar2 + 3) >> 0x20);
+    if (iVar1 <= local_1c) {
+      if (iVar1 < local_1c) {
+        ExceptionList = local_10;
+        return 1;
+      }
+      if ((uint)(lVar2 + 3) <= local_20) {
+        ExceptionList = local_10;
+        return 1;
+      }
+    }
+  }
+  ExceptionList = local_10;
+  return 0;
+}
+
+

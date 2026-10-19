@@ -1,0 +1,95 @@
+{
+  "format": "idm-segmentation-analysis-v1",
+  "artifact_sha256": "c7c80b420579d774f445b6b3f9282c0850760ef790373c0ece0f856a0a05d1d5",
+  "implementation_code_changes": false,
+  "files": [
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\segment-0x558560.txt",
+      "bytes": 1702,
+      "sha256": "c490761ac0c00fe5e6085f0c246585714a82a751bc09142a8bb1d019e07f5755"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\segment-0x5586d0.txt",
+      "bytes": 2877,
+      "sha256": "970399b0a9cb33749930a46404a303d39979e73be7b33c748309400accf279c7"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\segment-0x559210.txt",
+      "bytes": 9267,
+      "sha256": "9c3d4fcdd2993bd66ac6c8890f530b5b239f810c43ced5a6610e08553047422b"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\segment-0x559a20.txt",
+      "bytes": 1109,
+      "sha256": "9a9293a322076580bf70f5d2b6d2b7c620745dee01030f0195b5328ebdebeab5"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\segment-0x559d40.txt",
+      "bytes": 2672,
+      "sha256": "e5d1d911d0510ec23abfda6eb9e6587567160f5b7d268c7ce02d3a2bd270a0ad"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\segment-0x55efc0.txt",
+      "bytes": 14640,
+      "sha256": "712acdc96a627158cfe88584006b9b8365e0a3bf147c2509b1a1cdcb5c0e3303"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\segment-0x5631f0.txt",
+      "bytes": 4285,
+      "sha256": "148dd0afa77fb6a96f3c73c6d844b4236751cab96f4a89ba10a443c6dd4be771"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\segment-0x57ecf0.txt",
+      "bytes": 1644,
+      "sha256": "1f97fd7563f1907d9b548cf8a1e96f27a5649e5395faf3df2243ac18b3f6c4cd"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\segment-0x581e90-assembly.txt",
+      "bytes": 4080,
+      "sha256": "4c8b32c32437d7dc0e27f3359f3f6b15d669e888634ec1b5239943e0714f28ed"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\segment-0x581e90.txt",
+      "bytes": 2202,
+      "sha256": "5f77f4733b62c59c0f5c4cef5827e7487b6d6a26b05add88c907ecb074896b9d"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\segment-0x5abda0.txt",
+      "bytes": 33032,
+      "sha256": "a58d422b139c62705f0203d8fd817724e21b38af077b11a3b0694c9f9c6750d7"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\segmentation-runtime.json",
+      "bytes": 3009,
+      "sha256": "7446cb3d7237a4b44f306e758322d644244a3fd8e3e29bb88400d34aebaae345"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\segmentation-evidence.json",
+      "bytes": 12390475,
+      "sha256": "8f1484f32e37266bf557c601a89984f60472ae9e92cf16c65b0de68619fe57c4"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\segmentation-snapshot.json",
+      "bytes": 23721326,
+      "sha256": "da24a36e7dd05f0355919e7a0c7a19c30f70909bb49ab7c4d072bf810c947e6b"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\docs\\idm-segmentation.md",
+      "bytes": 12101,
+      "sha256": "961beb06f9efe2bc45186a718e673a923538eeeee09127d15df7d78fe7396a21"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\docs\\idm-investigation.md",
+      "bytes": 20133,
+      "sha256": "ba3945385d9e5e7b0663c918fcf4836e761125f8b014938b5b53e4946b444519"
+    }
+  ],
+  "verification": {
+    "referenced_evidence_ids": 9,
+    "missing_evidence_ids": [],
+    "source_log_hash_matches": true,
+    "overlap_pairs": 9,
+    "midpoint_examples": 2
+  },
+  "coverage": "bounded static follow-up and calculations on existing runtime records; no new runtime experiments"
+}

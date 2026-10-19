@@ -1,0 +1,130 @@
+REA evidence: ev_bbdd14f78a495c7b3dca0773b96cee4cbba0e6206be6e17000092bd47df7f308
+Decompiler output, not original source.
+
+undefined4 FUN_00566650(void)
+
+{
+  undefined4 *puVar1;
+  char cVar2;
+  uint uVar3;
+  char *pcVar4;
+  char *pcVar5;
+  char *pcVar6;
+  int in_ECX;
+  int iVar7;
+  int iVar8;
+  undefined4 local_24;
+  char *local_20;
+  char *local_1c;
+  char *local_18;
+  int local_14;
+  undefined4 local_10;
+  void *local_c;
+  undefined1 *puStack_8;
+  int local_4;
+  
+  local_4 = 0xffffffff;
+  puStack_8 = &LAB_00665548;
+  local_c = ExceptionList;
+  uVar3 = DAT_007608e0 ^ (uint)&stack0xffffffcc;
+  iVar7 = 0;
+  local_10 = 0;
+  if ((*(int *)(in_ECX + 0x19c) != 0) && (*(char *)(*(int *)(in_ECX + 0x19c) + 0x15c) != '\0')) {
+    return 0;
+  }
+  puVar1 = *(undefined4 **)(in_ECX + 0xcc);
+  if (puVar1 == (undefined4 *)0x0) {
+    local_18 = (char *)**(undefined4 **)(in_ECX + 200);
+    iVar8 = *(int *)(*(int *)(in_ECX + 200) + 8);
+  }
+  else {
+    local_18 = (char *)*puVar1;
+    iVar8 = puVar1[2];
+  }
+  ExceptionList = &local_c;
+  local_14 = iVar8;
+  pcVar4 = _strstr(local_18,".googlevideo.com");
+  if ((pcVar4 != (char *)0x0) && (iVar8 != 0)) {
+    FUN_00402500(uVar3);
+    local_4 = 0;
+    cVar2 = FUN_00426760(iVar8,&DAT_006b2adc,&local_1c);
+    if (cVar2 != '\0') {
+      FUN_00402c10(&DAT_006b2ad4,&DAT_006b2ad8);
+      pcVar5 = _strchr(local_1c,0x2c);
+      pcVar4 = local_1c;
+      while (pcVar5 != (char *)0x0) {
+        iVar7 = iVar7 + 1;
+        *pcVar5 = '\0';
+        FUN_00402500();
+        local_4._0_1_ = 1;
+        FUN_00402f70(&local_20,&DAT_0067def0,pcVar4);
+        pcVar4 = pcVar5 + 1;
+        pcVar5 = _strchr(pcVar4,0x2c);
+        pcVar6 = _strstr((char *)**(undefined4 **)(in_ECX + 200),local_20);
+        if (pcVar6 != (char *)0x0) {
+          if (pcVar5 != (char *)0x0) {
+            *pcVar5 = '\0';
+          }
+          FUN_00402500();
+          local_4 = CONCAT31(local_4._1_3_,2);
+          FUN_00402f70(&local_24,&DAT_0067def0,local_18);
+          FUN_00402c10(local_20,pcVar4);
+          if (*(int *)(in_ECX + 0xcc) == 0) {
+            FUN_00453e20(local_24);
+          }
+          else {
+            FUN_00402f70(*(int *)(in_ECX + 0xcc),&DAT_0067def0,local_24);
+          }
+          local_10 = 1;
+          local_4._0_1_ = 1;
+          FUN_00402570();
+          local_4._0_1_ = 0;
+          FUN_00402570();
+          FUN_00402500();
+          local_4._0_1_ = 3;
+          FUN_00402500();
+          iVar8 = local_14;
+          local_4._0_1_ = 4;
+          cVar2 = FUN_00426760(local_14,"fallback_count",&local_20);
+          if (cVar2 == '\0') {
+            FUN_00402f70(&local_24,"%s&fallback_count=%ld",iVar8,iVar7);
+          }
+          else {
+            FUN_00402500();
+            local_4._0_1_ = 5;
+            FUN_00402f70(&local_18,"fallback_count=%s",local_20);
+            FUN_00402500();
+            local_4._0_1_ = 6;
+            FUN_00402f70(&local_14,"fallback_count=%ld",iVar7);
+            FUN_00402f70(&local_24,&DAT_0067def0,iVar8);
+            FUN_00402c10(local_18,local_14);
+            local_4._0_1_ = 5;
+            FUN_00402570();
+            local_4._0_1_ = 4;
+            FUN_00402570();
+          }
+          if (*(int *)(in_ECX + 0xcc) == 0) {
+            FUN_004258c0(local_24,0);
+          }
+          else {
+            FUN_00402f70(*(int *)(in_ECX + 0xcc) + 8,&DAT_0067def0,local_24);
+          }
+          *(undefined1 *)(*(int *)(in_ECX + 200) + 0x1bb) = 1;
+          local_4._0_1_ = 3;
+          FUN_00402570();
+          local_4 = (uint)local_4._1_3_ << 8;
+          FUN_00402570();
+          break;
+        }
+        local_4 = (uint)local_4._1_3_ << 8;
+        FUN_00402570();
+      }
+    }
+    local_4 = 0xffffffff;
+    FUN_00402570();
+  }
+  ExceptionList = local_c;
+  return local_10;
+}
+
+

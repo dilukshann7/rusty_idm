@@ -1,0 +1,60 @@
+REA evidence: ev_e306afb3db7b7b5b61a8c13d1c6666f15f8fe26ce4d394bdf435c5f4b98de381
+Decompiler output, not original source or implementation code.
+
+int * FUN_00558560(int *param_1)
+
+{
+  int iVar1;
+  uint uVar2;
+  int iVar3;
+  uint uVar4;
+  int iVar5;
+  uint uVar6;
+  int in_ECX;
+  int iVar7;
+  uint uVar8;
+  int *piVar9;
+  void *local_10;
+  undefined1 *puStack_c;
+  undefined4 local_8;
+  
+  puStack_c = &LAB_00664560;
+  local_10 = ExceptionList;
+  ExceptionList = &local_10;
+  local_8 = 0;
+  FUN_00558550("FindChunkWithZipCentralDir\n");
+  piVar9 = *(int **)(in_ECX + 0x88);
+  *param_1 = 0;
+  param_1[1] = 0;
+  do {
+    if (piVar9 == (int *)0x0) {
+      ExceptionList = local_10;
+      return (int *)0x0;
+    }
+    if (piVar9[5] == 0) {
+      iVar1 = *piVar9;
+      uVar2 = *(uint *)(iVar1 + 0x78);
+      iVar3 = *(int *)(iVar1 + 0x7c);
+      uVar4 = *(uint *)(iVar1 + 0x80);
+      iVar5 = *(int *)(iVar1 + 0x84);
+      uVar6 = *(uint *)(iVar1 + 0x60);
+      iVar1 = *(int *)(iVar1 + 100);
+      uVar8 = (uVar2 - uVar6) - uVar4;
+      if ((*(int *)(in_ECX + 0xec) <= iVar3) &&
+         ((*(int *)(in_ECX + 0xec) < iVar3 || (*(uint *)(in_ECX + 0xe8) < uVar2)))) {
+        iVar7 = iVar1 + iVar5 + (uint)CARRY4(uVar6,uVar4);
+        if ((iVar7 <= *(int *)(in_ECX + 0xec)) &&
+           ((iVar7 < *(int *)(in_ECX + 0xec) || (uVar6 + uVar4 < *(uint *)(in_ECX + 0xe8))))) {
+          *param_1 = uVar8 + 1;
+          param_1[1] = ((((iVar3 - iVar1) - (uint)(uVar2 < uVar6)) - iVar5) -
+                       (uint)(uVar2 - uVar6 < uVar4)) + (uint)(0xfffffffe < uVar8);
+          ExceptionList = local_10;
+          return piVar9;
+        }
+      }
+    }
+    piVar9 = (int *)piVar9[0x16];
+  } while( true );
+}
+
+

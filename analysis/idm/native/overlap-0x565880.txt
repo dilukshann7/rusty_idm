@@ -1,0 +1,28 @@
+REA evidence: ev_4fe85ebfb6f06e3b6291fc353bd23fd7e412f9b8d45c739eb2fac8fc2b77e555
+Decompiler output, not original source or implementation code.
+
+undefined4 FUN_00565880(int param_1)
+
+{
+  if (param_1 < 0x274d) {
+    if (param_1 != 0x274c) {
+      switch(param_1) {
+      case 0x2728:
+      case 0x2733:
+      case 0x2734:
+      case 0x2735:
+      case 0x2745:
+        break;
+      default:
+        goto switchD_0056589e_caseD_2729;
+      }
+    }
+  }
+  else if ((param_1 != 0x2afa) && ((param_1 < 0x7532 || (0x7533 < param_1)))) {
+switchD_0056589e_caseD_2729:
+    return 1;
+  }
+  return 0;
+}
+
+

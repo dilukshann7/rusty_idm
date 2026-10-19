@@ -1,0 +1,135 @@
+{
+  "format": "idm-overlap-analysis-v1",
+  "artifact_sha256": "c7c80b420579d774f445b6b3f9282c0850760ef790373c0ece0f856a0a05d1d5",
+  "implementation_code_changes": false,
+  "new_runtime_experiments": false,
+  "files": [
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x5652d0.txt",
+      "bytes": 1451,
+      "sha256": "a2eb27f51b2bf1593b58c597aca8efe2f3d130da0434e57f96ae903765fc79d6"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x5653b0.txt",
+      "bytes": 4644,
+      "sha256": "48b7a790613a822cccc57c804d6f2f0c52414278bd5c3b94c076b91ef45dedc3"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x565800.txt",
+      "bytes": 551,
+      "sha256": "e858b5543f8fa5bf4eeaf64412979eeaf2455c257f79b9b0e5c869c398c0d7af"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x565880.txt",
+      "bytes": 593,
+      "sha256": "aba88b402d278e28a62b476385b1fe38f26691eef7d7a398e0a05da229ca164e"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x5658f0.txt",
+      "bytes": 327,
+      "sha256": "bfeae1dd4eb99df34ad52111d6f0d1bf8e2df9e8976ac01811bf83b356ae0b5b"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x565940-assembly.txt",
+      "bytes": 546,
+      "sha256": "5210f901a6bc1f13476176212b3b12376ca0137f5f43a031a72be695b5f96ee0"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x565940.txt",
+      "bytes": 884,
+      "sha256": "2fd1b620a5f522bab026afc66cdb9b7ce1e39d3bb5af8b5127138d172c2372a5"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x565bc0.txt",
+      "bytes": 4876,
+      "sha256": "99127fed0b84f2830a598f1fb0d5c59793667ad73d3416af10ba4aff988d0c76"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x567ee0-assembly.txt",
+      "bytes": 400,
+      "sha256": "652de37629a45e00d98ce45022c7fe2437773faecc0baf53b4427fea34153bc9"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x567ee0.txt",
+      "bytes": 5223,
+      "sha256": "e194677b553148b0185ba0deb9a86f58c17fc1da1267028bfefb0c60f8f2ed07"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x5690d0.txt",
+      "bytes": 14894,
+      "sha256": "22c739ebb3d73717e0067a36982175b26737e23cf0d1970941dc79f551e0f372"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x5785f0.txt",
+      "bytes": 21715,
+      "sha256": "708352c3d833e97dfbf3811c938c2afa95a5afd87f8db1a6f2d7eb71bf5412e5"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x57af40.txt",
+      "bytes": 1610,
+      "sha256": "0ad08780e76a3f3c4856dacf86f3c66bbebc72e1ddaabfef25f652ddab7293fc"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x57f520.txt",
+      "bytes": 1380,
+      "sha256": "62476cc7a101ce6ff14cf05f6275e501b2523f509fd7166022b91c899c24bb8a"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x58db10.txt",
+      "bytes": 54261,
+      "sha256": "9f41ddbaf16d945589cfa5355677763fb53fc0feb6f79794c1f1b699c60e1e20"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x594920.txt",
+      "bytes": 2362,
+      "sha256": "85e4bd57fbf769172559f791633e76fa99160d30f5f3544e94f41bbb0f0b393c"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x594ad0.txt",
+      "bytes": 781,
+      "sha256": "106ce149532c45e72365f4fdbc8ccc03c8f9f0bffc6bf8bb314571656a750c76"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x594df0.txt",
+      "bytes": 1365,
+      "sha256": "06d6de96935cfd6b6da76ad1887724fae8ca0f06767825170db848bc0aeed54d"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-0x5b80d0.txt",
+      "bytes": 451,
+      "sha256": "ef72825cc0d2b4f90b83f7aaa8e1f7d4a557647bf6ba746dd2c412a5c794181a"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-warning-mapping.txt",
+      "bytes": 343,
+      "sha256": "53f6531b05ef944a09f447eb23000d274312a30dcc90e324e3df3e61169302da"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-evidence.json",
+      "bytes": 13017624,
+      "sha256": "935dbd64e11d14f730f3beab1737e865ed3395babfdae20e7e59e1329a034575"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\overlap-snapshot.json",
+      "bytes": 24348475,
+      "sha256": "5f1fca1fa3e305840039f773df243cbd01359501616a5d21d80b2e0f89241e0f"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\docs\\idm-overlap-validation.md",
+      "bytes": 11040,
+      "sha256": "f4a0eec8865b5511049d72c5e9c7ac92a9c582e71a3641438c7ba4cc7d063f78"
+    }
+  ],
+  "verification": {
+    "referenced_evidence_ids": 11,
+    "missing_evidence_ids": [],
+    "checked_status_writes": [
+      "0x5659a9 -> -12",
+      "0x56812f -> -11"
+    ]
+  },
+  "limitations": [
+    "Expected sample loading and counter initialization not yet traced",
+    "Recovered calling conventions incomplete; full native ABI not established"
+  ]
+}

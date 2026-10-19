@@ -1,0 +1,17 @@
+REA evidence: ev_8c26e3cc3ac62f5233aa35c19ffee0b055c15779a32073b9d9b90083003f6127
+Assembly excerpt only; full record in overlap-evidence.json.
+0x565940: PUSH ESI
+0x565941: PUSH EDI
+0x565942: MOV EDI, ECX
+0x565944: MOV EAX, dword ptr [EDI + 0x198]
+0x56594a: LEA EDX, [EDI + 0x154]
+0x565950: LEA ESI, [EDI + 0x114]
+0x565956: CMP EAX, 0x4
+0x565959: JC 0x00565974
+0x56599f: CALL 0x005656c0
+0x5659a4: MOV EAX, dword ptr [ESP + 0xc]
+0x5659a8: POP EDI
+0x5659a9: MOV dword ptr [EAX], 0xfffffff4
+0x5659af: XOR EAX, EAX
+0x5659b1: POP ESI
+0x5659b2: RET 0x4

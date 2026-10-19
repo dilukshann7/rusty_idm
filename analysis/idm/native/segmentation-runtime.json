@@ -1,0 +1,111 @@
+{
+  "authority": "derived-from-existing-endpoint-records",
+  "log_sha256": "1b549a70e98d4f99efbcbf0907293675548a4f49fc85b6a3c4ed19d0d06487cd",
+  "filter": "non-self-check start records; bounded ranges; same path and version; absolute start-time difference less than one second",
+  "overlap_pairs": [
+    {
+      "left_request": 18,
+      "right_request": 16,
+      "left_end": 962618,
+      "right_start": 962555,
+      "overlap_bytes": 64,
+      "path": "/ranges.bin?size=1677721",
+      "version": "1"
+    },
+    {
+      "left_request": 27,
+      "right_request": 26,
+      "left_end": 4476630,
+      "right_start": 4476567,
+      "overlap_bytes": 64,
+      "path": "/mutable.bin?delay=0.5",
+      "version": "1"
+    },
+    {
+      "left_request": 47,
+      "right_request": 44,
+      "left_end": 658670,
+      "right_start": 658607,
+      "overlap_bytes": 64,
+      "path": "/browser.bin?size=1048576",
+      "version": "1"
+    },
+    {
+      "left_request": 49,
+      "right_request": 44,
+      "left_end": 658670,
+      "right_start": 658607,
+      "overlap_bytes": 64,
+      "path": "/browser.bin?size=1048576",
+      "version": "1"
+    },
+    {
+      "left_request": 68,
+      "right_request": 64,
+      "left_end": 658670,
+      "right_start": 658607,
+      "overlap_bytes": 64,
+      "path": "/ranges.bin?size=1048576",
+      "version": "1"
+    },
+    {
+      "left_request": 87,
+      "right_request": 85,
+      "left_end": 4476630,
+      "right_start": 4476567,
+      "overlap_bytes": 64,
+      "path": "/slow.bin?delay=0.5",
+      "version": "1"
+    },
+    {
+      "left_request": 111,
+      "right_request": 109,
+      "left_end": 8522990,
+      "right_start": 8522927,
+      "overlap_bytes": 64,
+      "path": "/queue-b.bin?delay=0.1",
+      "version": "1"
+    },
+    {
+      "left_request": 128,
+      "right_request": 126,
+      "left_end": 8522990,
+      "right_start": 8522927,
+      "overlap_bytes": 64,
+      "path": "/queue-a.bin?delay=0.1",
+      "version": "1"
+    },
+    {
+      "left_request": 129,
+      "right_request": 128,
+      "left_end": 4476630,
+      "right_start": 4476567,
+      "overlap_bytes": 64,
+      "path": "/queue-a.bin?delay=0.1",
+      "version": "1"
+    }
+  ],
+  "midpoints": [
+    {
+      "earlier_request": 19,
+      "later_request": 20,
+      "earlier_start": 1605992,
+      "end_inclusive": 1677720,
+      "floor_midpoint": 1641856,
+      "observed_later_start": 1641856
+    },
+    {
+      "earlier_request": 20,
+      "later_request": 21,
+      "earlier_start": 1641856,
+      "end_inclusive": 1677720,
+      "floor_midpoint": 1659788,
+      "observed_later_start": 1659788
+    }
+  ],
+  "limitations": [
+    "Pair matching is geometric and temporal, not a native worker lineage trace.",
+    "Some requests were aborted before any bytes were sent.",
+    "These observations do not establish universal split thresholds or scheduling policy."
+  ]
+}

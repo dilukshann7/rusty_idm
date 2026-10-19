@@ -1,0 +1,17 @@
+REA evidence: ev_e8fdec68b3a4f04722734651ee4b96df7cf2cceac32dbe11ae6d22ae21d35165
+Decompiler output, not original source.
+
+void * FUN_005f93a8(size_t param_1)
+
+{
+  void *pvVar1;
+  
+  pvVar1 = _malloc(param_1);
+  if ((pvVar1 == (void *)0x0) && (PTR_thunk_FUN_005f94bd_0075f0b8 != (undefined *)0x0)) {
+    pvVar1 = (void *)(*(code *)PTR_thunk_FUN_005f94bd_0075f0b8)(param_1);
+    return pvVar1;
+  }
+  return pvVar1;
+}
+
+

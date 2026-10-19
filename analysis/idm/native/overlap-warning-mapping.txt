@@ -1,0 +1,10 @@
+REA evidence: ev_f32f9eae7f38203a9c64c51c127bd5a5103da5614014cc34de4e29ec12e1f9d0
+Assembly excerpt linking warning strings to globals.
+0x4ef5ad: CALL 0x00401980
+0x4ef5b2: PUSH 0x697bd0
+0x4ef5b7: MOV ECX, 0x7676f0
+0x4ef5bc: CALL 0x00402fd0
+0x4ef5bc: CALL 0x00402fd0
+0x4ef5c1: PUSH 0x697af0
+0x4ef5c6: MOV ECX, 0x7676f4
+0x4ef5cb: CALL 0x00402fd0

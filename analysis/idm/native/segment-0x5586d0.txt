@@ -1,0 +1,94 @@
+REA evidence: ev_1ba97414bc44ff17d85566ad9c06e0517c58ccb3679117be3ad2370e0004896d
+Decompiler output, not original source or implementation code.
+
+int * FUN_005586d0(uint *param_1,int param_2)
+
+{
+  int iVar1;
+  int iVar2;
+  int in_ECX;
+  uint uVar3;
+  uint uVar4;
+  uint uVar5;
+  uint uVar6;
+  uint uVar7;
+  int *piVar8;
+  int *piVar9;
+  undefined8 uVar10;
+  uint local_24;
+  int *local_1c;
+  void *local_10;
+  undefined1 *puStack_c;
+  undefined4 local_8;
+  
+  puStack_c = &LAB_00664580;
+  local_10 = ExceptionList;
+  ExceptionList = &local_10;
+  local_8 = 0;
+  piVar8 = *(int **)(in_ECX + 0x88);
+  local_1c = (int *)0x0;
+  *param_1 = 0;
+  param_1[1] = 0;
+  if (*(int *)(in_ECX + 0x1c) != 0) {
+    iVar2 = FUN_0056f360();
+    if (iVar2 == 0) {
+      while (piVar9 = piVar8, piVar9 != (int *)0x0) {
+        local_1c = piVar9;
+        piVar8 = (int *)piVar9[0x16];
+      }
+      uVar10 = __allmul(*(undefined4 *)(in_ECX + 0xc0),*(undefined4 *)(in_ECX + 0xc4),5,0);
+      *(undefined8 *)param_1 = uVar10;
+      ExceptionList = local_10;
+      return local_1c;
+    }
+    if (*(undefined4 **)(in_ECX + 0x1c) != (undefined4 *)0x0) {
+      (**(code **)**(undefined4 **)(in_ECX + 0x1c))(1);
+    }
+    *(undefined4 *)(in_ECX + 0x1c) = 0;
+  }
+  for (; piVar8 != (int *)0x0; piVar8 = (int *)piVar8[0x16]) {
+    if (piVar8[5] == 0) {
+      iVar2 = *piVar8;
+      iVar1 = *(int *)(iVar2 + 200);
+      if ((*(int *)(iVar1 + 0x24) == 4) || (*(int *)(iVar1 + 0x24) == 5)) {
+        uVar3 = *(uint *)(iVar2 + 0xec);
+        if (uVar3 == 0) {
+          uVar3 = *(int *)(iVar2 + 0xf0) + *(int *)(iVar2 + 0xe8);
+        }
+        uVar6 = 0;
+        if (piVar8[0x16] == 0) {
+          local_24 = (uint)(longlong)ROUND(*(double *)(iVar1 + 0x3c8) * 1000.0);
+          if (uVar3 < local_24) {
+            local_24 = (uint)(longlong)ROUND(*(double *)(iVar1 + 0x3c8) * -1000.0);
+            uVar6 = -local_24 - uVar3;
+          }
+        }
+        else if (uVar3 < *(uint *)(piVar8[0x16] + 0x1c)) {
+          uVar6 = *(uint *)(piVar8[0x16] + 0x1c) - uVar3;
+        }
+        uVar3 = 0;
+      }
+      else {
+        uVar7 = *(int *)(iVar2 + 0x98) * param_2;
+        uVar3 = *(uint *)(iVar2 + 0x78) - uVar7;
+        uVar4 = uVar3 - *(uint *)(iVar2 + 0x80);
+        uVar5 = uVar4 - *(uint *)(iVar2 + 0x60);
+        uVar6 = uVar5 + 1;
+        uVar3 = (((((*(int *)(iVar2 + 0x7c) - (uint)(*(uint *)(iVar2 + 0x78) < uVar7)) -
+                   *(int *)(iVar2 + 0x84)) - (uint)(uVar3 < *(uint *)(iVar2 + 0x80))) -
+                 *(int *)(iVar2 + 100)) - (uint)(uVar4 < *(uint *)(iVar2 + 0x60))) +
+                (uint)(0xfffffffe < uVar5);
+      }
+      if (((int)param_1[1] <= (int)uVar3) && (((int)param_1[1] < (int)uVar3 || (*param_1 < uVar6))))
+      {
+        *param_1 = uVar6;
+        param_1[1] = uVar3;
+        local_1c = piVar8;
+      }
+    }
+  }
+  ExceptionList = local_10;
+  return local_1c;
+}
+
+

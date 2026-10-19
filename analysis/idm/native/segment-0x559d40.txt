@@ -1,0 +1,90 @@
+REA evidence: ev_1b3473459f02a01bcc78c156c8bc9ee1bb25984ab73d902540014dbbeac29300
+Decompiler output, not original source or implementation code.
+
+void FUN_00559d40(LPCWSTR param_1)
+
+{
+  uint *puVar1;
+  HANDLE pvVar2;
+  int iVar3;
+  LPCWSTR pWVar4;
+  uint uStack_3c;
+  undefined4 local_28;
+  LPCWSTR local_24;
+  WCHAR local_20 [2];
+  undefined4 local_1c;
+  uint local_18;
+  undefined1 *local_14;
+  void *local_10;
+  undefined1 *puStack_c;
+  int local_8;
+  
+  puStack_c = &LAB_00664698;
+  local_10 = ExceptionList;
+  uStack_3c = DAT_007608e0 ^ (uint)&stack0xfffffffc;
+  local_14 = (undefined1 *)&uStack_3c;
+  ExceptionList = &local_10;
+  local_8 = 0;
+  local_18 = uStack_3c;
+  puVar1 = &uStack_3c;
+  if (param_1 != (LPCWSTR)0x0) {
+    puVar1 = &uStack_3c;
+    if (DAT_00766790 == (HMODULE)0x0) {
+      DAT_00766790 = (HMODULE)FUN_00446230(L"Advapi32.dll");
+      puVar1 = (uint *)local_14;
+      if (DAT_00766790 == (HMODULE)0x0) goto LAB_00559e43;
+    }
+    local_14 = (undefined1 *)puVar1;
+    if (DAT_00766924 == (FARPROC)0x0) {
+      DAT_00766924 = GetProcAddress(DAT_00766790,"GetSecurityInfo");
+    }
+    if (DAT_00766928 == (FARPROC)0x0) {
+      DAT_00766928 = GetProcAddress(DAT_00766790,"SetSecurityInfo");
+    }
+    puVar1 = (uint *)local_14;
+    if ((DAT_00766924 != (FARPROC)0x0) && (DAT_00766928 != (FARPROC)0x0)) {
+      local_28 = 0;
+      local_24 = (LPCWSTR)0x0;
+      local_1c = 0;
+      local_20[0] = L'\0';
+      local_8._0_1_ = 1;
+      FUN_004021b0("%s.tmp",param_1,0);
+      pWVar4 = local_24;
+      if (local_24 == (LPCWSTR)0x0) {
+        pWVar4 = local_20;
+      }
+      pvVar2 = CreateFileW(pWVar4,0xc0020000,0,(LPSECURITY_ATTRIBUTES)0x0,1,0x80,(HANDLE)0x0);
+      if (pvVar2 != (HANDLE)0xffffffff) {
+        iVar3 = (*DAT_00766924)(pvVar2,1,4,0,0,&local_28,0,0);
+        CloseHandle(pvVar2);
+        pWVar4 = local_24;
+        if (local_24 == (LPCWSTR)0x0) {
+          pWVar4 = local_20;
+        }
+        DeleteFileW(pWVar4);
+        if (iVar3 == 0) {
+          pvVar2 = CreateFileW(param_1,0x60000,0,(LPSECURITY_ATTRIBUTES)0x0,3,0x80,(HANDLE)0x0);
+          if (pvVar2 != (HANDLE)0xffffffff) {
+            (*DAT_00766928)(pvVar2,1,4,0,0,local_28,0);
+            CloseHandle(pvVar2);
+            local_8 = (uint)local_8._1_3_ << 8;
+            FUN_00401210();
+            local_8 = -1;
+            puVar1 = (uint *)local_14;
+            goto LAB_00559e43;
+          }
+        }
+      }
+      local_8 = (uint)local_8._1_3_ << 8;
+      FUN_00401210();
+      puVar1 = (uint *)local_14;
+    }
+  }
+LAB_00559e43:
+  local_14 = (undefined1 *)puVar1;
+  ExceptionList = local_10;
+  __security_check_cookie(local_18 ^ (uint)&stack0xfffffffc);
+  return;
+}
+
+

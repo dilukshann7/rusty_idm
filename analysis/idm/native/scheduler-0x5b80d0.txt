@@ -1,0 +1,18 @@
+REA evidence: ev_f81586088e18b44149ef086fc3cee46e937ff716af1e5006baaf5dd6b1650a5f
+Decompiler output, not original source.
+
+void FUN_005b80d0(int param_1)
+
+{
+  int iVar1;
+  int in_ECX;
+  
+  iVar1 = *(int *)(in_ECX + 0x13c);
+  *(int *)(in_ECX + 0x13c) = param_1;
+  if ((param_1 != iVar1) && (**(int **)(in_ECX + 0x10) != 0)) {
+    SendMessageA((HWND)**(int **)(in_ECX + 0x10),0x111,0x1479,(uint)(param_1 != 2));
+  }
+  return;
+}
+
+

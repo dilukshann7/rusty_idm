@@ -1,0 +1,57 @@
+REA evidence: ev_b54f00446fa92b117b824a174ed475fd19268379be9048169fc65081c562f0db
+Decompiler output, not original source.
+
+void FUN_005b8490(void)
+
+{
+  undefined4 uVar1;
+  uint *puVar2;
+  undefined4 uVar3;
+  int in_ECX;
+  uint uStack_28;
+  undefined4 local_18;
+  undefined1 *local_14;
+  void *local_10;
+  undefined1 *puStack_c;
+  undefined4 local_8;
+  
+  puStack_c = &LAB_00669ba0;
+  local_10 = ExceptionList;
+  uStack_28 = DAT_007608e0 ^ (uint)&stack0xfffffffc;
+  local_14 = (undefined1 *)&uStack_28;
+  local_8 = 0;
+  if (*(double *)(*(int *)(in_ECX + 0xc) + 0x3c8) <= 0.0) {
+    return;
+  }
+  ExceptionList = &local_10;
+  puVar2 = &uStack_28;
+  if (*(int *)(*(int *)(in_ECX + 0xc) + 0x340) == 0) {
+    uVar1 = *(undefined4 *)(in_ECX + 0x1b8);
+    uVar3 = FUN_005b8120();
+    *(undefined4 *)(in_ECX + 0x1b0) = uVar3;
+    *(undefined4 *)(in_ECX + 0x1b8) = uVar1;
+    puVar2 = (uint *)local_14;
+  }
+  local_14 = (undefined1 *)puVar2;
+  if (**(int **)(in_ECX + 0x10) != 0) {
+    SendMessageA((HWND)**(int **)(in_ECX + 0x10),0x111,0x146d,0);
+  }
+  if (**(int **)(in_ECX + 0x14) != 0) {
+    SendMessageA((HWND)**(int **)(in_ECX + 0x14),0x111,0x146d,*(LPARAM *)(in_ECX + 0x240));
+  }
+  if (**(int **)(in_ECX + 0x18) != 0) {
+    SendMessageA((HWND)**(int **)(in_ECX + 0x18),0x111,0x146d,0);
+  }
+  if (*(HKEY *)(in_ECX + 0x244) != (HKEY)0x0) {
+    RegSetValueExA(*(HKEY *)(in_ECX + 0x244),"Duration",0,0,(BYTE *)(*(int *)(in_ECX + 0xc) + 0x3c8)
+                   ,8);
+    if (*(int *)(*(int *)(in_ECX + 0xc) + 0x340) != 0) {
+      local_18 = *(undefined4 *)(*(int *)(in_ECX + 0xc) + 0x340);
+      RegSetValueExA(*(HKEY *)(in_ECX + 0x244),"nAggrV",0,4,(BYTE *)&local_18,4);
+    }
+  }
+  ExceptionList = local_10;
+  return;
+}
+
+

@@ -1,0 +1,79 @@
+REA evidence: ev_8d34d64a05a7969f8512a51b19c2c03aa80108f657fa3b60cef9e59077e6d05a
+Decompiler output, not original source or implementation code.
+
+void FUN_00594920(int param_1)
+
+{
+  int *piVar1;
+  uint uVar2;
+  uint uVar3;
+  int iVar4;
+  int in_ECX;
+  int iVar5;
+  int iVar6;
+  
+  FUN_005b80d0(2);
+  piVar1 = *(int **)(in_ECX + 0x274);
+  if ((*(int *)(in_ECX + 0xb0) == piVar1[0x2a]) && (piVar1[0x29] == 6)) {
+    iVar5 = 1;
+    if (1 < *(int *)(in_ECX + 0x1b0)) {
+      iVar6 = 0x3488;
+      do {
+        FUN_005810d0();
+        *(undefined4 *)(iVar6 + 0x9c + *(int *)(in_ECX + 0x274)) = 0;
+        iVar5 = iVar5 + 1;
+        iVar6 = iVar6 + 0x3488;
+      } while (iVar5 < *(int *)(in_ECX + 0x1b0));
+    }
+    if (param_1 != 0) {
+      FUN_0055dcb0();
+    }
+    FUN_005634d0();
+    iVar5 = *(int *)(in_ECX + 0x274);
+    uVar2 = *(uint *)(iVar5 + 0x80);
+    uVar3 = *(uint *)(iVar5 + 0x60);
+    iVar6 = *(int *)(iVar5 + 0x84);
+    iVar4 = *(int *)(iVar5 + 100);
+    *(uint *)(in_ECX + 0x1c8) = uVar2 + *(uint *)(iVar5 + 0x60);
+    *(uint *)(in_ECX + 0x1cc) = iVar6 + iVar4 + (uint)CARRY4(uVar2,uVar3);
+    *(undefined4 *)(in_ECX + 200) = *(undefined4 *)(iVar5 + 0x60);
+    iVar6 = *(int *)(in_ECX + 0x1c4);
+    *(undefined4 *)(in_ECX + 0xcc) = *(undefined4 *)(iVar5 + 100);
+    iVar4 = *(int *)(in_ECX + 0x1c0);
+    if (iVar4 != 0 || iVar6 != 0) {
+      *(int *)(iVar5 + 0x78) = iVar4 + -1;
+      *(uint *)(iVar5 + 0x7c) = iVar6 - (uint)(iVar4 == 0);
+    }
+    *(undefined1 *)(*(int *)(in_ECX + 0x274) + 0xdd) = 0;
+    return;
+  }
+  (**(code **)(*piVar1 + 0xc))();
+  iVar5 = 1;
+  if (1 < *(int *)(in_ECX + 0x1b0)) {
+    iVar6 = 0x3488;
+    do {
+      FUN_005810d0();
+      *(undefined4 *)(iVar6 + 0x9c + *(int *)(in_ECX + 0x274)) = 0;
+      iVar5 = iVar5 + 1;
+      iVar6 = iVar6 + 0x3488;
+    } while (iVar5 < *(int *)(in_ECX + 0x1b0));
+  }
+  if (param_1 != 0) {
+    FUN_0055dcb0();
+  }
+  iVar5 = *(int *)(in_ECX + 0xb0);
+  FUN_0055e320();
+  *(undefined4 *)(in_ECX + 200) = 0;
+  *(undefined4 *)(in_ECX + 0xcc) = 0;
+  *(undefined4 *)(in_ECX + 0xd0) = 0;
+  *(undefined4 *)(in_ECX + 0xd4) = 0;
+  *(undefined4 *)(in_ECX + 0x1c8) = 0;
+  *(undefined4 *)(in_ECX + 0x1cc) = 0;
+  if (iVar5 != 0) {
+    FUN_0055e4b0(*(undefined4 *)(in_ECX + 0x274),*(undefined4 *)(*(int *)(in_ECX + 0xc) + 0x30));
+  }
+  *(undefined1 *)(*(int *)(in_ECX + 0x274) + 0xdd) = 0;
+  return;
+}
+
+

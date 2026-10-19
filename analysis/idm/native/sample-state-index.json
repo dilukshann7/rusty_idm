@@ -1,0 +1,79 @@
+{
+  "format": "idm-sample-state-analysis-v1",
+  "artifact_sha256": "c7c80b420579d774f445b6b3f9282c0850760ef790373c0ece0f856a0a05d1d5",
+  "implementation_code_changes": false,
+  "new_runtime_experiments": false,
+  "files": [
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\sample-0x5657a0.txt",
+      "bytes": 187,
+      "sha256": "4a17ae4bedf2218f138115e74615fee29e54a5aa4892c4f815aec83610ffa3de"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\sample-0x5657b0-assembly.txt",
+      "bytes": 774,
+      "sha256": "b38386ee3ca5ce78dc6c7987976f3dc6647ac92180d94cead4c73d9401c81d0b"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\sample-0x5657b0.txt",
+      "bytes": 520,
+      "sha256": "09f7685a126947e6f5a7416f340e6cba235bc1e6a18e279c4a53d3a8f3bff84c"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\sample-0x5659d0.txt",
+      "bytes": 470,
+      "sha256": "a61e55a9a1a3e88b9a433fd92ab8420aeffa4655b99686c56fbcc623c4a4feec"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\sample-0x56f070.txt",
+      "bytes": 1867,
+      "sha256": "f105ea9eb1858a30ad15ed06bc9a7ab9410c4c9dd17ec41f22acd18b2c200cc4"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\sample-0x594ec0.txt",
+      "bytes": 1427,
+      "sha256": "24fabbbbe7b4a710605d33284e310bf1c99988b08ea27887aab9bbf2afe2ff48"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\sample-0x599b90.txt",
+      "bytes": 82388,
+      "sha256": "720e7872d4dabaffd5af4a0e84c2e9449eaf9ac5e2476ef080c0924268ead5f5"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\sample-0x5b8ea0-assembly.txt",
+      "bytes": 1030,
+      "sha256": "fd33ff90fca8041180a40fcfdb094915841f368c7298a83f98f9d285e9a6f308"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\sample-0x5b8ea0.txt",
+      "bytes": 2088,
+      "sha256": "7484c8e66e00616e1c4352a721efc312f146eced252912dc07336a7960db2311"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\sample-state-evidence.json",
+      "bytes": 13317364,
+      "sha256": "b2cc58a06144976dac08cc105c71be1ffc6b89d733275f79036c26845c316e79"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\analysis\\idm\\native\\sample-state-snapshot.json",
+      "bytes": 24648215,
+      "sha256": "4bd5051c983e2c5b1a8f400d819a0aa834741d80e1d29ddeb0fa599e6aeb4441"
+    },
+    {
+      "path": "D:\\Programming\\Rust\\rusty_idm\\docs\\idm-sample-state.md",
+      "bytes": 7354,
+      "sha256": "50cc4cc8432d979731021c3228d0da06ca0770299f892617ff11313545da4473"
+    }
+  ],
+  "verification": {
+    "referenced_evidence_ids": 10,
+    "missing_evidence_ids": [],
+    "sample_limit_bytes": 64,
+    "counter_initial_zero_instruction": "0x5b9044; zero source XOR EDI,EDI at0x5b8eee"
+  },
+  "limits": [
+    "Sample flag cleanup on failures not fully traced",
+    "Session counter reset on reuse not established",
+    "Opcode searches cover selected forms in0x550000..0x5c0000"
+  ]
+}

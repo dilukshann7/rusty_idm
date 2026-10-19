@@ -1,0 +1,162 @@
+REA evidence: ev_3f8c0cc76638172246b7e1d1ff5eb210cca333ce5cc842a5350fded1bb17eead
+Decompiler output, not original source or implementation code.
+
+undefined4 FUN_00565ab0(int param_1,undefined4 param_2,int *param_3)
+
+{
+  char *pcVar1;
+  int *piVar2;
+  uint uVar3;
+  int iVar4;
+  uint *puVar5;
+  uint uVar6;
+  void *pvVar7;
+  char cVar8;
+  int iVar9;
+  undefined4 uVar10;
+  int in_ECX;
+  uint uStack_2c;
+  undefined4 local_18;
+  undefined1 *local_14;
+  void *local_10;
+  undefined1 *puStack_c;
+  undefined4 local_8;
+  
+  pvVar7 = ExceptionList;
+  puStack_c = &LAB_0066543b;
+  local_10 = ExceptionList;
+  uStack_2c = DAT_007608e0 ^ (uint)&stack0xfffffffc;
+  local_14 = (undefined1 *)&uStack_2c;
+  local_8 = 0;
+  if (*(char *)(in_ECX + 0xdf) != '\0') {
+    return 0;
+  }
+  if (*(int *)(in_ECX + 0x198) != 0) {
+    return 0;
+  }
+  iVar9 = *(int *)(in_ECX + 200);
+  if (*(int *)(iVar9 + 0x340) != 0) {
+    return 0;
+  }
+  if (*(int *)(in_ECX + 0x80) == 0 && *(int *)(in_ECX + 0x84) == 0) {
+    iVar4 = *(int *)(iVar9 + 0x24);
+    if (((iVar4 != 0) && (iVar4 != 1)) && (iVar4 != 2)) {
+      return 0;
+    }
+    ExceptionList = &local_10;
+    *(undefined4 *)(in_ECX + 0xd0) = 0;
+    pcVar1 = (char *)(in_ECX + 0xd9);
+    *pcVar1 = '\0';
+    if ((0 < *(int *)(in_ECX + 100)) ||
+       ((-1 < *(int *)(in_ECX + 100) && (*(int *)(in_ECX + 0x60) != 0)))) {
+      if (*(int *)(iVar9 + 0xe0) == 0) {
+        ExceptionList = pvVar7;
+        return 0;
+      }
+      if (*(char *)(in_ECX + 0xd8) != '\0') {
+        *pcVar1 = '\0';
+        *(undefined1 *)(in_ECX + 0xd8) = 0;
+        local_18 = 0x30;
+        piVar2 = (int *)(*(int *)(iVar9 + 0xe0) + 0x804);
+        *piVar2 = *piVar2 + -1;
+        piVar2 = (int *)(in_ECX + 0xd4);
+        iVar9 = *piVar2 + -0x30;
+        if (param_1 < *piVar2 + -0x30) {
+          iVar9 = param_1;
+        }
+        local_14 = (undefined1 *)&uStack_2c;
+        cVar8 = FUN_005652d0(iVar9,param_2,piVar2,&local_18,pcVar1);
+        if (cVar8 != '\0') {
+          FUN_005656c0("There is real matching\n");
+          *param_3 = -10;
+          ExceptionList = local_10;
+          return 1;
+        }
+        cVar8 = FUN_005652d0(param_1,param_2,piVar2,in_ECX + 0xd0,pcVar1);
+        if (cVar8 != '\0') {
+          FUN_005656c0("Strart data for this chunk is matched with start of the file!!! s3\n");
+          *param_3 = -8;
+          ExceptionList = local_10;
+          return 1;
+        }
+        FUN_005656c0("no match, step 4\n");
+        *pcVar1 = '\0';
+        *param_3 = -9;
+        ExceptionList = local_10;
+        return 1;
+      }
+      local_14 = (undefined1 *)&uStack_2c;
+      cVar8 = FUN_005652d0(param_1,param_2,in_ECX + 0xd4,(undefined4 *)(in_ECX + 0xd0),pcVar1);
+      if (cVar8 == '\0') {
+        ExceptionList = local_10;
+        return 0;
+      }
+      FUN_005656c0("Strart data for this chunk is matched with start of the file!!!\n");
+LAB_00565cfb:
+      *param_3 = (*(char *)(in_ECX + 0xd8) == '\0') - 8;
+      *(undefined1 *)(in_ECX + 0xd8) = 0;
+      ExceptionList = local_10;
+      return 1;
+    }
+    if (*(int *)(iVar9 + 0xe0) != 0) {
+      ExceptionList = pvVar7;
+      return 0;
+    }
+    local_14 = (undefined1 *)&uStack_2c;
+    iVar9 = FUN_005f93a8(0x80c);
+    local_8 = CONCAT31(local_8._1_3_,1);
+    if (iVar9 == 0) {
+      uVar10 = 0;
+    }
+    else {
+      uVar10 = FUN_00559cd0(param_1,param_2,pcVar1);
+    }
+    *(undefined4 *)(*(int *)(in_ECX + 200) + 0xe0) = uVar10;
+    cVar8 = *pcVar1;
+  }
+  else {
+    pcVar1 = (char *)(in_ECX + 0xd9);
+    if (*pcVar1 == '\0') {
+      return 0;
+    }
+    if (*(int *)(iVar9 + 0xe0) == 0) {
+      return 0;
+    }
+    if ((0 < *(int *)(in_ECX + 100)) ||
+       ((-1 < *(int *)(in_ECX + 100) && (*(int *)(in_ECX + 0x60) != 0)))) {
+      ExceptionList = &local_10;
+      cVar8 = FUN_005652d0(param_1,param_2,in_ECX + 0xd4,in_ECX + 0xd0,pcVar1);
+      if (cVar8 == '\0') {
+        ExceptionList = local_10;
+        return 0;
+      }
+      FUN_005656c0("Strart data for this chunk is matched with start of the file!!! s2\n");
+      puVar5 = *(uint **)(in_ECX + 0xac);
+      uVar6 = *(uint *)(in_ECX + 0x80);
+      uVar3 = *puVar5;
+      *puVar5 = *puVar5 - uVar6;
+      puVar5[1] = (puVar5[1] - *(int *)(in_ECX + 0x84)) - (uint)(uVar3 < uVar6);
+      uVar6 = *(uint *)(in_ECX + 0x80);
+      puVar5 = (uint *)(in_ECX + 0x88);
+      uVar3 = *puVar5;
+      *puVar5 = *puVar5 - uVar6;
+      *(int *)(in_ECX + 0x8c) =
+           (*(int *)(in_ECX + 0x8c) - *(int *)(in_ECX + 0x84)) - (uint)(uVar3 < uVar6);
+      FUN_0056e9e0(uVar6);
+      *(undefined4 *)(in_ECX + 0x80) = 0;
+      *(undefined4 *)(in_ECX + 0x84) = 0;
+      goto LAB_00565cfb;
+    }
+    ExceptionList = &local_10;
+    local_14 = (undefined1 *)&uStack_2c;
+    FUN_005580f0(param_1,param_2,pcVar1);
+    cVar8 = *pcVar1;
+  }
+  if (cVar8 == '\0') {
+    *(undefined1 *)(in_ECX + 0xda) = 1;
+  }
+  ExceptionList = local_10;
+  return 0;
+}
+
+

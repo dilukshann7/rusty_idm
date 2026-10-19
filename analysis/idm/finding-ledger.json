@@ -1,0 +1,113 @@
+[
+  {
+    "id": "engine-range",
+    "question": "How are HTTP ranges built?",
+    "artifact_sha256": "c7c80b420579d774f445b6b3f9282c0850760ef790373c0ece0f856a0a05d1d5",
+    "evidence_id": "ev_d7aca5af011cb3debb8cba2457f8315b6bec33bb7a174c06c1a7d9c924b5c566",
+    "location": "0x589430 / native/0x589430.c",
+    "evidence_class": "static-analysis",
+    "conclusion": "Request construction contains bounded/open-ended Range formats and a send call; caller 0x5abda0.",
+    "limitations": "Decompiler types/offsets are uncertain; indirect flows may be incomplete.",
+    "unknowns": "Exact partition allocation/reassignment policy."
+  },
+  {
+    "id": "engine-headers",
+    "question": "Are range metadata and validators parsed?",
+    "artifact_sha256": "c7c80b420579d774f445b6b3f9282c0850760ef790373c0ece0f856a0a05d1d5",
+    "evidence_id": "ev_6a698bc609ab4404ddaa417540036e53334d5c3c707a261178074fa8829e521f",
+    "location": "0x58a880 / native/0x58a880.c",
+    "evidence_class": "static-analysis",
+    "conclusion": "Response handler branches on Content-Range, ETag, Last-Modified, Location and transfer/content encoding.",
+    "limitations": "Parsing presence does not prove validation policy. Dossier delivered through retained view.",
+    "unknowns": "Full malformed-response and resume decision paths."
+  },
+  {
+    "id": "incoming-filter",
+    "question": "Does an If-Range string mean conditional resumes are sent?",
+    "artifact_sha256": "c7c80b420579d774f445b6b3f9282c0850760ef790373c0ece0f856a0a05d1d5",
+    "evidence_id": "ev_73fc19b173c0231cbf94b2358541fe8865f5abe6ccbd11126f61dfb4a4182987",
+    "location": "0x5d99a0 / native/0x5d99a0.c",
+    "evidence_class": "static-analysis",
+    "conclusion": "This occurrence filters incoming request-context headers; no outgoing If-Range claim follows.",
+    "limitations": "Only inspected path covered; runtime logger records three validator headers.",
+    "unknowns": "Other conditional-header construction paths."
+  },
+  {
+    "id": "temp-path",
+    "question": "Where are temporary download paths represented?",
+    "artifact_sha256": "c7c80b420579d774f445b6b3f9282c0850760ef790373c0ece0f856a0a05d1d5",
+    "evidence_id": "ev_6667a925440caa2f9e8fc26803a3d403d92654f2bae6da9de2dbdd2741d23951",
+    "location": "0x46e6e0 / native/0x46e6e0.c",
+    "evidence_class": "static-analysis",
+    "conclusion": "Queries TempPath and constructs DwnlData/user paths.",
+    "limitations": "Path handling is not a recovered checkpoint format.",
+    "unknowns": "Exact test checkpoint identity, encoding and write durability."
+  },
+  {
+    "id": "queue-store",
+    "question": "Is queue state persisted?",
+    "artifact_sha256": "c7c80b420579d774f445b6b3f9282c0850760ef790373c0ece0f856a0a05d1d5",
+    "evidence_id": "ev_4260206edd9526ef507ad37671e34e2015d66acbe5be12a6d75a7d59df5f4da6",
+    "location": "0x49d300 / native/0x49d300.c",
+    "evidence_class": "static-analysis",
+    "conclusion": "Writes Queue under HKCU Software/DownloadManager/Queue.",
+    "limitations": "No private registry history values copied.",
+    "unknowns": "Scheduler policy and interaction with per-server limits."
+  },
+  {
+    "id": "limiter-store",
+    "question": "How is the limiter setting stored?",
+    "artifact_sha256": "c7c80b420579d774f445b6b3f9282c0850760ef790373c0ece0f856a0a05d1d5",
+    "evidence_id": "ev_72edfd2acc00b355adedd60e01c6155a077aca40ecf60dd5456c202d9c02571b",
+    "location": "0x5b7ef0 / native/0x5b7ef0.c",
+    "evidence_class": "static-analysis",
+    "conclusion": "Writes/deletes bUseSpeedLimiter and psnSpeedLimit through an object registry handle.",
+    "limitations": "Units and algorithm are not established by names or storage lengths.",
+    "unknowns": "Achieved bandwidth, aggregation and limiter algorithm."
+  },
+  {
+    "id": "host-bridge",
+    "question": "What transport follows browser native messaging?",
+    "artifact_sha256": "dba25a49adb88f675db26d2dc7a0fa9d4a5db2326858cb9d2515f6f34b8e0b65",
+    "evidence_id": "ev_a0f115b1e65bb889cc2727d8657bc1ec542fee061f5f98fd87480246adbee8b3",
+    "location": "0x402830 / native/host-0x402830.c",
+    "evidence_class": "static-analysis",
+    "conclusion": "Opens session-specific IDMNetworkMonitor named pipe and converts quoted browser string framing to inner records and back.",
+    "limitations": "Static path only; no live host frames captured; pointer types recovered imperfectly.",
+    "unknowns": "Manager-side dispatch and origin validation."
+  },
+  {
+    "id": "host-init",
+    "question": "Is the host initial record separate from extension handshake?",
+    "artifact_sha256": "dba25a49adb88f675db26d2dc7a0fa9d4a5db2326858cb9d2515f6f34b8e0b65",
+    "evidence_id": "ev_864c4fcc246ee1eaf48477b482d3ef3575e93308db3594f9bad33b0fc4f2d922",
+    "location": "0x403530 / native/host-0x403530.c",
+    "evidence_class": "static-analysis",
+    "conclusion": "Constructs MSG#0#17#1#0:9:<process-id>; with a length prefix.",
+    "limitations": "Process ID is derived using peer/parent process logic; acceptance not observed.",
+    "unknowns": "Complete semantics of type17 and manager response."
+  },
+  {
+    "id": "browser-source-findings",
+    "question": "How do browser events reach IDM?",
+    "evidence_class": "static-source-analysis",
+    "ledger": "browser/finding-ledger.json",
+    "artifact_sha256": "8ac82b1abdfa5d1fac79fdf8511f1d86a7e7fb7a02d32e4a01e52b64d85fa016",
+    "evidence_id": "ev_5708179b68eba5330e262acdc6b86c567988c96e749c23f39bfca2ac19add676",
+    "location": "browser/extension/background.js:11-16,37-41,45,99-121",
+    "conclusion": "WebSocket preference and native messaging fallback carry a custom textual inner protocol with request context.",
+    "limitations": "REA semantic analysis partial after worker heap exhaustion; detailed trace supported by preserved source.",
+    "unknowns": "Selected live transport and many negotiated flags."
+  },
+  {
+    "id": "runtime-findings",
+    "question": "Which behavior was exercised and which outputs matched?",
+    "artifact_sha256": "c7c80b420579d774f445b6b3f9282c0850760ef790373c0ece0f856a0a05d1d5",
+    "evidence_class": "endpoint-file-process-observations-plus-user-report",
+    "location": "runtime/runtime-results.json; runtime/user-observations.json; docs/idm-runtime-results.md",
+    "evidence_id": null,
+    "conclusion": "See per-case request details and per-file hashes; no runtime record is assigned a fabricated REA ID.",
+    "limitations": "Periodic payload, buffered writes, manual retries and incomplete transport attribution.",
+    "unknowns": "Precise retry policy, exact throttle enforcement and clean two-ready-job queue scheduling."
+  }
+]

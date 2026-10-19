@@ -1,0 +1,14 @@
+REA evidence: ev_72ef6912b2d89ddcdc0ed31604c47bb7adc3cac7304749b71ac3d53fe8aa171c
+0x593ace: MOV byte ptr [EBP + -0x4], 0x4
+0x593ad2: XOR ESI, ESI
+0x593ad4: MOV dword ptr [EBP + -0x18], ESI
+0x593ad7: CMP ESI, 0x20
+0x593ada: JGE 0x00593af3
+0x593adc: MOV ECX, ESI
+0x593ade: IMUL ECX, ECX, 0x3488
+0x593ae4: ADD ECX, dword ptr [EDI + 0x274]
+0x593aea: CALL 0x005810d0
+0x593aef: ADD ESI, EBX
+0x593af1: JMP 0x00593ad4
+0x593af3: MOV dword ptr [EBP + -0x4], EBX
+0x593af6: JMP 0x00593b15

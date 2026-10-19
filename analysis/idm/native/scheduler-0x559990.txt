@@ -1,0 +1,26 @@
+REA evidence: ev_6656f07cceeb93f731a1e94f775345881ac0aa03db8fd51c785dabac34ccf134
+Decompiler output, not original source.
+
+void FUN_00559990(void)
+
+{
+  int in_ECX;
+  int iVar1;
+  void *local_10;
+  undefined1 *puStack_c;
+  undefined4 local_8;
+  
+  puStack_c = &LAB_00664650;
+  local_10 = ExceptionList;
+  ExceptionList = &local_10;
+  local_8 = 0;
+  for (iVar1 = *(int *)(in_ECX + 0x88); iVar1 != 0; iVar1 = *(int *)(iVar1 + 0x58)) {
+    if (*(int *)(iVar1 + 0x14) == 0) {
+      FUN_0056efe0();
+    }
+  }
+  ExceptionList = local_10;
+  return;
+}
+
+

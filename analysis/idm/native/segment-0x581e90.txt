@@ -1,0 +1,83 @@
+REA evidence: ev_9c8160fd615365d545d2cbf78d4b6d7343aad4b16481642db497e710a70128e4
+Decompiler output, not original source or implementation code.
+
+void FUN_00581e90(void)
+
+{
+  uint *puVar1;
+  int iVar2;
+  undefined4 uVar3;
+  int *in_ECX;
+  uint uStack_30;
+  undefined1 local_20 [4];
+  undefined1 local_1c [8];
+  undefined1 *local_14;
+  void *local_10;
+  undefined1 *puStack_c;
+  undefined4 local_8;
+  
+  local_8 = 0xffffffff;
+  puStack_c = &LAB_00666e70;
+  local_10 = ExceptionList;
+  uStack_30 = DAT_007608e0 ^ (uint)&stack0xfffffffc;
+  local_14 = (undefined1 *)&uStack_30;
+  ExceptionList = &local_10;
+  if (in_ECX[0x33] == 0) {
+    iVar2 = *(int *)(in_ECX[0x32] + 0x24);
+  }
+  else {
+    iVar2 = *(int *)(in_ECX[0x33] + 0x10);
+  }
+  if (iVar2 == 2) {
+    local_14 = (undefined1 *)&uStack_30;
+    iVar2 = FUN_005e0f70(in_ECX[0xce4],in_ECX + 0xccf);
+    if (iVar2 == 0) {
+      if ((undefined4 *)in_ECX[0x33] == (undefined4 *)0x0) {
+        uVar3 = *(undefined4 *)in_ECX[0x32];
+      }
+      else {
+        uVar3 = *(undefined4 *)in_ECX[0x33];
+      }
+      FUN_005e3f10(in_ECX[0xc80],in_ECX + 0xccf,uVar3,in_ECX + 0xcd1,in_ECX + 0xcd3,0);
+      ExceptionList = local_10;
+      return;
+    }
+    FUN_005810d0();
+    if (in_ECX[0x22] == 0 && in_ECX[0x23] == 0) {
+      ExceptionList = local_10;
+      return;
+    }
+    iVar2 = (**(code **)(*in_ECX + 0x18))(in_ECX + 0xc80);
+  }
+  else {
+    puVar1 = &uStack_30;
+    if ((in_ECX[0x19] < 1) && (puVar1 = &uStack_30, in_ECX[0x19] < 0)) {
+      local_8 = 0;
+      uVar3 = FUN_00559a20(0);
+      iVar2 = FUN_00594b60(local_20,local_1c,uVar3);
+      if ((in_ECX[2] == 0) || ((iVar2 == 0 || (*(int *)(in_ECX[0xc82] + 0xf4) != 0)))) {
+        iVar2 = FUN_0055efc0();
+      }
+      else {
+        iVar2 = FUN_005631f0(*(undefined4 *)(iVar2 + 0xa8),in_ECX);
+      }
+      puVar1 = (uint *)local_14;
+      if (iVar2 == 0) {
+        FUN_005810d0();
+        in_ECX[0x29] = 0xe;
+        ExceptionList = local_10;
+        return;
+      }
+    }
+    local_14 = (undefined1 *)puVar1;
+    local_8 = 0xffffffff;
+    iVar2 = (**(code **)(*in_ECX + 0x20))(0);
+  }
+  if (iVar2 != 0) {
+    *(int *)(in_ECX[0xc82] + 0x14c) = iVar2;
+  }
+  ExceptionList = local_10;
+  return;
+}
+
+

@@ -1,0 +1,18 @@
+REA evidence: ev_80eb30e2c9d8d7aa77538b289897a09dc679861c85ddd3e60f13561581e7845c
+Decompiler output, not original source or implementation code.
+
+void FUN_005659d0(SOCKET param_1,char *param_2,int param_3,int param_4)
+
+{
+  int in_ECX;
+  
+  if (((*(int *)(in_ECX + 0x19c) != 0) && (*(char *)(*(int *)(in_ECX + 0x19c) + 0x137) != '\0')) &&
+     (*(int *)(in_ECX + 0x3480) != 0)) {
+    FUN_0057e520();
+    return;
+  }
+  recv(param_1,param_2,param_3,param_4);
+  return;
+}
+
+

@@ -1,0 +1,14 @@
+REA evidence: ev_8d2e338d4b3d8eb6c53f0cf0d5d8437b3788d6b36605d3911e33320cdf65dbca
+Decompiler output, not original source or implementation code.
+
+void FUN_005658f0(void)
+
+{
+  int in_ECX;
+  
+  FUN_00628c41((int *)(in_ECX + 0x444));
+  *(int *)(in_ECX + 0x450) = *(int *)(in_ECX + 0x444) - *(int *)(in_ECX + 0x438);
+  return;
+}
+
+

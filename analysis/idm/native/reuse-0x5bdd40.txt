@@ -1,0 +1,277 @@
+REA evidence: ev_65f23a6281303167fb6cb1da57e5e48f1fb470381c9f8d28660cb2c8ddd59b80
+Decompiler output, not original source.
+
+void FUN_005bdd40(void)
+
+{
+  uint uVar1;
+  bool bVar2;
+  int iVar3;
+  int iVar4;
+  int iVar5;
+  BOOL BVar6;
+  char *pcVar7;
+  wchar_t *pwVar8;
+  uint3 uVar9;
+  int iVar10;
+  uint unaff_EBP;
+  int unaff_ESI;
+  int unaff_EDI;
+  uint uVar11;
+  
+  *(int *)(unaff_EBP + 0x2fc) = unaff_EDI;
+  *(int *)(unaff_EBP + 0x304) = unaff_EDI;
+  *(undefined2 *)(unaff_EBP + 0x300) = 0;
+  *(undefined1 *)(unaff_EBP - 4) = 3;
+  FUN_00595500(unaff_EBP + 0x2fc,1,unaff_EDI);
+  if (((*(int *)(unaff_ESI + 0x44) == 4) || (*(int *)(unaff_ESI + 0x44) == 5)) ||
+     (*(int *)(unaff_ESI + 0x360) != unaff_EDI)) {
+    uVar11 = *(uint *)(unaff_ESI + 0x510);
+    iVar5 = *(int *)(unaff_ESI + 0x514);
+    if (uVar11 == 0 && iVar5 == 0) goto LAB_005bdd98;
+  }
+  else {
+LAB_005bdd98:
+    iVar5 = *(int *)(unaff_ESI + 0x51c);
+    uVar11 = *(uint *)(unaff_ESI + 0x518);
+  }
+  if ((*(int *)(unaff_ESI + 0x520) == 0 && *(int *)(unaff_ESI + 0x524) == 0) &&
+     (*(int *)(unaff_ESI + 0x360) != 0)) {
+    if ((*(int *)(unaff_ESI + 0x514) <= *(int *)(unaff_ESI + 0x51c)) &&
+       ((*(int *)(unaff_ESI + 0x514) < *(int *)(unaff_ESI + 0x51c) ||
+        (*(uint *)(unaff_ESI + 0x510) < *(uint *)(unaff_ESI + 0x518))))) {
+      *(undefined4 *)(unaff_EBP - 0x20) = 0;
+      *(undefined4 *)(unaff_EBP - 0x1c) = 0;
+      if (*(int *)(unaff_ESI + 0x54) == 0) {
+        iVar3 = unaff_ESI + 0x58;
+      }
+      else {
+        iVar3 = *(int *)(unaff_ESI + 0x54);
+      }
+      iVar3 = FUN_00559750(iVar3,unaff_EBP - 0x20,unaff_EBP - 0x14);
+      if (iVar3 != 0) {
+        *(undefined4 *)(unaff_ESI + 0x520) = *(undefined4 *)(unaff_EBP - 0x20);
+        *(undefined4 *)(unaff_ESI + 0x524) = *(undefined4 *)(unaff_EBP - 0x1c);
+      }
+    }
+  }
+  uVar1 = *(uint *)(unaff_ESI + 0x520);
+  iVar3 = *(int *)(unaff_ESI + 0x524);
+  if ((iVar5 <= iVar3) && ((iVar5 < iVar3 || (uVar11 < uVar1)))) {
+    iVar5 = iVar3;
+    uVar11 = uVar1;
+  }
+  uVar9 = (uint3)(uVar1 >> 8);
+  if ((((*(int *)(unaff_ESI + 0x514) < 0) ||
+       ((*(int *)(unaff_ESI + 0x514) < 1 && (*(int *)(unaff_ESI + 0x510) == 0)))) &&
+      (*(int *)(unaff_ESI + 0x44) != 4)) &&
+     ((*(int *)(unaff_ESI + 0x44) != 5 && (*(int *)(unaff_ESI + 0x360) == 0)))) {
+    iVar3 = (uint)uVar9 << 8;
+  }
+  else {
+    iVar3 = CONCAT31(uVar9,1);
+  }
+  iVar10 = *(int *)(unaff_EBP + 0x2fc);
+  if (iVar10 == 0) {
+    iVar10 = unaff_EBP + 0x300;
+  }
+  if (*(int *)(unaff_ESI + 0x54) == 0) {
+    iVar4 = unaff_ESI + 0x58;
+  }
+  else {
+    iVar4 = *(int *)(unaff_ESI + 0x54);
+  }
+  FUN_004432e0(*(ushort *)(unaff_ESI + 0x186) & 1,uVar11,iVar5,iVar3,iVar4,iVar10,0);
+  *(undefined1 *)(unaff_EBP - 4) = 4;
+  iVar5 = FUN_005fb338();
+  if (iVar5 == 1) {
+    iVar5 = *(int *)(unaff_EBP + 0x220);
+    if (iVar5 == 1) {
+      _memset((void *)(unaff_EBP - 0x188),0,0x3c);
+      *(undefined4 *)(unaff_EBP - 0x188) = 0x3c;
+      *(undefined4 *)(unaff_EBP - 0x184) = 0x40;
+      if (*(int *)(unaff_ESI + 0x54) == 0) {
+        iVar5 = unaff_ESI + 0x58;
+      }
+      else {
+        iVar5 = *(int *)(unaff_ESI + 0x54);
+      }
+      *(int *)(unaff_EBP - 0x178) = iVar5;
+      *(undefined4 *)(unaff_EBP - 0x16c) = 1;
+      BVar6 = ShellExecuteExW((SHELLEXECUTEINFOW *)(unaff_EBP - 0x188));
+      if ((BVar6 == 0) && (DAT_00758cd8 == 0)) {
+        _memset((void *)(unaff_EBP - 0x14c),0,0x3c);
+        *(undefined4 *)(unaff_EBP - 0x14c) = 0x3c;
+        *(undefined4 *)(unaff_EBP - 0x148) = 0x40;
+        if (*(int *)(unaff_ESI + 0x54) == 0) {
+          iVar5 = unaff_ESI + 0x58;
+        }
+        else {
+          iVar5 = *(int *)(unaff_ESI + 0x54);
+        }
+        FUN_00402a70(unaff_EBP - 0x14,iVar5,0);
+        *(undefined1 *)(unaff_EBP - 4) = 5;
+        pcVar7 = _strchr(*(char **)(unaff_EBP - 0x14),0x3f);
+        if (pcVar7 == (char *)0x0) {
+          *(undefined4 *)(unaff_EBP - 0x13c) = *(undefined4 *)(unaff_EBP - 0x14);
+          *(undefined4 *)(unaff_EBP - 0x130) = 1;
+          ShellExecuteExA((SHELLEXECUTEINFOA *)(unaff_EBP - 0x14c));
+        }
+        *(undefined1 *)(unaff_EBP - 4) = 4;
+        FUN_00402570();
+      }
+    }
+    else {
+      if (iVar5 == 2) {
+        if (*(int *)(unaff_ESI + 0x54) == 0) {
+          iVar5 = unaff_ESI + 0x58;
+        }
+        else {
+          iVar5 = *(int *)(unaff_ESI + 0x54);
+        }
+        iVar5 = FUN_00458050(iVar5);
+        if (iVar5 != 0) goto LAB_005be2f0;
+        if (*(int *)(unaff_ESI + 0x54) == 0) {
+          iVar5 = unaff_ESI + 0x58;
+        }
+        else {
+          iVar5 = *(int *)(unaff_ESI + 0x54);
+        }
+        FUN_00402180(iVar5);
+        *(undefined1 *)(unaff_EBP - 4) = 6;
+        pwVar8 = *(wchar_t **)(unaff_EBP + 0x314);
+        if (pwVar8 == (wchar_t *)0x0) {
+          pwVar8 = (wchar_t *)(unaff_EBP + 0x318);
+        }
+        pwVar8 = _wcsrchr(pwVar8,L'\\');
+        if (pwVar8 != (wchar_t *)0x0) {
+          *(undefined4 *)(unaff_EBP + 0x308) = 0;
+          *(undefined4 *)(unaff_EBP + 0x310) = 0;
+          *(undefined2 *)(unaff_EBP + 0x30c) = 0;
+          *(undefined1 *)(unaff_EBP - 4) = 7;
+          iVar5 = *(int *)(unaff_EBP + 0x314);
+          if (iVar5 == 0) {
+            iVar5 = unaff_EBP + 0x318;
+          }
+          FUN_004021b0("/n,/select,\"%s\"",iVar5,0);
+          pwVar8[1] = L'\0';
+          _memset((void *)(unaff_EBP - 0x98),0,0x3c);
+          *(undefined4 *)(unaff_EBP - 0x98) = 0x3c;
+          *(undefined4 *)(unaff_EBP - 0x94) = 0x40;
+          *(undefined4 *)(unaff_EBP - 0x7c) = 1;
+          *(wchar_t **)(unaff_EBP - 0x88) = L"explorer.exe";
+          if (*(int *)(unaff_EBP + 0x308) == 0) {
+            *(uint *)(unaff_EBP - 0x84) = unaff_EBP + 0x30c;
+          }
+          else {
+            *(int *)(unaff_EBP - 0x84) = *(int *)(unaff_EBP + 0x308);
+          }
+          BVar6 = ShellExecuteExW((SHELLEXECUTEINFOW *)(unaff_EBP - 0x98));
+          if ((BVar6 == 0) && (DAT_00758cd8 == 0)) {
+            iVar5 = *(int *)(unaff_EBP + 0x308);
+            if (iVar5 == 0) {
+              iVar5 = unaff_EBP + 0x30c;
+            }
+            FUN_00402a70(unaff_EBP - 0x14,iVar5,0);
+            *(undefined1 *)(unaff_EBP - 4) = 8;
+            _memset((void *)(unaff_EBP - 0x110),0,0x3c);
+            *(undefined4 *)(unaff_EBP - 0x110) = 0x3c;
+            *(undefined4 *)(unaff_EBP - 0x10c) = 0x40;
+            *(undefined4 *)(unaff_EBP - 0xf4) = 1;
+            *(char **)(unaff_EBP - 0x100) = "explorer.exe";
+            *(undefined4 *)(unaff_EBP - 0xfc) = *(undefined4 *)(unaff_EBP - 0x14);
+            ShellExecuteExA((SHELLEXECUTEINFOA *)(unaff_EBP - 0x110));
+            *(undefined1 *)(unaff_EBP - 4) = 7;
+            FUN_00402570();
+          }
+          *(undefined1 *)(unaff_EBP - 4) = 6;
+          FUN_00401210();
+        }
+      }
+      else {
+        if (iVar5 != 3) goto LAB_005be2f0;
+        bVar2 = false;
+        *(undefined1 *)(unaff_EBP - 0x15) = 0;
+        *(undefined4 *)(unaff_EBP + 0x314) = 0;
+        *(undefined4 *)(unaff_EBP + 0x31c) = 0;
+        *(undefined2 *)(unaff_EBP + 0x318) = 0;
+        *(undefined1 *)(unaff_EBP - 4) = 9;
+        *(undefined4 *)(unaff_EBP + 0x268) = 0x94;
+        BVar6 = GetVersionExA((LPOSVERSIONINFOA)(unaff_EBP + 0x268));
+        if (((BVar6 != 0) && (*(int *)(unaff_EBP + 0x278) == 2)) &&
+           (5 < *(uint *)(unaff_EBP + 0x26c))) {
+          bVar2 = true;
+          *(undefined1 *)(unaff_EBP - 0x15) = 1;
+        }
+        _memset((void *)(unaff_EBP - 0x5c),0,0x3c);
+        *(undefined4 *)(unaff_EBP - 0x5c) = 0x3c;
+        *(undefined4 *)(unaff_EBP - 0x58) = 0x40;
+        *(undefined4 *)(unaff_EBP - 0x40) = 1;
+        if (bVar2) {
+          *(wchar_t **)(unaff_EBP - 0x4c) = L"rundll32.exe";
+          if (*(int *)(unaff_ESI + 0x54) == 0) {
+            iVar5 = unaff_ESI + 0x58;
+          }
+          else {
+            iVar5 = *(int *)(unaff_ESI + 0x54);
+          }
+          FUN_004021b0("shell32.dll OpenAs_RunDLL %s",iVar5,0);
+          if (*(int *)(unaff_EBP + 0x314) == 0) {
+            *(uint *)(unaff_EBP - 0x48) = unaff_EBP + 0x318;
+            ShellExecuteExW((SHELLEXECUTEINFOW *)(unaff_EBP - 0x5c));
+          }
+          else {
+            *(int *)(unaff_EBP - 0x48) = *(int *)(unaff_EBP + 0x314);
+            ShellExecuteExW((SHELLEXECUTEINFOW *)(unaff_EBP - 0x5c));
+          }
+        }
+        else {
+          if (*(int *)(unaff_ESI + 0x54) == 0) {
+            iVar5 = unaff_ESI + 0x58;
+          }
+          else {
+            iVar5 = *(int *)(unaff_ESI + 0x54);
+          }
+          *(int *)(unaff_EBP - 0x4c) = iVar5;
+          *(wchar_t **)(unaff_EBP - 0x50) = L"openas";
+          BVar6 = ShellExecuteExW((SHELLEXECUTEINFOW *)(unaff_EBP - 0x5c));
+          if ((BVar6 == 0) && (DAT_00758cd8 == 0)) {
+            if (*(int *)(unaff_ESI + 0x54) == 0) {
+              iVar5 = unaff_ESI + 0x58;
+            }
+            else {
+              iVar5 = *(int *)(unaff_ESI + 0x54);
+            }
+            FUN_00402a70(unaff_EBP - 0x14,iVar5,0);
+            *(undefined1 *)(unaff_EBP - 4) = 10;
+            pcVar7 = _strchr(*(char **)(unaff_EBP - 0x14),0x3f);
+            if (pcVar7 == (char *)0x0) {
+              _memset((void *)(unaff_EBP - 0xd4),0,0x3c);
+              *(undefined4 *)(unaff_EBP - 0xd4) = 0x3c;
+              *(undefined4 *)(unaff_EBP - 0xd0) = 0x40;
+              *(undefined4 *)(unaff_EBP - 0xb8) = 1;
+              *(undefined4 *)(unaff_EBP - 0xc4) = *(undefined4 *)(unaff_EBP - 0x14);
+              *(char **)(unaff_EBP - 200) = "openas";
+              ShellExecuteExA((SHELLEXECUTEINFOA *)(unaff_EBP - 0xd4));
+            }
+            *(undefined1 *)(unaff_EBP - 4) = 9;
+            FUN_00402570();
+          }
+        }
+      }
+      *(undefined1 *)(unaff_EBP - 4) = 4;
+      FUN_00401210();
+    }
+  }
+LAB_005be2f0:
+  *(undefined1 *)(unaff_EBP - 4) = 3;
+  FUN_00443470();
+  *(undefined1 *)(unaff_EBP - 4) = 0;
+  FUN_00401210();
+  *(undefined4 *)(unaff_EBP - 4) = 0xffffffff;
+  ExceptionList = *(void **)(unaff_EBP - 0xc);
+  __security_check_cookie(*(uint *)(unaff_EBP + 800) ^ unaff_EBP);
+  return;
+}
+
+

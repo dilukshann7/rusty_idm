@@ -1,0 +1,549 @@
+{
+  "source": "local-static-PE-parser-not-REA",
+  "path": "C:\\Program Files (x86)\\Internet Download Manager\\IDMMsgHost.exe",
+  "sha256": "dba25a49adb88f675db26d2dc7a0fa9d4a5db2326858cb9d2515f6f34b8e0b65",
+  "image_base": "0x400000",
+  "sections": [
+    {
+      "name": ".text",
+      "rva": 4096,
+      "virtual_size": 10698,
+      "raw": 1024,
+      "size": 10752
+    },
+    {
+      "name": ".rdata",
+      "rva": 16384,
+      "virtual_size": 5714,
+      "raw": 11776,
+      "size": 6144
+    },
+    {
+      "name": ".data",
+      "rva": 24576,
+      "virtual_size": 1744,
+      "raw": 17920,
+      "size": 1024
+    },
+    {
+      "name": ".rsrc",
+      "rva": 28672,
+      "virtual_size": 1584,
+      "raw": 18944,
+      "size": 2048
+    },
+    {
+      "name": ".reloc",
+      "rva": 32768,
+      "virtual_size": 784,
+      "raw": 20992,
+      "size": 1024
+    }
+  ],
+  "imports": [
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_lock",
+      "iat_va": "0x4040c4"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_onexit",
+      "iat_va": "0x4040c8"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "??1type_info@@UAE@XZ",
+      "iat_va": "0x4040cc"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "__wgetmainargs",
+      "iat_va": "0x4040d0"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_cexit",
+      "iat_va": "0x4040d4"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_exit",
+      "iat_va": "0x4040d8"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_XcptFilter",
+      "iat_va": "0x4040dc"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "exit",
+      "iat_va": "0x4040e0"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_wcmdln",
+      "iat_va": "0x4040e4"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_initterm",
+      "iat_va": "0x4040e8"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_amsg_exit",
+      "iat_va": "0x4040ec"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "__setusermatherr",
+      "iat_va": "0x4040f0"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "__p__commode",
+      "iat_va": "0x4040f4"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "__p__fmode",
+      "iat_va": "0x4040f8"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "__set_app_type",
+      "iat_va": "0x4040fc"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_controlfp",
+      "iat_va": "0x404100"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "memcpy",
+      "iat_va": "0x404104"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "memset",
+      "iat_va": "0x404108"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_itoa",
+      "iat_va": "0x40410c"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_itow",
+      "iat_va": "0x404110"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "wcsncmp",
+      "iat_va": "0x404114"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_wcsnicmp",
+      "iat_va": "0x404118"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_unlock",
+      "iat_va": "0x40411c"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_wcsicmp",
+      "iat_va": "0x404120"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "malloc",
+      "iat_va": "0x404124"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "free",
+      "iat_va": "0x404128"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "realloc",
+      "iat_va": "0x40412c"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_iob",
+      "iat_va": "0x404130"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "__CxxFrameHandler",
+      "iat_va": "0x404134"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_fstat",
+      "iat_va": "0x404138"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_wstat",
+      "iat_va": "0x40413c"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_stat",
+      "iat_va": "0x404140"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "?terminate@@YAXXZ",
+      "iat_va": "0x404144"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "__dllonexit",
+      "iat_va": "0x404148"
+    },
+    {
+      "module": "msvcrt.dll",
+      "symbol": "_CxxThrowException",
+      "iat_va": "0x40414c"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "GetLastError",
+      "iat_va": "0x404010"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "GetSystemTimeAsFileTime",
+      "iat_va": "0x404014"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "GetCurrentThreadId",
+      "iat_va": "0x404018"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "GetTickCount",
+      "iat_va": "0x40401c"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "QueryPerformanceCounter",
+      "iat_va": "0x404020"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "GetModuleHandleA",
+      "iat_va": "0x404024"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "SetUnhandledExceptionFilter",
+      "iat_va": "0x404028"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "UnhandledExceptionFilter",
+      "iat_va": "0x40402c"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "TerminateProcess",
+      "iat_va": "0x404030"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "GetStartupInfoW",
+      "iat_va": "0x404034"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "InterlockedCompareExchange",
+      "iat_va": "0x404038"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "Sleep",
+      "iat_va": "0x40403c"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "InterlockedExchange",
+      "iat_va": "0x404040"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "RtlUnwind",
+      "iat_va": "0x404044"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "OpenMutexW",
+      "iat_va": "0x404048"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "CreateSemaphoreW",
+      "iat_va": "0x40404c"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "GetCurrentProcessId",
+      "iat_va": "0x404050"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "GetOverlappedResult",
+      "iat_va": "0x404054"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "ResetEvent",
+      "iat_va": "0x404058"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "CreateThread",
+      "iat_va": "0x40405c"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "LoadLibraryW",
+      "iat_va": "0x404060"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "TerminateThread",
+      "iat_va": "0x404064"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "SetEvent",
+      "iat_va": "0x404068"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "ProcessIdToSessionId",
+      "iat_va": "0x40406c"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "CreateEventW",
+      "iat_va": "0x404070"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "CreateFileW",
+      "iat_va": "0x404074"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "WaitForSingleObject",
+      "iat_va": "0x404078"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "WaitForMultipleObjects",
+      "iat_va": "0x40407c"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "WriteFile",
+      "iat_va": "0x404080"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "ReleaseSemaphore",
+      "iat_va": "0x404084"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "GetStdHandle",
+      "iat_va": "0x404088"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "SetLastError",
+      "iat_va": "0x40408c"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "CancelIo",
+      "iat_va": "0x404090"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "ReadFile",
+      "iat_va": "0x404094"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "GetProcessTimes",
+      "iat_va": "0x404098"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "CloseHandle",
+      "iat_va": "0x40409c"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "OpenProcess",
+      "iat_va": "0x4040a0"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "GetVersionExW",
+      "iat_va": "0x4040a4"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "GetCurrentProcess",
+      "iat_va": "0x4040a8"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "MultiByteToWideChar",
+      "iat_va": "0x4040ac"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "GetModuleHandleW",
+      "iat_va": "0x4040b0"
+    },
+    {
+      "module": "KERNEL32.dll",
+      "symbol": "GetProcAddress",
+      "iat_va": "0x4040b4"
+    },
+    {
+      "module": "ADVAPI32.dll",
+      "symbol": "RegOpenKeyExW",
+      "iat_va": "0x404000"
+    },
+    {
+      "module": "ADVAPI32.dll",
+      "symbol": "RegCloseKey",
+      "iat_va": "0x404004"
+    },
+    {
+      "module": "ADVAPI32.dll",
+      "symbol": "RegQueryValueExW",
+      "iat_va": "0x404008"
+    },
+    {
+      "module": "ole32.dll",
+      "symbol": "CoCreateInstance",
+      "iat_va": "0x404154"
+    },
+    {
+      "module": "ole32.dll",
+      "symbol": "CoInitialize",
+      "iat_va": "0x404158"
+    },
+    {
+      "module": "ole32.dll",
+      "symbol": "CoUninitialize",
+      "iat_va": "0x40415c"
+    },
+    {
+      "module": "OLEAUT32.dll",
+      "symbol": "ordinal:8",
+      "iat_va": "0x4040bc"
+    }
+  ],
+  "candidates": [
+    {
+      "offset": 13492,
+      "va": "0x4046b4",
+      "section": ".rdata",
+      "encoding": "ascii",
+      "value": "GetNamedPipeServerProcessId"
+    },
+    {
+      "offset": 13520,
+      "va": "0x4046d0",
+      "section": ".rdata",
+      "encoding": "ascii",
+      "value": "GetNamedPipeClientProcessId"
+    },
+    {
+      "offset": 13872,
+      "va": "0x404830",
+      "section": ".rdata",
+      "encoding": "ascii",
+      "value": "Cannot open pipe"
+    },
+    {
+      "offset": 14416,
+      "va": "0x404a50",
+      "section": ".rdata",
+      "encoding": "ascii",
+      "value": "X:\\Projects\\IDMRelease\\6.38.20\\IDMMsgHost\\Release_Win32\\IDMMsgHost.pdb"
+    },
+    {
+      "offset": 15568,
+      "va": "0x404ed0",
+      "section": ".rdata",
+      "encoding": "ascii",
+      "value": "IDMMsgHost.exe"
+    },
+    {
+      "offset": 13596,
+      "va": "0x40471c",
+      "section": ".rdata",
+      "encoding": "utf-16le",
+      "value": "\\\\.\\pipe\\IDMNetworkMonitor."
+    },
+    {
+      "offset": 13652,
+      "va": "0x404754",
+      "section": ".rdata",
+      "encoding": "utf-16le",
+      "value": "Local\\IDMEventMonitor"
+    },
+    {
+      "offset": 13696,
+      "va": "0x404780",
+      "section": ".rdata",
+      "encoding": "utf-16le",
+      "value": "Software\\Internet Download Manager"
+    },
+    {
+      "offset": 14136,
+      "va": "0x404938",
+      "section": ".rdata",
+      "encoding": "utf-16le",
+      "value": "idmcmd://startnetmon/"
+    },
+    {
+      "offset": 19636,
+      "va": "0x4072b4",
+      "section": ".rsrc",
+      "encoding": "utf-16le",
+      "value": "IDMMsgHost"
+    },
+    {
+      "offset": 19900,
+      "va": "0x4073bc",
+      "section": ".rsrc",
+      "encoding": "utf-16le",
+      "value": "IDMMsgHost.exe"
+    }
+  ],
+  "limitations": [
+    "Static import table only; dynamic imports unresolved",
+    "String candidates do not establish execution or semantics",
+    "ASCII and ASCII-subset UTF-16LE scans are bounded to 5..500-character fragments"
+  ]
+}

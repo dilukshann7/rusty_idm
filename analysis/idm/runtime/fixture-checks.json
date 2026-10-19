@@ -1,0 +1,45 @@
+{
+  "source": "fixture-self-check-not-IDM",
+  "results": [
+    {
+      "name": "baseline-hash",
+      "passed": true
+    },
+    {
+      "name": "valid-range",
+      "passed": true
+    },
+    {
+      "name": "ignored-range",
+      "passed": true
+    },
+    {
+      "name": "unknown-length",
+      "passed": true
+    },
+    {
+      "name": "redirect",
+      "passed": true
+    },
+    {
+      "name": "interruption",
+      "passed": true
+    },
+    {
+      "name": "temporary-failure",
+      "passed": true
+    },
+    {
+      "name": "changed-validator",
+      "passed": true
+    },
+    {
+      "name": "unsatisfiable-range",
+      "passed": true
+    },
+    {
+      "name": "mutable-content",
+      "passed": true
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+* text=auto eol=lf
+
+# Investigation hashes are over exact file bytes; do not rewrite line endings.
+analysis/idm/** -text -eol

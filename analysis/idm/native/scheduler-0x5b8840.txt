@@ -1,0 +1,15 @@
+REA evidence: ev_c84497000c9e56adad28bf7529ee7e83fa7ba0b1eff1e2574136a6af062ab560
+Decompiler output, not original source.
+
+void FUN_005b8840(void)
+
+{
+  int in_ECX;
+  undefined4 local_c [3];
+  
+  FUN_00628c41(local_c);
+  *(undefined4 *)(in_ECX + 0x1bc) = local_c[0];
+  return;
+}
+
+

@@ -1,0 +1,23 @@
+REA evidence: ev_4766880da2fcda52bc4e60075d60d8ad9249daf147dc954d2a6fe443922e5d80
+Decompiler output, not original source.
+
+void FUN_005b87b0(void)
+
+{
+  undefined4 uVar1;
+  int in_ECX;
+  void *local_10;
+  undefined1 *puStack_c;
+  undefined4 local_8;
+  
+  puStack_c = &LAB_00669be0;
+  local_10 = ExceptionList;
+  ExceptionList = &local_10;
+  local_8 = 0;
+  uVar1 = FUN_004fed80((*(undefined4 **)(in_ECX + 0xc))[9],**(undefined4 **)(in_ECX + 0xc));
+  FUN_005b8090(uVar1);
+  ExceptionList = local_10;
+  return;
+}
+
+
