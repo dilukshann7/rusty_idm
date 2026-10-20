@@ -11,7 +11,9 @@ if (-not (Test-Path -LiteralPath $ownerPath -PathType Leaf)) { throw 'No Rusty o
 $owner = Get-Content -Raw -Encoding UTF8 -LiteralPath $ownerPath | ConvertFrom-Json
 $manifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $manifestPath | ConvertFrom-Json
 $config = Get-Content -Raw -Encoding UTF8 -LiteralPath $configPath | ConvertFrom-Json
-if ($owner.app -ne 'RustyIDM' -or $owner.schema -ne 1 -or $owner.manifest -ne $manifestPath -or $manifest.name -ne 'dev.rusty_idm.chrome' -or $manifest.path -ne $owner.host_exe -or $config.host_exe -ne $owner.host_exe -or $config.gui_exe -ne $owner.gui_exe -or $config.extension_id -ne $owner.extension_id -or @($manifest.allowed_origins).Count -ne 1 -or $manifest.allowed_origins[0] -ne "chrome-extension://$($owner.extension_id)/") { throw 'Browser files do not match their Rusty owner. Nothing removed.' }
+$allowedIds = @($config.extension_id) + @($config.extension_ids) | Where-Object { $_ } | Select-Object -Unique
+$origins = @($allowedIds | ForEach-Object { "chrome-extension://$_/" })
+if ($owner.app -ne 'RustyIDM' -or $owner.schema -ne 1 -or $owner.manifest -ne $manifestPath -or $manifest.name -ne 'dev.rusty_idm.chrome' -or $manifest.path -ne $owner.host_exe -or $config.host_exe -ne $owner.host_exe -or $config.gui_exe -ne $owner.gui_exe -or $config.extension_id -ne $owner.extension_id -or @($allowedIds | Where-Object { $_ -cnotmatch '^[a-p]{32}$' }).Count -or (Compare-Object @($origins | Sort-Object) @($manifest.allowed_origins | Sort-Object))) { throw 'Browser files do not match their Rusty owner. Nothing removed.' }
 if (Test-Path -LiteralPath $registryPath) {
     if ((Get-Item -LiteralPath $registryPath).GetValue('') -ne $manifestPath) { throw 'A different registration owns this registry key. Nothing removed.' }
     if (@((Get-Item -LiteralPath $registryPath).GetSubKeyNames()).Count -ne 0 -or @((Get-Item -LiteralPath $registryPath).GetValueNames() | Where-Object { $_ -ne '' }).Count -ne 0) { throw 'Registration contains unrelated entries. Nothing removed.' }

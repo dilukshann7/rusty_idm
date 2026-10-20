@@ -869,6 +869,7 @@ pub fn run() -> Result<(), AppError> {
     let engine = spawn_engine(Arc::new(move || engine_wake.wake()));
     *window.signals.session_shutdown.borrow_mut() = Some(engine.client());
     let browser = BrowserController::new(engine.client(), Arc::new(move || wake.wake_browser()));
+    browser.set_policy(settings.configuration.capture.clone());
     let pipe = match PipeServer::start(session, browser.router()) {
         Ok(pipe) => pipe,
         Err(_) => {

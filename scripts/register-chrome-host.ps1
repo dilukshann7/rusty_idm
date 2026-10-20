@@ -26,8 +26,15 @@ if ((Test-Path -LiteralPath $configPath) -or (Test-Path -LiteralPath $manifestPa
     $owner = Get-Content -Raw -Encoding UTF8 -LiteralPath $ownerPath | ConvertFrom-Json
     if ($owner.app -ne 'RustyIDM' -or $owner.schema -ne 1 -or $owner.manifest -ne $manifestPath -or $owner.extension_id -ne $ExtensionId) { throw 'Existing browser files belong to a different registration. Nothing changed.' }
 }
-$manifest = [ordered]@{ name='dev.rusty_idm.chrome'; description='Rusty Download Manager browser bridge'; path=$hostPath; type='stdio'; allowed_origins=@("chrome-extension://$ExtensionId/") } | ConvertTo-Json -Depth 4
-$config = [ordered]@{ extension_id=$ExtensionId; host_exe=$hostPath; gui_exe=$guiPath } | ConvertTo-Json
+$additional = @()
+if (Test-Path -LiteralPath $configPath) {
+    $previous = Get-Content -Raw -Encoding UTF8 -LiteralPath $configPath | ConvertFrom-Json
+    $additional = @($previous.extension_ids | Where-Object { $_ -and $_ -ne $ExtensionId })
+    if (@($additional | Where-Object { $_ -cnotmatch '^[a-p]{32}$' }).Count -or $additional.Count -gt 31) { throw 'Invalid existing browser callers. Nothing changed.' }
+}
+$allIds = @($ExtensionId) + $additional | Select-Object -Unique
+$manifest = [ordered]@{ name='dev.rusty_idm.chrome'; description='Rusty Download Manager browser bridge'; path=$hostPath; type='stdio'; allowed_origins=@($allIds | ForEach-Object { "chrome-extension://$_/" }) } | ConvertTo-Json -Depth 4
+$config = [ordered]@{ browser='chrome'; extension_id=$ExtensionId; extension_ids=$additional; host_exe=$hostPath; gui_exe=$guiPath } | ConvertTo-Json
 $ownership = [ordered]@{ app='RustyIDM'; schema=1; manifest=$manifestPath; extension_id=$ExtensionId; host_exe=$hostPath; gui_exe=$guiPath } | ConvertTo-Json
 if ($PSCmdlet.ShouldProcess($registryPath, 'Register the Rusty native host for this user and exact extension ID')) {
     New-Item -ItemType Directory -Path $installRoot -Force | Out-Null

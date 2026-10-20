@@ -2,6 +2,8 @@ use rusty_native_host::{config::HostConfig, host::*};
 #[test]
 fn unicode_spaced_gui_path_is_not_shell_expanded() {
     let config = HostConfig {
+        browser: Default::default(),
+        extension_ids: vec![],
         extension_id: "a".repeat(32),
         gui_exe: "C:\\Rusty தமிழ்\\rusty-win32.exe".into(),
         host_exe: "C:\\Rusty தமிழ்\\rusty-native-host.exe".into(),
@@ -26,6 +28,8 @@ fn missing_native_configuration_fails_closed() {
 fn status_and_abort_without_a_gui_do_not_launch_the_configured_executable() {
     use rusty_browser_bridge::{framing::*, protocol::*};
     let config = HostConfig {
+        browser: Default::default(),
+        extension_ids: vec![],
         extension_id: "a".repeat(32),
         gui_exe: "C:/missing-Rusty-fixture.exe".into(),
         host_exe: "C:/missing-host-fixture.exe".into(),
@@ -64,6 +68,8 @@ fn status_and_abort_without_a_gui_do_not_launch_the_configured_executable() {
 #[test]
 fn spoofed_origin_produces_no_stdout_and_never_launches_gui() {
     let config = HostConfig {
+        browser: Default::default(),
+        extension_ids: vec![],
         extension_id: "a".repeat(32),
         gui_exe: "C:/missing-Rusty-fixture.exe".into(),
         host_exe: "C:/missing-host-fixture.exe".into(),

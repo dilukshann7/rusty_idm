@@ -241,3 +241,9 @@ impl CapturePolicy {
                 .is_some_and(|(_, e)| self.extensions.iter().any(|s| s.eq_ignore_ascii_case(e)))
     }
 }
+
+impl Default for BrowserKind {
+    fn default() -> Self {
+        Self::Chrome
+    }
+}

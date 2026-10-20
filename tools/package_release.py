@@ -96,16 +96,12 @@ def stage(binary_dir):
     write_package_readme(payload)
     for name in ["USER_GUIDE.md", "RELEASE_NOTES.md", "SETUP.txt"]:
         copy_file(ROOT / "docs" / name, payload / "docs" / name)
-    for name in ["register-chrome-host.ps1", "unregister-chrome-host.ps1", "chrome-integration.ps1", "release-integration.ps1"]:
+    for name in ["register-chrome-host.ps1", "unregister-chrome-host.ps1", "chrome-integration.ps1", "release-integration.ps1", "browser-host.ps1"]:
         copy_file(ROOT / "scripts" / name, payload / "scripts" / name)
     for path in (ROOT / "assets/branding").glob("*"):
         copy_file(path, payload / "branding" / path.name)
-    extension = payload / "chrome-extension"
-    extension.mkdir()
-    for path in (ROOT / "extensions/chrome").rglob("*"):
-        relative = path.relative_to(ROOT / "extensions/chrome")
-        if path.is_file() and "tests" not in relative.parts and path.name != "package.json":
-            copy_file(path, extension / relative)
+    from package_browser_extensions import stage as stage_browsers
+    stage_browsers(payload)
     cargo = Path.home() / ".cargo/bin/cargo.exe"
     metadata = json.loads(subprocess.check_output([str(cargo), "metadata", "--locked", "--offline", "--format-version", "1", "--filter-platform", "x86_64-pc-windows-msvc"], cwd=ROOT))
     inventory = []

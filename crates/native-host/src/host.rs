@@ -54,13 +54,19 @@ pub fn run_host<R: Read + Send, W: Write + Send>(
                     break;
                 }
             };
-            let (id, operation) = match Operation::decode(&bytes) {
+            let (id, mut operation) = match Operation::decode(&bytes) {
                 Ok(value) => value,
                 Err(_) => {
                     input_error = Some(std::io::Error::other("Invalid native request"));
                     break;
                 }
             };
+            // Attribute requests to this allowlisted host configuration, never a page label.
+            match &mut operation {
+                Operation::Capture(c) => c.browser = config.browser,
+                Operation::Policy(b) => *b = config.browser,
+                _ => {}
+            }
             if active.load(Ordering::Acquire) >= 64 {
                 let _ = tx.send(Reply::new(
                     id,
@@ -104,7 +110,7 @@ pub fn run_host<R: Read + Send, W: Write + Send>(
                                     .map_err(|_| std::io::Error::other("Output closed"))?;
                                 return Ok(());
                             }
-                            if !matches!(operation, Operation::Capture(_)) {
+                            if !matches!(operation, Operation::Capture(_) | Operation::Policy(_)) {
                                 return Err(e);
                             }
                             {

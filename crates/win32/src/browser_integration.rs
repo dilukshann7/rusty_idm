@@ -25,6 +25,7 @@ struct Entry {
 }
 #[derive(Default)]
 struct State {
+    policy: rusty_browser_bridge::policy::CapturePolicy,
     entries: HashMap<RequestId, Entry>,
     inbox: VecDeque<IncomingCapture>,
     activate: bool,
@@ -105,6 +106,15 @@ impl RequestRouter for Router {
             .entries
             .retain(|_, e| e.original.is_none() || e.at.elapsed() < RETENTION);
         match operation {
+            Operation::Policy(browser) => {
+                let _ = reply.try_send(Reply::new(
+                    target_id(),
+                    ReplyStatus::Policy {
+                        browser,
+                        policy: state.policy.clone(),
+                    },
+                ));
+            }
             Operation::Ping => {
                 let _ = reply.try_send(Reply::new(
                     target_id(),
@@ -145,7 +155,21 @@ impl RequestRouter for Router {
                     let _ = reply.try_send(Reply::new(id, status));
                     return Ok(());
                 }
-                let code = if state.closing {
+                let allowed = capture.source != CaptureSource::Automatic
+                    || (state.policy.allows(
+                        capture.browser,
+                        &capture.url,
+                        capture.filename_hint.as_deref(),
+                        capture.forced
+                            && capture.policy_revision == state.policy.revision
+                            && state.policy.keys.force != 0,
+                    ) && capture
+                        .original_url
+                        .as_ref()
+                        .is_none_or(|url| !state.policy.excluded(url)));
+                let code = if !allowed {
+                    Some(DeclineCode::BrowserFallback)
+                } else if state.closing {
                     Some(DeclineCode::AppClosing)
                 } else if state
                     .entries
@@ -416,6 +440,46 @@ impl BrowserController {
             thread: Some(thread),
         }
     }
+    pub fn set_policy(&self, policy: rusty_browser_bridge::policy::CapturePolicy) {
+        let mut state = self.router.state.lock().unwrap_or_else(|p| p.into_inner());
+        let rejected: Vec<_> = state
+            .entries
+            .iter()
+            .filter(|(_, e)| {
+                e.capture.source == CaptureSource::Automatic
+                    && (!policy.allows(
+                        e.capture.browser,
+                        &e.capture.url,
+                        e.capture.filename_hint.as_deref(),
+                        e.capture.forced
+                            && e.capture.policy_revision == policy.revision
+                            && policy.keys.force != 0,
+                    ) || e
+                        .capture
+                        .original_url
+                        .as_ref()
+                        .is_some_and(|u| policy.excluded(u)))
+                    && e.lease.state() == LeaseState::Pending
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        state.policy = policy;
+        for id in rejected {
+            if state
+                .entries
+                .get(&id)
+                .is_some_and(|e| e.lease.revoke() == LeaseState::Accepted)
+            {
+                continue;
+            }
+            state.finish(
+                &id,
+                ReplyStatus::Declined {
+                    code: DeclineCode::BrowserFallback,
+                },
+            );
+        }
+    }
     pub fn router(&self) -> Arc<dyn RequestRouter> {
         self.router.clone()
     }
@@ -454,6 +518,34 @@ impl BrowserController {
         lease: CaptureLease,
         _reply: SyncSender<Reply>,
     ) -> Result<(), CommandError> {
+        {
+            let mut state = self.router.state.lock().unwrap_or_else(|p| p.into_inner());
+            let denied = state.entries.get(&id).is_some_and(|e| {
+                e.capture.source == CaptureSource::Automatic
+                    && (!state.policy.allows(
+                        e.capture.browser,
+                        &e.capture.url,
+                        e.capture.filename_hint.as_deref(),
+                        e.capture.forced
+                            && e.capture.policy_revision == state.policy.revision
+                            && state.policy.keys.force != 0,
+                    ) || e
+                        .capture
+                        .original_url
+                        .as_ref()
+                        .is_some_and(|u| state.policy.excluded(u)))
+            });
+            if denied {
+                lease.revoke();
+                state.finish(
+                    &id,
+                    ReplyStatus::Declined {
+                        code: DeclineCode::BrowserFallback,
+                    },
+                );
+                return Ok(());
+            }
+        }
         self.router
             .work
             .try_send(Work::Apply(id, action, lease))

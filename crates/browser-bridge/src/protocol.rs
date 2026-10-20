@@ -1,3 +1,4 @@
+use crate::policy::{BrowserKind, CapturePolicy};
 use serde::{Deserialize, Serialize};
 use std::{
     fmt,
@@ -55,6 +56,10 @@ pub enum CaptureSource {
 }
 #[derive(Clone, PartialEq, Eq)]
 pub struct CaptureRequest {
+    pub browser: BrowserKind,
+    pub forced: bool,
+    pub policy_revision: u64,
+    pub original_url: Option<String>,
     pub id: RequestId,
     pub url: String,
     pub filename_hint: Option<String>,
@@ -80,6 +85,7 @@ impl CaptureRequest {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Operation {
+    Policy(BrowserKind),
     Ping,
     Activate,
     Capture(CaptureRequest),
@@ -102,6 +108,7 @@ struct Envelope {
     deny_unknown_fields
 )]
 enum WireOperation {
+    Policy(PolicyTarget),
     Ping(Empty),
     Activate(Empty),
     Capture(CapturePayload),
@@ -113,12 +120,26 @@ enum WireOperation {
 struct Empty {}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct PolicyTarget {
+    #[serde(default)]
+    browser: BrowserKind,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Target {
     capture_id: RequestId,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CapturePayload {
+    #[serde(default)]
+    browser: BrowserKind,
+    #[serde(default)]
+    forced: bool,
+    #[serde(default)]
+    policy_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    original_url: Option<String>,
     url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     filename_hint: Option<String>,
@@ -150,6 +171,7 @@ impl Operation {
         .map_err(|_| ProtocolError)?;
         let operation = match wire {
             WireOperation::Ping(_) => Self::Ping,
+            WireOperation::Policy(p) => Self::Policy(p.browser),
             WireOperation::Activate(_) => Self::Activate,
             WireOperation::Status(t) => Self::Status {
                 capture_id: t.capture_id,
@@ -175,7 +197,22 @@ impl Operation {
                 {
                     return Err(ProtocolError);
                 }
+                if let Some(original) = &p.original_url {
+                    let url = url::Url::parse(original).map_err(|_| ProtocolError)?;
+                    if original.len() > 8192
+                        || original.chars().any(char::is_control)
+                        || !matches!(url.scheme(), "http" | "https")
+                        || !url.username().is_empty()
+                        || url.password().is_some()
+                    {
+                        return Err(ProtocolError);
+                    }
+                }
                 Self::Capture(CaptureRequest {
+                    browser: p.browser,
+                    forced: p.forced,
+                    policy_revision: p.policy_revision,
+                    original_url: p.original_url,
                     id: id.clone(),
                     url: p.url,
                     filename_hint: p.filename_hint,
@@ -190,6 +227,7 @@ impl Operation {
     pub fn encode(&self, id: RequestId) -> Result<Vec<u8>, ProtocolError> {
         let operation = match self {
             Self::Ping => WireOperation::Ping(Empty {}),
+            Self::Policy(browser) => WireOperation::Policy(PolicyTarget { browser: *browser }),
             Self::Activate => WireOperation::Activate(Empty {}),
             Self::Status { capture_id } => WireOperation::Status(Target {
                 capture_id: capture_id.clone(),
@@ -198,6 +236,10 @@ impl Operation {
                 capture_id: capture_id.clone(),
             }),
             Self::Capture(p) => WireOperation::Capture(CapturePayload {
+                browser: p.browser,
+                forced: p.forced,
+                policy_revision: p.policy_revision,
+                original_url: p.original_url.clone(),
                 url: p.url.clone(),
                 filename_hint: p.filename_hint.clone(),
                 source: p.source,
@@ -229,6 +271,10 @@ pub enum DeclineCode {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ReplyStatus {
+    Policy {
+        browser: BrowserKind,
+        policy: CapturePolicy,
+    },
     Ok {
         host_version: String,
         gui_running: bool,

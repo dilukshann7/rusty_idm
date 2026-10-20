@@ -4,7 +4,7 @@ $taskRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $extension = Join-Path $taskRoot 'extensions/chrome'
 $manifest = Get-Content -Raw -LiteralPath (Join-Path $extension 'manifest.json') | ConvertFrom-Json
 if ($manifest.manifest_version -ne 3 -or $manifest.minimum_chrome_version -ne '120' -or $manifest.background.type -ne 'module' -or $manifest.incognito -ne 'not_allowed') { throw 'Invalid extension platform contract.' }
-$required = @('downloads','nativeMessaging','contextMenus','storage','alarms','webRequest')
+$required = @('downloads','nativeMessaging','contextMenus','storage','alarms','webRequest','scripting','webNavigation')
 if (Compare-Object ($required | Sort-Object) (@($manifest.permissions) | Sort-Object)) { throw 'Unexpected extension permissions.' }
 if (Compare-Object (@('http://*/*','https://*/*') | Sort-Object) (@($manifest.optional_host_permissions) | Sort-Object)) { throw 'Unexpected optional host permissions.' }
 if ($manifest.content_scripts -or $manifest.host_permissions -or $manifest.externally_connectable) { throw 'Unexpected extension access.' }
@@ -32,9 +32,18 @@ foreach ($file in Get-ChildItem -LiteralPath $extension -Recurse -Filter '*.js')
         if (-not (Test-Path -LiteralPath (Join-Path $file.DirectoryName $match.Groups[1].Value))) { throw 'Missing local JavaScript import.' }
     }
 }
-foreach ($relative in @('scripts/register-chrome-host.ps1','scripts/unregister-chrome-host.ps1','scripts/verify-chrome-source.ps1','scripts/tests/chrome-host-registration.Tests.ps1','scripts/release-integration.ps1','scripts/chrome-integration.ps1','scripts/build-release.ps1','scripts/generate-branding.ps1')) {
+foreach ($relative in @('scripts/browser-host.ps1','scripts/register-chrome-host.ps1','scripts/unregister-chrome-host.ps1','scripts/verify-chrome-source.ps1','scripts/tests/chrome-host-registration.Tests.ps1','scripts/release-integration.ps1','scripts/chrome-integration.ps1','scripts/build-release.ps1','scripts/generate-branding.ps1')) {
     $tokens = $null; $errors = $null
     [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $taskRoot $relative), [ref]$tokens, [ref]$errors) | Out-Null
     if ($errors.Count) { throw "PowerShell syntax errors in $relative" }
+}
+foreach($browser in @('brave','edge','firefox')) {
+    $profile=Join-Path $taskRoot ('extensions/profiles/'+$browser)
+    $m=Get-Content -Raw -LiteralPath (Join-Path $profile 'manifest.json') | ConvertFrom-Json
+    if($m.manifest_version -ne 3 -or $m.incognito -ne 'not_allowed'){throw 'Invalid browser profile.'}
+    if(Compare-Object ($required | Sort-Object) (@($m.permissions) | Sort-Object)){throw 'Unexpected browser profile permissions.'}
+    if($browser -eq 'firefox' -and ($m.browser_specific_settings.gecko.id -ne 'rusty-download-manager@rusty.local' -or $m.background.scripts[0] -ne 'service-worker.js')){throw 'Invalid Firefox background or identity.'}
+    & node --check (Join-Path $profile 'browser-config.js')
+    if($LASTEXITCODE -ne 0){throw 'Invalid browser profile configuration.'}
 }
 Write-Output 'Chrome source checks passed: manifest, local assets, PNG sizes, JavaScript and PowerShell syntax. No tests, browser or setup executed.'

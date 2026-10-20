@@ -1,12 +1,14 @@
-export const HOST = 'dev.rusty_idm.chrome';
+import { HOST } from './browser-config.js';
+export { HOST };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 const codes = new Set(['invalid_request', 'unsupported', 'busy', 'user_cancelled', 'browser_fallback', 'expired', 'app_closing', 'engine_unavailable', 'recovery_required']);
 export function validReply(reply) {
   if (!reply || reply.v !== 1 || !uuid.test(reply.id) || new TextEncoder().encode(JSON.stringify(reply)).length > 65536) return false;
-  const fields = { pending: [], accepted: ['job_id', 'created_new'], declined: ['code'], unknown: [], aborted: [], already_accepted: ['job_id', 'created_new'], ok: ['host_version', 'gui_running'] }[reply.status];
+  const fields = { pending: [], accepted: ['job_id', 'created_new'], declined: ['code'], unknown: [], aborted: [], already_accepted: ['job_id', 'created_new'], ok: ['host_version', 'gui_running'], policy: ['browser', 'policy'] }[reply.status];
   if (!fields || Object.keys(reply).some(k => !['v', 'id', 'status', ...fields].includes(k)) || fields.some(k => !(k in reply))) return false;
   if (['accepted', 'already_accepted'].includes(reply.status)) return Number.isSafeInteger(reply.job_id) && reply.job_id > 0 && typeof reply.created_new === 'boolean';
   if (reply.status === 'declined') return codes.has(reply.code);
+  if (reply.status === 'policy') return ['chrome', 'brave', 'edge', 'firefox'].includes(reply.browser) && reply.policy && Number.isSafeInteger(reply.policy.revision) && Array.isArray(reply.policy.browsers) && Array.isArray(reply.policy.extensions) && Array.isArray(reply.policy.excluded_sites) && Array.isArray(reply.policy.excluded_addresses);
   if (reply.status === 'ok') return typeof reply.host_version === 'string' && typeof reply.gui_running === 'boolean';
   return true;
 }

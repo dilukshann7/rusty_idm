@@ -26,7 +26,7 @@ export class Observations {
   update(details, stage) {
     if (this.pending >= 128) { this.uncertainUntil = this.now() + 30000; return Promise.resolve(); }
     // Reduce headers immediately: the queued operation must not retain raw values.
-    const summary = { requestId: details.requestId, url: supportedUrl(details.url) ? details.url : '', method: details.method, timeStamp: details.timeStamp, incognito: !!details.incognito };
+    const summary = { requestId: details.requestId, url: supportedUrl(details.url) ? details.url : '', method: details.method, timeStamp: details.timeStamp, incognito: !!details.incognito, tabId: details.tabId, documentKey: details.rustyDocumentKey || null };
     summary.credentials = (details.requestHeaders || []).some(h => ['cookie', 'authorization', 'proxy-authorization'].includes(h.name.toLowerCase()));
     const referrer = (details.requestHeaders || []).find(h => h.name.toLowerCase() === 'referer')?.value;
     const digest = referrer ? fingerprintReferrer(referrer).catch(() => null) : Promise.resolve(null);
@@ -37,7 +37,7 @@ export class Observations {
       const all = (result.requestObservations || []).filter(o => now - o.lastAt <= 30000);
       let chain = all.find(o => o.requestId === summary.requestId);
       if (!chain && stage !== 'before') return;
-      if (!chain) { chain = { requestId: summary.requestId, urls: [], startedAt: summary.timeStamp, lastAt: now, allGet: true, headersObserved: true, credentials: false, incognito: summary.incognito, referrerDigest: null, hopHeaders: false }; all.push(chain); }
+      if (!chain) { chain = { requestId: summary.requestId, urls: [], startedAt: summary.timeStamp, lastAt: now, allGet: true, headersObserved: true, credentials: false, incognito: summary.incognito, referrerDigest: null, hopHeaders: false, tabId: summary.tabId, documentKey: summary.documentKey }; all.push(chain); }
       if (stage === 'before') {
         if (chain.urls.length && !chain.hopHeaders) chain.headersObserved = false;
         chain.hopHeaders = false;

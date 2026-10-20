@@ -7,6 +7,10 @@ pub type HostError = io::Error;
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HostConfig {
+    #[serde(default)]
+    pub browser: rusty_browser_bridge::policy::BrowserKind,
+    #[serde(default)]
+    pub extension_ids: Vec<String>,
     pub extension_id: String,
     pub gui_exe: PathBuf,
     pub host_exe: PathBuf,
@@ -28,11 +32,9 @@ impl HostConfig {
             || !config.gui_exe.is_file()
             || !config.host_exe.is_absolute()
             || !config.host_exe.is_file()
-            || config.extension_id.len() != 32
-            || !config
-                .extension_id
-                .bytes()
-                .all(|b| (b'a'..=b'p').contains(&b))
+            || !config.valid_id(&config.extension_id)
+            || config.extension_ids.len() > 32
+            || config.extension_ids.iter().any(|id| !config.valid_id(id))
         {
             return Err(io::Error::other(
                 "Invalid installed host paths or extension ID",
@@ -40,8 +42,28 @@ impl HostConfig {
         }
         Ok(config)
     }
+    fn valid_id(&self, id: &str) -> bool {
+        if self.browser == rusty_browser_bridge::policy::BrowserKind::Firefox {
+            id.len() >= 3
+                && id.len() <= 200
+                && id
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"@._-{}".contains(&c))
+        } else {
+            id.len() == 32 && id.bytes().all(|c| (b'a'..=b'p').contains(&c))
+        }
+    }
     pub fn validate_origin(&self, origin: &str) -> Result<(), HostError> {
-        if origin != format!("chrome-extension://{}/", self.extension_id) {
+        let accepted = std::iter::once(&self.extension_id)
+            .chain(self.extension_ids.iter())
+            .any(|id| {
+                if self.browser == rusty_browser_bridge::policy::BrowserKind::Firefox {
+                    origin == id
+                } else {
+                    origin == format!("chrome-extension://{id}/")
+                }
+            });
+        if !accepted {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "Unexpected native caller",

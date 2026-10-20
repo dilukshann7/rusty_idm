@@ -2,6 +2,10 @@ use super::*;
 use rusty_browser_bridge::protocol::CaptureSource;
 fn capture() -> CaptureRequest {
     CaptureRequest {
+        browser: Default::default(),
+        forced: false,
+        policy_revision: 0,
+        original_url: None,
         id: RequestId::parse("12345678-1234-4234-8234-123456789abc").unwrap(),
         url: "https://example.org/file".into(),
         filename_hint: None,

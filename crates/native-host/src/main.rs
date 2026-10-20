@@ -25,15 +25,27 @@ fn run() -> std::io::Result<()> {
     use rusty_native_host::{config::HostConfig, host::run_host};
     let root = std::env::var_os("LOCALAPPDATA")
         .ok_or_else(|| std::io::Error::other("Missing local application directory"))?;
-    let config = HostConfig::load(
-        &std::path::PathBuf::from(root).join("RustyIDM/browser/host-config.json"),
-    )?;
+    let local = std::env::current_exe()?
+        .parent()
+        .ok_or_else(|| std::io::Error::other("Missing native host parent"))?
+        .join("host-config.json");
+    let config = HostConfig::load(&if local.is_file() {
+        local
+    } else {
+        std::path::PathBuf::from(root).join("RustyIDM/browser/host-config.json")
+    })?;
     if std::fs::canonicalize(std::env::current_exe()?)? != std::fs::canonicalize(&config.host_exe)?
     {
         return Err(std::io::Error::other("Unexpected native host executable"));
     }
     let origin = std::env::args()
-        .nth(1)
+        .nth(
+            if config.browser == rusty_browser_bridge::policy::BrowserKind::Firefox {
+                2
+            } else {
+                1
+            },
+        )
         .ok_or_else(|| std::io::Error::other("Missing native caller"))?;
     run_host(
         &mut std::io::stdin(),

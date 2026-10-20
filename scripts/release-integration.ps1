@@ -25,7 +25,22 @@ try {
             New-Item -Path $runKey -Force | Out-Null
             New-ItemProperty -LiteralPath $runKey -Name $valueName -Value $startup -PropertyType String -Force | Out-Null
         } elseif ($current -eq $startup) { Remove-ItemProperty -LiteralPath $runKey -Name $valueName }
+        foreach($browserName in @('brave','edge','firefox')) {
+            $browserOwner = Join-Path $env:LOCALAPPDATA ('RustyIDM/browser/'+$browserName+'/registration-owner.json')
+            if(Test-Path -LiteralPath $browserOwner) {
+                $record = Get-Content -Raw -LiteralPath $browserOwner | ConvertFrom-Json
+                if($record.app -ne 'RustyIDM' -or $record.schema -ne 1) { throw 'Unrecognized browser ownership was preserved.' }
+                & (Join-Path $PSScriptRoot 'browser-host.ps1') -Browser $browserName -ExtensionId $record.extension_id -HostExe $hostExe -GuiExe $gui
+            }
+        }
     } else {
+        foreach($browserName in @('brave','edge','firefox')) {
+            $browserOwner = Join-Path $env:LOCALAPPDATA ('RustyIDM/browser/'+$browserName+'/registration-owner.json')
+            if(Test-Path -LiteralPath $browserOwner) {
+                $record = Get-Content -Raw -LiteralPath $browserOwner | ConvertFrom-Json
+                if($record.gui_exe -eq $gui) { & (Join-Path $PSScriptRoot 'browser-host.ps1') -Mode Unregister -Browser $browserName }
+            }
+        }
         if($current -eq $startup) { Remove-ItemProperty -LiteralPath $runKey -Name $valueName }
         if(Test-Path -LiteralPath $ownerPath) {
             $owner = Get-Content -Raw -LiteralPath $ownerPath | ConvertFrom-Json
