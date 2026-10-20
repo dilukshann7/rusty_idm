@@ -30,6 +30,7 @@ pub struct Controls {
     navigation: Vec<(Category, String, HTREEITEM)>,
     shell: crate::shell_icons::ShellImages,
     navigation_generation: usize,
+    navigation_visuals: BTreeMap<isize, (i32, String)>,
 }
 impl Controls {
     pub fn new(owner: HWND) -> Result<Self, AppError> {
@@ -76,6 +77,12 @@ impl Controls {
                 LVM_SETEXTENDEDLISTVIEWSTYLE,
                 0,
                 (LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP) as isize,
+            );
+            send(
+                tree,
+                TVM_SETEXTENDEDSTYLE,
+                TVS_EX_DOUBLEBUFFER as usize,
+                TVS_EX_DOUBLEBUFFER as isize,
             );
             send(toolbar, TB_BUTTONSTRUCTSIZE, size_of::<TBBUTTON>(), 0);
             let mut images = ToolbarImages::new(dpi)?;
@@ -135,6 +142,7 @@ impl Controls {
                 navigation: vec![],
                 shell,
                 navigation_generation: 0,
+                navigation_visuals: BTreeMap::new(),
             })
         }
     }
@@ -412,7 +420,16 @@ impl Controls {
                 iImage: image,
                 ..Default::default()
             };
-            send(self.list, LVM_SETITEMW, 0, &item as *const _ as isize);
+            let mut current = LVITEMW {
+                mask: LVIF_IMAGE,
+                iItem: row as i32,
+                ..Default::default()
+            };
+            if send(self.list, LVM_GETITEMW, 0, &mut current as *mut _ as isize).0 == 0
+                || current.iImage != image
+            {
+                send(self.list, LVM_SETITEMW, 0, &item as *const _ as isize);
+            }
         }
         for (category, label, handle) in &self.navigation {
             let key = crate::shell_icons::ShellImages::stock(match category {
@@ -422,14 +439,22 @@ impl Controls {
                 _ => None,
             });
             let image = self.shell.index(key);
-            let mut text = wide(if let Category::Queue(id) = category {
+            let caption = if let Category::Queue(id) = category {
                 view.queues
                     .get(id)
                     .map(|q| format!("{} ({}/{})", q.name, q.completed, q.entries.len()))
                     .unwrap_or_else(|| label.clone())
             } else {
                 label.clone()
-            });
+            };
+            if self
+                .navigation_visuals
+                .get(&handle.0)
+                .is_some_and(|old| old.0 == image && old.1 == caption)
+            {
+                continue;
+            }
+            let mut text = wide(&caption);
             let item = TVITEMW {
                 mask: TVIF_IMAGE | TVIF_SELECTEDIMAGE | TVIF_TEXT,
                 pszText: PWSTR(text.as_mut_ptr()),
@@ -439,6 +464,7 @@ impl Controls {
                 ..Default::default()
             };
             send(self.tree, TVM_SETITEMW, 0, &item as *const _ as isize);
+            self.navigation_visuals.insert(handle.0, (image, caption));
         }
         self.actions(owner, view, closing);
         let queue_status =
@@ -566,6 +592,7 @@ impl Controls {
         send(self.tree, WM_SETREDRAW, 0, 0);
         send(self.tree, TVM_DELETEITEM, 0, TVI_ROOT.0);
         self.navigation.clear();
+        self.navigation_visuals.clear();
         self.categories.clear();
         let mut parent = TVI_ROOT;
         for (index, (category, label)) in entries.into_iter().enumerate() {
@@ -609,6 +636,9 @@ impl Controls {
             send(self.tree, TVM_SELECTITEM, TVGN_CARET as usize, handle.0);
         }
         send(self.tree, WM_SETREDRAW, 1, 0);
+        unsafe {
+            let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(self.tree), None, false);
+        }
     }
     pub fn actions(&self, owner: HWND, view: &ViewModel, closing: bool) {
         let actions = view.actions(self.selected());

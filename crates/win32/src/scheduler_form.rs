@@ -17,8 +17,11 @@ use windows::{
     core::{w, PWSTR},
     Win32::{
         Foundation::{HWND, LPARAM, SYSTEMTIME, WPARAM},
+        Graphics::Gdi::{RedrawWindow, RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE},
         UI::{
-            Controls::*, HiDpi::GetDpiForWindow, Input::KeyboardAndMouse::EnableWindow,
+            Controls::*,
+            HiDpi::GetDpiForWindow,
+            Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled},
             WindowsAndMessaging::*,
         },
     },
@@ -144,6 +147,25 @@ impl Form {
         };
         let _guard = Suppress::new(&form.signals.suppress);
         let tabs = item(hwnd, SCHED_TABS)?;
+        // Page fields are dialog siblings. Keep the tab's clipped background
+        // behind them so its paint cannot cover labels or input controls.
+        unsafe {
+            SetWindowPos(
+                tabs,
+                Some(HWND_BOTTOM),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            )?;
+        }
+        send(
+            tree,
+            TVM_SETEXTENDEDSTYLE,
+            TVS_EX_DOUBLEBUFFER as usize,
+            TVS_EX_DOUBLEBUFFER as isize,
+        );
         for (index, title) in ["Schedule", "Files in the queue"].iter().enumerate() {
             let mut title = wide(title);
             let tab = TCITEMW {
@@ -160,10 +182,10 @@ impl Form {
             (LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP) as isize,
         );
         for (index, (title, width)) in [
-            ("File Name", 275),
-            ("Size", 80),
-            ("Status", 125),
-            ("Time left", 75),
+            ("File Name", 170),
+            ("Size", 60),
+            ("Status", 90),
+            ("Time left", 60),
         ]
         .iter()
         .enumerate()
@@ -220,6 +242,15 @@ impl Form {
                 TCM_SETCURSEL,
                 if tab == Tab::Schedule { 0 } else { 1 },
                 0,
+            );
+        }
+        // Switching pages exposes areas previously covered by hidden controls.
+        unsafe {
+            let _ = RedrawWindow(
+                Some(self.hwnd()),
+                None,
+                None,
+                RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
             );
         }
     }
@@ -362,6 +393,7 @@ impl Form {
                 self.queue_rows.push((id, name, handle));
             }
             send(tree, WM_SETREDRAW, 1, 0);
+            repaint(tree);
         }
         let tree = item(hwnd, SCHED_TREE)?;
         for (id, _, handle) in &self.queue_rows {
@@ -373,8 +405,19 @@ impl Form {
                 iSelectedImage: index,
                 ..Default::default()
             };
-            send(tree, TVM_SETITEMW, 0, &node as *const _ as isize);
-            if *id == selected {
+            let mut current = TVITEMW {
+                mask: TVIF_IMAGE | TVIF_SELECTEDIMAGE,
+                hItem: *handle,
+                ..Default::default()
+            };
+            if send(tree, TVM_GETITEMW, 0, &mut current as *mut _ as isize).0 == 0
+                || current.iImage != index
+                || current.iSelectedImage != index
+            {
+                send(tree, TVM_SETITEMW, 0, &node as *const _ as isize);
+            }
+            if *id == selected && send(tree, TVM_GETNEXTITEM, TVGN_CARET as usize, 0).0 != handle.0
+            {
                 send(tree, TVM_SELECTITEM, TVGN_CARET as usize, handle.0);
             }
         }
@@ -382,7 +425,12 @@ impl Form {
         let list = item(hwnd, SCHED_FILES)?;
         let ids = view.visible_jobs(presenter::Category::Queue(selected));
         if ids != self.file_rows.iter().map(|(id, _)| *id).collect::<Vec<_>>() {
-            send(list, WM_SETREDRAW, 0, 0);
+            // WM_SETREDRAW(TRUE) also sets WS_VISIBLE. Never send that pair to
+            // the hidden Files page, or it will cover the Schedule controls.
+            let redraw = unsafe { GetWindowLongW(list, GWL_STYLE) as u32 & WS_VISIBLE.0 != 0 };
+            if redraw {
+                send(list, WM_SETREDRAW, 0, 0);
+            }
             send(list, LVM_DELETEALLITEMS, 0, 0);
             self.file_rows.clear();
             *self.signals.files.borrow_mut() = ids.clone();
@@ -407,7 +455,10 @@ impl Form {
                     send(list, LVM_SETITEMSTATE, row, &item as *const _ as isize);
                 }
             }
-            send(list, WM_SETREDRAW, 1, 0);
+            if redraw {
+                send(list, WM_SETREDRAW, 1, 0);
+                repaint(list);
+            }
         }
         for (row, (id, old)) in self.file_rows.iter_mut().enumerate() {
             let job = &view.jobs[id];
@@ -436,7 +487,16 @@ impl Form {
                 iImage: self.shell.index(ShellImages::file(job)),
                 ..Default::default()
             };
-            send(list, LVM_SETITEMW, 0, &item as *const _ as isize);
+            let mut current = LVITEMW {
+                mask: LVIF_IMAGE,
+                iItem: row as i32,
+                ..Default::default()
+            };
+            if send(list, LVM_GETITEMW, 0, &mut current as *mut _ as isize).0 == 0
+                || current.iImage != item.iImage
+            {
+                send(list, LVM_SETITEMW, 0, &item as *const _ as isize);
+            }
         }
         let queue = view.queues.get(&selected);
         value(
@@ -549,7 +609,7 @@ impl Form {
     pub fn dpi(&mut self, dpi: u32) -> Result<(), AppError> {
         self.shell.invalidate(dpi)?;
         if let Ok(list) = item(self.hwnd(), SCHED_FILES) {
-            for (index, width) in [275, 80, 125, 75].iter().enumerate() {
+            for (index, width) in [170, 60, 90, 60].iter().enumerate() {
                 send(list, LVM_SETCOLUMNWIDTH, index, scale(*width, dpi) as isize);
             }
         }
@@ -567,6 +627,16 @@ impl Drop for Form {
         }
     }
 }
+fn repaint(hwnd: HWND) {
+    unsafe {
+        let _ = RedrawWindow(
+            Some(hwnd),
+            None,
+            None,
+            RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN,
+        );
+    }
+}
 fn value(hwnd: HWND, id: i32, value: &str) {
     if let Ok(control) = item(hwnd, id) {
         if text(control) != value {
@@ -577,14 +647,19 @@ fn value(hwnd: HWND, id: i32, value: &str) {
 fn enable(hwnd: HWND, id: i32, on: bool) {
     if let Ok(control) = item(hwnd, id) {
         unsafe {
-            let _ = EnableWindow(control, on);
+            if IsWindowEnabled(control).as_bool() != on {
+                let _ = EnableWindow(control, on);
+            }
         }
     }
 }
 fn visible(hwnd: HWND, id: i32, on: bool) {
     if let Ok(control) = item(hwnd, id) {
         unsafe {
-            let _ = ShowWindow(control, if on { SW_SHOW } else { SW_HIDE });
+            let visible = GetWindowLongW(control, GWL_STYLE) as u32 & WS_VISIBLE.0 != 0;
+            if visible != on {
+                let _ = ShowWindow(control, if on { SW_SHOW } else { SW_HIDE });
+            }
         }
     }
 }
