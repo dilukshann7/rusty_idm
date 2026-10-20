@@ -11,8 +11,9 @@ pub(super) struct QueueRuntime {
     observed_failures: BTreeSet<JobId>,
     last: Vec<QueueSnapshot>,
     startup_seen: BTreeSet<QueueId>,
-    stops: BTreeMap<QueueId, LocalStamp>,
+    stops: BTreeMap<QueueId, crate::schedule::StopDeadline>,
     stopped_minute: BTreeMap<QueueId, LocalStamp>,
+    attempted_start: BTreeMap<QueueId, (u64, LocalStamp)>,
 }
 pub(super) fn handles(c: &Command) -> bool {
     matches!(
@@ -44,6 +45,7 @@ impl QueueRuntime {
             startup_seen: BTreeSet::new(),
             stops: BTreeMap::new(),
             stopped_minute: BTreeMap::new(),
+            attempted_start: BTreeMap::new(),
         }
     }
     pub fn admit(&self, request: &mut DownloadRequest) -> Result<EntryId, String> {
@@ -352,7 +354,7 @@ impl QueueRuntime {
                 schedule_status: ScheduleStatus {
                     next_start: LocalStamp::now()
                         .and_then(|now| q.schedule.config.next_start(now, q.schedule.last_fired)),
-                    stop_at: self.stops.get(&q.id).copied(),
+                    stop_at: self.stops.get(&q.id).map(|stop| stop.local),
                 },
                 running: self.running.contains(&q.id),
                 stopping: self.stopping.contains(&q.id),
@@ -435,8 +437,9 @@ impl QueueRuntime {
                     self.running.remove(&id);
                     self.stops.remove(&id);
                     self.stopped_minute.remove(&id);
+                    self.attempted_start.remove(&id);
                 }
-                Command::StartQueue(id) => {if let Err(error)=self.start_queue(id,LocalStamp::now(),jobs){self.hold(id,jobs,waiting,bus);self.errors.insert(id,error.clone());return Err(error);}},
+                Command::StartQueue(id) => {if let Err(error)=self.start_queue(id,jobs){self.hold(id,jobs,waiting,bus);self.errors.insert(id,error.clone());return Err(error);}},
                 Command::StopQueue(id) => self.hold(id, jobs, waiting, bus),
                 Command::QueueParallelism(id, n) => {
                     if !(1..=2).contains(&n) {
@@ -602,7 +605,7 @@ impl QueueRuntime {
     }
 }
 fn check_name(name: &str) -> Result<(), String> {
-    if name.trim().is_empty() || name.len() > 160 || name.chars().any(char::is_control) {
+    if name.trim().is_empty() || name.chars().count() > 160 || name.chars().any(char::is_control) {
         Err("Enter a name from 1 to 160 characters without control characters.".into())
     } else {
         Ok(())

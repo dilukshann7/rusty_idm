@@ -1,7 +1,7 @@
 //! Queue editor state is separate from engine scheduling and native callbacks.
 use crate::{
     commands::*,
-    platform::{self, message, wide},
+    platform::{message, wide},
     presenter::ViewModel,
     AppError,
 };
@@ -25,6 +25,7 @@ enum Intent {
     Delete,
     Start,
     Close,
+    ExitApplication,
 }
 pub(super) enum UiAction {
     Button(i32, Option<JobId>),
@@ -32,12 +33,16 @@ pub(super) enum UiAction {
     Select(QueueId),
     Tab(Tab),
     Dpi(u32),
+    AssociationsChanged,
     Open(QueueId, Tab),
     New,
+    Start(QueueId),
+    ExitApplication,
 }
 pub enum EditorAction {
     Command(Command),
     NewQueue,
+    ExitApplication,
     Error(String),
 }
 struct PendingApply {
@@ -52,6 +57,7 @@ struct Editor {
     baseline: QueueSettings,
     baseline_revision: u64,
     dirty: bool,
+    creating: bool,
     pending: Option<PendingApply>,
     tab: Tab,
     queued: Vec<UiAction>,
@@ -103,6 +109,7 @@ impl SchedulerWindow {
             baseline,
             baseline_revision: queue.revision,
             dirty: false,
+            creating: false,
             pending: None,
             tab,
             queued: vec![],
@@ -112,6 +119,41 @@ impl SchedulerWindow {
     pub fn request_new(&mut self) -> bool {
         if let Some(editor) = self.editor.as_mut().filter(|e| e.form.alive()) {
             editor.queued.push(UiAction::New);
+            true
+        } else {
+            false
+        }
+    }
+    pub fn creating(&mut self, creating: bool) {
+        if let Some(editor) = &mut self.editor {
+            editor.creating = creating;
+        }
+    }
+    pub fn request_start(&mut self, id: QueueId) -> bool {
+        if let Some(editor) = self
+            .editor
+            .as_mut()
+            .filter(|e| e.form.alive() && e.selected == id)
+        {
+            editor.queued.push(UiAction::Start(id));
+            true
+        } else {
+            false
+        }
+    }
+    pub fn cancel_start(&mut self, id: QueueId) {
+        if let Some(editor) = &mut self.editor {
+            editor
+                .queued
+                .retain(|a| !matches!(a, UiAction::Start(queue) if *queue == id));
+            if editor.selected == id {
+                editor.cancel_start();
+            }
+        }
+    }
+    pub fn request_exit(&mut self) -> bool {
+        if let Some(editor) = self.editor.as_mut().filter(|e| e.form.alive()) {
+            editor.queued.push(UiAction::ExitApplication);
             true
         } else {
             false
@@ -153,6 +195,8 @@ impl SchedulerWindow {
         let mut close = false;
         let mut actions = editor.form.take_actions();
         actions.extend(std::mem::take(&mut editor.queued));
+        // Stop wins over starts already waiting in this same message batch.
+        let mut stopped = std::collections::BTreeSet::new();
         for action in actions {
             match action {
                 UiAction::Changed => {
@@ -165,6 +209,7 @@ impl SchedulerWindow {
                     editor.form.page(tab);
                 }
                 UiAction::Dpi(dpi) => editor.form.dpi(dpi)?,
+                UiAction::AssociationsChanged => editor.form.invalidate_associations()?,
                 UiAction::Open(id, tab) => {
                     close |= editor.intent(Intent::Select(id, tab), view, &mut output)
                 }
@@ -174,18 +219,27 @@ impl SchedulerWindow {
                     }
                 }
                 UiAction::New => close |= editor.intent(Intent::New, view, &mut output),
+                UiAction::ExitApplication => {
+                    close |= editor.intent(Intent::ExitApplication, view, &mut output)
+                }
+                UiAction::Start(id) => {
+                    if id == editor.selected && !stopped.contains(&id) {
+                        close |= editor.intent(Intent::Start, view, &mut output);
+                    }
+                }
                 UiAction::Button(id, file) => match id {
                     SCHED_APPLY => editor.apply(None, view, &mut output),
                     SCHED_CLOSE => close |= editor.intent(Intent::Close, view, &mut output),
                     SCHED_NEW => close |= editor.intent(Intent::New, view, &mut output),
                     SCHED_DELETE => close |= editor.intent(Intent::Delete, view, &mut output),
-                    SCHED_START => close |= editor.intent(Intent::Start, view, &mut output),
-                    SCHED_STOP => {
-                        if let Some(pending) = &mut editor.pending {
-                            if matches!(pending.after, Some(Intent::Start)) {
-                                pending.after = None;
-                            }
+                    SCHED_START => {
+                        if !stopped.contains(&editor.selected) {
+                            close |= editor.intent(Intent::Start, view, &mut output);
                         }
+                    }
+                    SCHED_STOP => {
+                        stopped.insert(editor.selected);
+                        editor.cancel_start();
                         output.push(EditorAction::Command(Command::StopQueue(editor.selected)));
                     }
                     SCHED_UP | SCHED_DOWN => {
@@ -248,7 +302,7 @@ impl SchedulerWindow {
                 view,
                 editor.selected,
                 editor.dirty,
-                editor.pending.is_some(),
+                editor.pending.is_some() || editor.creating,
             )?;
         }
         Ok(output)
@@ -258,6 +312,13 @@ impl SchedulerWindow {
     }
 }
 impl Editor {
+    fn cancel_start(&mut self) {
+        if let Some(pending) = &mut self.pending {
+            if matches!(pending.after, Some(Intent::Start)) {
+                pending.after = None;
+            }
+        }
+    }
     fn load(&mut self, id: QueueId, view: &ViewModel) {
         if let Some(queue) = view.queues.get(&id) {
             self.selected = id;
@@ -268,9 +329,9 @@ impl Editor {
         }
     }
     fn intent(&mut self, intent: Intent, view: &ViewModel, output: &mut Vec<EditorAction>) -> bool {
-        if self.pending.is_some() {
+        if self.pending.is_some() || self.creating {
             output.push(EditorAction::Error(
-                "Wait for the queue settings to finish saving.".into(),
+                "Wait for the queue changes to finish saving.".into(),
             ));
             return false;
         }
@@ -296,7 +357,7 @@ impl Editor {
         self.perform(intent, view, output)
     }
     fn apply(&mut self, after: Option<Intent>, view: &ViewModel, output: &mut Vec<EditorAction>) {
-        if self.pending.is_some() {
+        if self.pending.is_some() || self.creating {
             return;
         }
         let Some(queue) = view.queues.get(&self.selected) else {
@@ -361,6 +422,10 @@ impl Editor {
             }
             Intent::Start => output.push(EditorAction::Command(Command::StartQueue(self.selected))),
             Intent::Close => return true,
+            Intent::ExitApplication => {
+                output.push(EditorAction::ExitApplication);
+                return true;
+            }
         }
         false
     }

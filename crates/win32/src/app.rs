@@ -10,6 +10,7 @@ use crate::{
     lifecycle::Lifecycle,
     platform::{self, message, resource, ComApartment},
     presenter::{Category, ViewModel},
+    scheduler::{EditorAction, SchedulerWindow, Tab},
     settings::{self, DoubleClickAction, Settings},
     tray::{self, TrayIcon},
 };
@@ -59,6 +60,7 @@ impl From<settings::SettingsError> for AppError {
 enum Action {
     Command(u16),
     ContextMenu(POINT),
+    QueueMenu(POINT),
     DoubleClick,
     Category(isize),
     AssociationsChanged,
@@ -103,7 +105,10 @@ impl Signals {
         if actions.len() >= 128
             && matches!(
                 action,
-                Action::Command(_) | Action::ContextMenu(_) | Action::DoubleClick
+                Action::Command(_)
+                    | Action::ContextMenu(_)
+                    | Action::QueueMenu(_)
+                    | Action::DoubleClick
             )
         {
             self.overflow.set(true);
@@ -195,6 +200,9 @@ struct AppState {
     controls: Controls,
     details: DetailsWindows,
     completions: CompletionWindows,
+    scheduler: SchedulerWindow,
+    pending_create: Option<u64>,
+    pending_editor: Option<(rusty_engine::QueueId, Tab)>,
     tray: TrayIcon,
     settings: Settings,
     category: Category,
@@ -382,6 +390,12 @@ impl AppState {
         false
     }
     fn close(&mut self, owner: HWND) {
+        if self.lifecycle == Lifecycle::Open && self.scheduler.request_exit() {
+            return;
+        }
+        self.close_after_editor(owner);
+    }
+    fn close_after_editor(&mut self, owner: HWND) {
         if self.lifecycle != Lifecycle::Open {
             return;
         }
@@ -449,8 +463,35 @@ impl AppState {
                     }
                 }
                 Event::QueuesChanged(_) => {}
+                Event::QueueCreated { request, result } => {
+                    if self.pending_create == Some(*request) {
+                        self.pending_create = None;
+                        self.scheduler.creating(false);
+                        match result {
+                            Ok(id) => self.pending_editor = Some((*id, Tab::Schedule)),
+                            Err(error) => {
+                                if self.lifecycle == Lifecycle::Open {
+                                    message(Some(window.hwnd), "Cannot create queue", error, false);
+                                }
+                            }
+                        }
+                    }
+                }
+                Event::QueueConfigured { request, result } => {
+                    self.scheduler.result(*request, result);
+                    if let Err(error) = result {
+                        if self.lifecycle == Lifecycle::Open {
+                            message(Some(window.hwnd), "Queue settings", error, false);
+                        }
+                    }
+                }
                 Event::JobRemoved(id) => self.details.remove(*id),
                 Event::CommandRejected { message: text } => {
+                    if text == "Too many queue commands await acknowledgement." {
+                        self.pending_create = None;
+                        self.scheduler.creating(false);
+                        self.scheduler.rejected();
+                    }
                     message(Some(window.hwnd), "Download command", text, false);
                 }
                 Event::ShutdownComplete => {
@@ -458,6 +499,17 @@ impl AppState {
                 }
             }
             self.view.apply(event);
+        }
+        if self.lifecycle == Lifecycle::Open {
+            if let Some((id, tab)) = self
+                .pending_editor
+                .filter(|(id, _)| self.view.queues.contains_key(id))
+            {
+                self.pending_editor = None;
+                if let Err(error) = self.scheduler.open(window.hwnd, &self.view, id, tab) {
+                    message(Some(window.hwnd), "Queue editor", &error.to_string(), false);
+                }
+            }
         }
         for command in self.details.take_commands() {
             if self.lifecycle == Lifecycle::Open {
@@ -492,6 +544,7 @@ impl AppState {
             }
             self.tray.remove();
             self.completions.close_all();
+            self.scheduler.close_all();
             self.details.close_all();
             window.destroy();
         }
@@ -575,6 +628,26 @@ impl AppState {
                     .actions(owner, &self.view, self.lifecycle != Lifecycle::Open)
             }
             Action::Command(EXIT) => self.close(owner),
+            Action::QueueMenu(position) if self.lifecycle.accepts_submissions() => {
+                if let Some((queue, position)) = self.controls.queue_context_target(position) {
+                    let command = context_menu::show_queue(
+                        owner,
+                        position,
+                        queue.and_then(|id| self.view.queues.get(&id)),
+                    )?;
+                    self.events(window);
+                    if let Some(command) = command.filter(|_| self.lifecycle.accepts_submissions())
+                    {
+                        if command == QUEUE_NEW {
+                            self.new_queue(window)?;
+                        } else if let Some(id) =
+                            queue.filter(|id| self.view.queues.contains_key(id))
+                        {
+                            self.queue_action(window, id, command)?;
+                        }
+                    }
+                }
+            }
             Action::ContextMenu(position) if self.lifecycle.accepts_submissions() => {
                 if let Some((selected, position)) = self.controls.context_target(position) {
                     let queues: Vec<_> = self.view.queues.values().cloned().collect();
@@ -628,50 +701,14 @@ impl AppState {
                 let selected = self.controls.selected();
                 let actions = self.view.actions(selected);
                 match id {
-                    QUEUE_NEW => {
-                        if let Some(name) = crate::queue_ui::name(owner, "Create queue", "")? {
-                            self.command(owner, Command::CreateQueue(name));
-                        }
-                    }
+                    QUEUE_NEW => self.new_queue(window)?,
                     QUEUE_RENAME | QUEUE_DELETE | QUEUE_START | QUEUE_STOP | QUEUE_ONE
-                    | QUEUE_TWO => {
-                        let q = match self.category {
-                            Category::Queue(q) => q,
+                    | QUEUE_TWO | QUEUE_EDIT | QUEUE_SCHEDULE => {
+                        let queue = match self.category {
+                            Category::Queue(id) => id,
                             _ => rusty_engine::QueueId::MAIN,
                         };
-                        match id {
-                            QUEUE_RENAME => {
-                                let current = self
-                                    .view
-                                    .queues
-                                    .get(&q)
-                                    .map(|q| q.name.as_str())
-                                    .unwrap_or("");
-                                if let Some(name) =
-                                    crate::queue_ui::name(owner, "Rename queue", current)?
-                                {
-                                    self.command(owner, Command::RenameQueue(q, name));
-                                }
-                            }
-                            QUEUE_DELETE => {
-                                self.command(owner, Command::DeleteQueue(q));
-                            }
-                            QUEUE_START => {
-                                self.command(owner, Command::StartQueue(q));
-                            }
-                            QUEUE_STOP => {
-                                self.command(owner, Command::StopQueue(q));
-                            }
-                            _ => {
-                                self.command(
-                                    owner,
-                                    Command::QueueParallelism(
-                                        q,
-                                        if id == QUEUE_ONE { 1 } else { 2 },
-                                    ),
-                                );
-                            }
-                        }
+                        self.queue_action(window, queue, id)?;
                     }
                     SHOW_MANAGER => platform::bring_to_front(owner),
                     ADD => {
@@ -811,7 +848,9 @@ pub fn run() -> Result<(), AppError> {
                 | ICC_LISTVIEW_CLASSES
                 | ICC_PROGRESS_CLASS
                 | ICC_TAB_CLASSES
-                | ICC_STANDARD_CLASSES,
+                | ICC_STANDARD_CLASSES
+                | ICC_DATE_CLASSES
+                | ICC_UPDOWN_CLASS,
         };
         if !InitCommonControlsEx(&controls).as_bool() {
             return Err(AppError(
@@ -847,6 +886,9 @@ pub fn run() -> Result<(), AppError> {
         controls,
         details: DetailsWindows::default(),
         completions: CompletionWindows::default(),
+        scheduler: SchedulerWindow::default(),
+        pending_create: None,
+        pending_editor: None,
         tray: TrayIcon::new(window.hwnd),
         settings,
         category: Category::All,
@@ -881,6 +923,7 @@ pub fn run() -> Result<(), AppError> {
     drop(app.browser.take());
     app.tray.remove();
     app.completions.close_all();
+    app.scheduler.close_all();
     app.details.close_all();
     window.destroy();
     // On an exceptional message-loop exit, dropping the sender in join() also
@@ -907,7 +950,10 @@ fn message_loop(window: &MainWindow, app: &mut AppState) -> Result<(), AppError>
         if value == 0 {
             return Ok(());
         }
-        if !app.details.is_dialog_message(&msg) && !app.completions.is_dialog_message(&msg) {
+        if !app.scheduler.is_dialog_message(&msg)
+            && !app.details.is_dialog_message(&msg)
+            && !app.completions.is_dialog_message(&msg)
+        {
             let translated = unsafe { TranslateAcceleratorW(window.hwnd, accelerators, &msg) != 0 };
             if !translated && !unsafe { IsDialogMessageW(window.hwnd, &msg).as_bool() } {
                 unsafe {
@@ -929,6 +975,7 @@ fn message_loop(window: &MainWindow, app: &mut AppState) -> Result<(), AppError>
                 message(Some(window.hwnd), "Rusty", &error.to_string(), false);
             }
         }
+        app.scheduler_actions(window)?;
         app.completion_actions();
         if window.signals.overflow.replace(false) {
             message(
@@ -986,6 +1033,13 @@ unsafe fn window_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                 }
                 WM_COMMAND => {
                     signals.push(Action::Command((wparam.0 & 0xffff) as u16));
+                    return LRESULT(0);
+                }
+                WM_CONTEXTMENU if GetDlgCtrlID(HWND(wparam.0 as *mut _)) == TREE as i32 => {
+                    signals.push(Action::QueueMenu(POINT {
+                        x: (lparam.0 as u16 as i16) as i32,
+                        y: ((lparam.0 >> 16) as u16 as i16) as i32,
+                    }));
                     return LRESULT(0);
                 }
                 WM_CONTEXTMENU if GetDlgCtrlID(HWND(wparam.0 as *mut _)) == LIST as i32 => {
@@ -1237,5 +1291,123 @@ impl AppState {
             }
         }
         self.completions.prune();
+    }
+}
+
+impl AppState {
+    fn new_queue(&mut self, window: &MainWindow) -> Result<(), AppError> {
+        if self.scheduler.request_new() {
+            return Ok(());
+        }
+        self.queue_name(window)
+    }
+    fn queue_name(&mut self, window: &MainWindow) -> Result<(), AppError> {
+        if self.pending_create.is_some() {
+            message(
+                Some(window.hwnd),
+                "Create queue",
+                "Wait for the previous queue creation to finish.",
+                false,
+            );
+            return Ok(());
+        }
+        let owner = self.scheduler.hwnd().unwrap_or(window.hwnd);
+        if let Some(name) = crate::queue_ui::name(owner, "Create new queue", "")? {
+            self.events(window);
+            if self.lifecycle.accepts_submissions() {
+                let request = crate::scheduler::request_id();
+                if self.command(window.hwnd, Command::CreateQueueForEditor { request, name }) {
+                    self.pending_create = Some(request);
+                    self.scheduler.creating(true);
+                }
+            }
+        }
+        Ok(())
+    }
+    fn queue_action(
+        &mut self,
+        window: &MainWindow,
+        id: rusty_engine::QueueId,
+        command: u16,
+    ) -> Result<(), AppError> {
+        match command {
+            QUEUE_EDIT | QUEUE_SCHEDULE => self.scheduler.open(
+                window.hwnd,
+                &self.view,
+                id,
+                if command == QUEUE_EDIT {
+                    Tab::Files
+                } else {
+                    Tab::Schedule
+                },
+            )?,
+            QUEUE_RENAME => {
+                let name = self
+                    .view
+                    .queues
+                    .get(&id)
+                    .map(|q| q.name.clone())
+                    .unwrap_or_default();
+                if let Some(name) = crate::queue_ui::name(window.hwnd, "Rename queue", &name)? {
+                    self.command(window.hwnd, Command::RenameQueue(id, name));
+                }
+            }
+            QUEUE_DELETE => {
+                if message(
+                    Some(window.hwnd),
+                    "Delete queue?",
+                    "Delete this empty queue and its schedule?",
+                    true,
+                ) {
+                    self.command(window.hwnd, Command::DeleteQueue(id));
+                }
+            }
+            QUEUE_START => {
+                if !self.scheduler.request_start(id) {
+                    self.command(window.hwnd, Command::StartQueue(id));
+                }
+            }
+            QUEUE_STOP => {
+                self.scheduler.cancel_start(id);
+                self.command(window.hwnd, Command::StopQueue(id));
+            }
+            QUEUE_ONE | QUEUE_TWO => {
+                self.command(
+                    window.hwnd,
+                    Command::QueueParallelism(id, if command == QUEUE_ONE { 1 } else { 2 }),
+                );
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    fn scheduler_actions(&mut self, window: &MainWindow) -> Result<(), AppError> {
+        if !self.lifecycle.accepts_submissions() {
+            self.scheduler.close_all();
+            return Ok(());
+        }
+        for action in self.scheduler.poll(&self.view)? {
+            match action {
+                EditorAction::Command(command) => {
+                    if !self.command(window.hwnd, command) {
+                        self.scheduler.rejected();
+                    }
+                }
+                EditorAction::NewQueue => self.queue_name(window)?,
+                EditorAction::ExitApplication => {
+                    self.close_after_editor(window.hwnd);
+                    break;
+                }
+                EditorAction::Error(error) => {
+                    message(
+                        self.scheduler.hwnd().or(Some(window.hwnd)),
+                        "Queue editor",
+                        &error,
+                        false,
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 }

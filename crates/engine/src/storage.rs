@@ -264,7 +264,7 @@ fn validate(s: &State) -> Result<(), String> {
             || !(1..=2).contains(&q.parallelism)
             || q.name.trim().is_empty()
             || q.name.chars().any(char::is_control)
-            || q.name.len() > 160
+            || q.name.chars().count() > 160
         {
             return Err("Invalid queue definition; storage was preserved.".into());
         }

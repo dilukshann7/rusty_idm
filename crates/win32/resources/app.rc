@@ -41,7 +41,9 @@ BEGIN
     END
     POPUP "&Queues"
     BEGIN
-        MENUITEM "&Create queue...", 1026
+        MENUITEM "Create &new queue...", 1026
+        MENUITEM "&Edit queue...", 1036
+        MENUITEM "&Schedule...", 1037
         MENUITEM "&Rename selected queue...", 1027
         MENUITEM "&Delete empty queue", 1028
         MENUITEM SEPARATOR

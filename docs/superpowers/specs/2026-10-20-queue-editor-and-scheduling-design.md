@@ -1,7 +1,7 @@
 # Queue editor and timed scheduling
 
 Date: 2026-10-20
-Status: Design for approval; product implementation has not started.
+Status: Approved by the user on 2026-10-20; implemented as unreleased source.
 
 ## Intent
 

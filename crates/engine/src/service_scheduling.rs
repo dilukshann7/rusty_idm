@@ -1,5 +1,6 @@
 //! All queue starts, including timed starts, use the engine's existing limits.
 use super::*;
+use crate::schedule::{ClockSample, StopDeadline};
 impl QueueRuntime {
     pub(super) fn create_queue(&self, name: String) -> Result<QueueId, String> {
         let name = name.trim();
@@ -54,32 +55,38 @@ impl QueueRuntime {
             .schedule
             .config
             .stop_minute;
+        let stop_update =
+            if self.running.contains(&id) && prior_stop != settings.schedule.stop_minute {
+                Some(match settings.schedule.stop_minute {
+                    Some(minute) => Some(StopDeadline::next(minute).ok_or_else(|| {
+                        JobError::new(
+                            ErrorKind::InvalidRequest,
+                            "Cannot arm the configured stop time; settings were not changed.",
+                        )
+                    })?),
+                    None => None,
+                })
+            } else {
+                None
+            };
         self.store
             .update(|s| {
                 let queue = s.queues.get_mut(&id).ok_or("Queue no longer exists.")?;
-                if queue.schedule.config != settings.schedule {
+                // Stop/startup edits must not replay this minute's timed start.
+                let trigger_changed = queue.schedule.config.enabled != settings.schedule.enabled
+                    || queue.schedule.config.start != settings.schedule.start;
+                if trigger_changed {
                     queue.schedule.generation = queue.schedule.generation.saturating_add(1);
                     queue.schedule.last_fired = None;
-                    queue.schedule.config = settings.schedule;
                 }
+                queue.schedule.config = settings.schedule;
                 queue.parallelism = settings.parallelism;
                 queue.revision = queue.revision.saturating_add(1);
                 Ok(())
             })
             .map_err(crate::storage::storage_error)?;
-        if self.running.contains(&id)
-            && prior_stop
-                != self.store.snapshot().queues[&id]
-                    .schedule
-                    .config
-                    .stop_minute
-        {
-            if let Some(stop) = self.store.snapshot().queues[&id]
-                .schedule
-                .config
-                .stop_minute
-                .and_then(|minute| now.next_stop(minute))
-            {
+        if let Some(stop) = stop_update {
+            if let Some(stop) = stop {
                 self.stops.insert(id, stop);
             } else {
                 self.stops.remove(&id);
@@ -90,7 +97,6 @@ impl QueueRuntime {
     pub(super) fn start_queue(
         &mut self,
         id: QueueId,
-        now: Option<LocalStamp>,
         jobs: &mut BTreeMap<JobId, Job>,
     ) -> Result<(), String> {
         let state = self.store.snapshot();
@@ -102,8 +108,7 @@ impl QueueRuntime {
         self.store.update(|_| Ok(()))?;
         if !self.running.contains(&id) {
             if let Some(minute) = queue.schedule.config.stop_minute {
-                let stop = now
-                    .and_then(|now| now.next_stop(minute))
+                let stop = StopDeadline::next(minute)
                     .ok_or("Cannot arm the configured stop time; queue remains held.")?;
                 self.stops.insert(id, stop);
             }
@@ -124,7 +129,7 @@ impl QueueRuntime {
         waiting: &mut VecDeque<JobId>,
         bus: &EventBus,
     ) {
-        let Some(now) = LocalStamp::now() else {
+        let Some(clock) = ClockSample::now() else {
             let bounded: Vec<_> = self.stops.keys().copied().collect();
             for id in bounded {
                 self.hold(id, jobs, waiting, bus);
@@ -133,11 +138,12 @@ impl QueueRuntime {
             }
             return;
         };
+        let now = clock.local;
         self.stopped_minute.retain(|_, at| *at == now);
         let overdue: Vec<_> = self
             .stops
             .iter()
-            .filter(|(_, at)| **at <= now)
+            .filter(|(_, at)| at.utc_ticks <= clock.utc_ticks)
             .map(|(id, _)| *id)
             .collect();
         for id in overdue {
@@ -148,9 +154,14 @@ impl QueueRuntime {
         for queue in state.queues.values() {
             let startup =
                 self.startup_seen.insert(queue.id) && queue.schedule.config.start_on_startup;
-            let due = queue.schedule.config.due(now, queue.schedule.last_fired);
+            let due = queue.schedule.config.due(now, queue.schedule.last_fired)
+                && self.attempted_start.get(&queue.id) != Some(&(queue.schedule.generation, now));
             if !startup && !due {
                 continue;
+            }
+            if due {
+                self.attempted_start
+                    .insert(queue.id, (queue.schedule.generation, now));
             }
             let recorded = if due {
                 self.store.update(|s| {
@@ -186,7 +197,7 @@ impl QueueRuntime {
             if self.stopped_minute.contains_key(&queue.id) {
                 continue;
             }
-            if let Err(error) = self.start_queue(queue.id, Some(now), jobs) {
+            if let Err(error) = self.start_queue(queue.id, jobs) {
                 self.hold(queue.id, jobs, waiting, bus);
                 self.errors.insert(queue.id, error.clone());
                 reject(

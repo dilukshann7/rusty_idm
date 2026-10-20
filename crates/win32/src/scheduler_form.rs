@@ -543,6 +543,9 @@ impl Form {
         enable(hwnd, SCHED_TREE, !pending);
         Ok(())
     }
+    pub fn invalidate_associations(&mut self) -> Result<(), AppError> {
+        self.shell.invalidate(self.dpi)
+    }
     pub fn dpi(&mut self, dpi: u32) -> Result<(), AppError> {
         self.shell.invalidate(dpi)?;
         if let Ok(list) = item(self.hwnd(), SCHED_FILES) {
@@ -703,6 +706,9 @@ unsafe fn inner(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> isize {
                 return 1;
             }
             WM_DPICHANGED => signals.push(UiAction::Dpi((w.0 & 0xffff) as u32)),
+            WM_SETTINGCHANGE | crate::shell_icons::ASSOCIATIONS_CHANGED => {
+                signals.push(UiAction::AssociationsChanged);
+            }
             WM_NCDESTROY => {
                 signals.hwnd.set(HWND::default());
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);

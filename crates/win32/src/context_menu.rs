@@ -155,3 +155,51 @@ pub fn show(
         Ok((command != 0).then_some(command as u16))
     }
 }
+
+pub fn show_queue(
+    owner: HWND,
+    position: POINT,
+    queue: Option<&rusty_engine::QueueSnapshot>,
+) -> Result<Option<u16>, AppError> {
+    unsafe {
+        let root = Menu(LoadMenuW(
+            Some(platform::instance()?),
+            platform::resource(QUEUE_CONTEXT_MENU),
+        )?);
+        let menu = GetSubMenu(root.0, 0);
+        if menu.0.is_null() {
+            return Err(AppError("Cannot load the queue menu.".into()));
+        }
+        for (id, enabled) in [
+            (
+                QUEUE_START,
+                queue.is_some_and(|q| !q.running && !q.stopping),
+            ),
+            (QUEUE_STOP, queue.is_some_and(|q| q.running || q.active > 0)),
+            (QUEUE_EDIT, queue.is_some()),
+            (QUEUE_SCHEDULE, queue.is_some()),
+            (
+                QUEUE_DELETE,
+                queue.is_some_and(|q| q.id != rusty_engine::QueueId::MAIN && q.entries.is_empty()),
+            ),
+            (QUEUE_NEW, true),
+        ] {
+            let _ = EnableMenuItem(
+                menu,
+                id as u32,
+                MF_BYCOMMAND | if enabled { MF_ENABLED } else { MF_GRAYED },
+            );
+        }
+        let command = TrackPopupMenu(
+            menu,
+            TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
+            position.x,
+            position.y,
+            None,
+            owner,
+            None,
+        )
+        .0;
+        Ok((command != 0).then_some(command as u16))
+    }
+}

@@ -292,6 +292,62 @@ impl Controls {
         );
         Some((id, screen))
     }
+    /// Pin the queue under the pointer before TrackPopupMenu dispatches messages.
+    pub fn queue_context_target(
+        &self,
+        mut screen: POINT,
+    ) -> Option<(Option<rusty_engine::QueueId>, POINT)> {
+        let handle = if screen.x == -1 && screen.y == -1 {
+            let handle = HTREEITEM(send(self.tree, TVM_GETNEXTITEM, TVGN_CARET as usize, 0).0);
+            if handle.0 == 0 {
+                return None;
+            }
+            let mut rect = RECT::default();
+            unsafe {
+                std::ptr::write_unaligned((&mut rect as *mut RECT).cast::<HTREEITEM>(), handle);
+            }
+            if send(self.tree, TVM_GETITEMRECT, 1, &mut rect as *mut _ as isize).0 == 0 {
+                return None;
+            }
+            screen = POINT {
+                x: rect.left + scale(8, self.dpi),
+                y: rect.bottom,
+            };
+            if !unsafe { ClientToScreen(self.tree, &mut screen) }.as_bool() {
+                return None;
+            }
+            handle
+        } else {
+            let mut point = screen;
+            if !unsafe { ScreenToClient(self.tree, &mut point) }.as_bool() {
+                return None;
+            }
+            let mut hit = TVHITTESTINFO {
+                pt: point,
+                ..Default::default()
+            };
+            let handle = HTREEITEM(send(self.tree, TVM_HITTEST, 0, &mut hit as *mut _ as isize).0);
+            if handle.0 == 0 {
+                return None;
+            }
+            handle
+        };
+        let mut node = TVITEMW {
+            mask: TVIF_PARAM,
+            hItem: handle,
+            ..Default::default()
+        };
+        if send(self.tree, TVM_GETITEMW, 0, &mut node as *mut _ as isize).0 == 0 {
+            return None;
+        }
+        let queue = match self.category_for(node.lParam.0)? {
+            Category::Queue(id) => Some(id),
+            Category::QueueRoot => None,
+            _ => return None,
+        };
+        send(self.tree, TVM_SELECTITEM, TVGN_CARET as usize, handle.0);
+        Some((queue, screen))
+    }
     pub fn refresh(&mut self, owner: HWND, view: &ViewModel, category: Category, closing: bool) {
         self.navigation(view, category);
         self.shell.drain();
@@ -393,7 +449,7 @@ impl Controls {
                         format!(
                         "  |  {}: {}  |  {} active / {} completed / {} entries  |  parallelism {}",
                         q.name,
-                        if q.error.is_some(){"Held: storage failure"}else if q.stopping {
+                        if q.error.is_some(){"Held: queue error"}else if q.stopping {
                             "Stopping"
                         } else if q.running {
                             "Running"

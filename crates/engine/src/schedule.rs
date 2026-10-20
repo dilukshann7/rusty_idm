@@ -87,19 +87,6 @@ impl LocalStamp {
     pub fn now() -> Option<Self> {
         local_now()
     }
-    pub fn next_stop(self, minute: u16) -> Option<Self> {
-        if !self.valid() || minute >= 1440 {
-            return None;
-        }
-        Some(Self {
-            date: if minute > self.minute {
-                self.date
-            } else {
-                self.date.next()?
-            },
-            minute,
-        })
-    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StartRule {
@@ -211,20 +198,63 @@ pub(crate) struct ScheduleRecord {
     pub generation: u64,
     pub last_fired: Option<LocalStamp>,
 }
-#[cfg(windows)]
+/// Absolute stop instant, with a civil label only for display.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct StopDeadline {
+    pub local: LocalStamp,
+    pub utc_ticks: u64,
+}
+impl StopDeadline {
+    pub fn next(minute: u16) -> Option<Self> {
+        if minute >= 1440 {
+            return None;
+        }
+        let now = ClockSample::now()?;
+        let mut date = now.local.date;
+        // A clock gap can remove today's occurrence. Search the next valid day.
+        for _ in 0..3 {
+            let local = LocalStamp { date, minute };
+            if let Some(utc_ticks) = local_candidates(local)?
+                .into_iter()
+                .filter(|ticks| *ticks > now.utc_ticks)
+                .min()
+            {
+                return Some(Self { local, utc_ticks });
+            }
+            date = date.next()?;
+        }
+        None
+    }
+}
+pub(crate) struct ClockSample {
+    pub local: LocalStamp,
+    pub utc_ticks: u64,
+}
+impl ClockSample {
+    pub fn now() -> Option<Self> {
+        let elapsed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?;
+        let utc_ticks = elapsed
+            .as_secs()
+            .checked_add(11_644_473_600)?
+            .checked_mul(10_000_000)?
+            .checked_add(elapsed.subsec_nanos() as u64 / 100)?;
+        Some(Self {
+            local: local_from_ticks(utc_ticks)?,
+            utc_ticks,
+        })
+    }
+}
 fn local_now() -> Option<LocalStamp> {
+    Some(ClockSample::now()?.local)
+}
+#[cfg(windows)]
+fn local_from_ticks(ticks: u64) -> Option<LocalStamp> {
     use windows::Win32::{
         Foundation::{FILETIME, SYSTEMTIME},
-        System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime},
+        System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTimeEx},
     };
-    let elapsed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?;
-    let ticks = elapsed
-        .as_secs()
-        .checked_add(11_644_473_600)?
-        .checked_mul(10_000_000)?
-        .checked_add(elapsed.subsec_nanos() as u64 / 100)?;
     let file = FILETIME {
         dwLowDateTime: ticks as u32,
         dwHighDateTime: (ticks >> 32) as u32,
@@ -233,7 +263,7 @@ fn local_now() -> Option<LocalStamp> {
     let mut local = SYSTEMTIME::default();
     unsafe {
         FileTimeToSystemTime(&file, &mut utc).ok()?;
-        SystemTimeToTzSpecificLocalTime(None, &utc, &mut local).ok()?;
+        SystemTimeToTzSpecificLocalTimeEx(None, &utc, &mut local).ok()?;
     }
     let stamp = LocalStamp {
         date: Date {
@@ -245,13 +275,73 @@ fn local_now() -> Option<LocalStamp> {
     };
     stamp.valid().then_some(stamp)
 }
+#[cfg(windows)]
+fn local_candidates(stamp: LocalStamp) -> Option<Vec<u64>> {
+    use windows::Win32::{
+        Foundation::{FILETIME, SYSTEMTIME},
+        System::Time::{
+            FileTimeToSystemTime, GetDynamicTimeZoneInformation, GetTimeZoneInformationForYear,
+            SystemTimeToFileTime, SystemTimeToTzSpecificLocalTimeEx, DYNAMIC_TIME_ZONE_INFORMATION,
+            TIME_ZONE_INFORMATION,
+        },
+    };
+    if !stamp.valid() {
+        return None;
+    }
+    let mut zone = DYNAMIC_TIME_ZONE_INFORMATION::default();
+    let mut rules = TIME_ZONE_INFORMATION::default();
+    let local = SYSTEMTIME {
+        wYear: stamp.date.year,
+        wMonth: stamp.date.month as u16,
+        wDay: stamp.date.day as u16,
+        wHour: stamp.minute / 60,
+        wMinute: stamp.minute % 60,
+        ..Default::default()
+    };
+    let mut encoded = FILETIME::default();
+    unsafe {
+        if GetDynamicTimeZoneInformation(&mut zone) == u32::MAX {
+            return None;
+        }
+        GetTimeZoneInformationForYear(stamp.date.year, Some(&zone), &mut rules).ok()?;
+        SystemTimeToFileTime(&local, &mut encoded).ok()?;
+    }
+    let wall_ticks = ((encoded.dwHighDateTime as u64) << 32) | encoded.dwLowDateTime as u64;
+    let mut candidates = vec![];
+    // Try both offsets and round-trip each through Windows' historical rules.
+    // This retains both repeated-hour occurrences and rejects spring gaps.
+    // https://learn.microsoft.com/en-us/windows/win32/sysinfo/local-time
+    for extra in [rules.StandardBias, rules.DaylightBias] {
+        let ticks = wall_ticks as i128 + (rules.Bias as i128 + extra as i128) * 600_000_000;
+        let Ok(ticks) = u64::try_from(ticks) else {
+            continue;
+        };
+        let file = FILETIME {
+            dwLowDateTime: ticks as u32,
+            dwHighDateTime: (ticks >> 32) as u32,
+        };
+        let mut utc = SYSTEMTIME::default();
+        let mut roundtrip = SYSTEMTIME::default();
+        unsafe {
+            FileTimeToSystemTime(&file, &mut utc).ok()?;
+            SystemTimeToTzSpecificLocalTimeEx(Some(&zone), &utc, &mut roundtrip).ok()?;
+        }
+        if roundtrip.wYear == local.wYear
+            && roundtrip.wMonth == local.wMonth
+            && roundtrip.wDay == local.wDay
+            && roundtrip.wHour == local.wHour
+            && roundtrip.wMinute == local.wMinute
+            && roundtrip.wSecond == 0
+        {
+            candidates.push(ticks);
+        }
+    }
+    Some(candidates)
+}
 #[cfg(not(windows))]
-fn local_now() -> Option<LocalStamp> {
-    // The desktop target uses Windows local time. Portable engine consumers use UTC.
-    let seconds = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
+fn local_from_ticks(ticks: u64) -> Option<LocalStamp> {
+    // Portable engine consumers use UTC; the desktop target uses Windows local time.
+    let seconds = ticks.checked_div(10_000_000)?.checked_sub(11_644_473_600)?;
     let mut day = seconds / 86400;
     let mut date = Date {
         year: 1970,
@@ -266,4 +356,19 @@ fn local_now() -> Option<LocalStamp> {
         date,
         minute: ((seconds % 86400) / 60) as u16,
     })
+}
+#[cfg(not(windows))]
+fn local_candidates(stamp: LocalStamp) -> Option<Vec<u64>> {
+    if !stamp.valid() {
+        return None;
+    }
+    let epoch = Date {
+        year: 1601,
+        month: 1,
+        day: 1,
+    }
+    .ordinal();
+    Some(vec![
+        (stamp.date.ordinal() - epoch) as u64 * 864_000_000_000 + stamp.minute as u64 * 600_000_000,
+    ])
 }
