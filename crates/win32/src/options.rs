@@ -18,6 +18,7 @@ use windows::{
     core::PWSTR,
     Win32::{
         Foundation::{HWND, RECT},
+        Graphics::Gdi::{RedrawWindow, RDW_ALLCHILDREN, RDW_ERASE, RDW_INVALIDATE, RDW_UPDATENOW},
         System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED},
         UI::{Controls::*, Shell::*, WindowsAndMessaging::*},
     },
@@ -102,6 +103,7 @@ impl Drop for HeaderIcons {
 }
 struct Pages {
     handles: [HWND; 4],
+    selected: Cell<Option<usize>>,
     category: usize,
     startup_readable: bool,
 }
@@ -140,6 +142,7 @@ impl Pages {
         let startup = crate::configuration_system::startup_enabled();
         let pages = Self {
             handles,
+            selected: Cell::new(None),
             category: 0,
             startup_readable: startup.is_ok(),
         };
@@ -261,32 +264,41 @@ impl Pages {
                     SWP_NOZORDER | SWP_NOACTIVATE,
                 )?;
             }
+            if let Some(selected) = self.selected.get() {
+                repaint_page(self.handles[selected]);
+            }
         }
         Ok(())
     }
     fn show(&self, root: HWND, n: usize) -> Result<(), AppError> {
-        for (i, page) in self.handles.iter().enumerate() {
-            unsafe {
-                let visible = GetWindowLongW(*page, GWL_STYLE) as u32 & WS_VISIBLE.0 != 0;
-                if i == n {
-                    SetWindowPos(
-                        *page,
-                        Some(HWND_TOP),
-                        0,
-                        0,
-                        0,
-                        0,
-                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-                    )?;
-                } else if visible {
-                    let _ = ShowWindow(*page, SW_HIDE);
-                }
-            }
-        }
         let tabs = item(root, CFG_TABS)?;
         if send(tabs, TCM_GETCURSEL, 0, 0).0 != n as isize {
             send(tabs, TCM_SETCURSEL, n, 0);
         }
+        if self.selected.get() == Some(n) {
+            return Ok(());
+        }
+        // Hide the old page before exposing the new one, including when
+        // switching backwards through the tabs. Group boxes/static labels
+        // paint transparently, so the newly exposed page needs a full erase.
+        unsafe {
+            for (i, page) in self.handles.iter().enumerate() {
+                if i != n {
+                    let _ = ShowWindow(*page, SW_HIDE);
+                }
+            }
+            SetWindowPos(
+                self.handles[n],
+                Some(HWND_TOP),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            )?;
+            repaint_page(self.handles[n]);
+        }
+        self.selected.set(Some(n));
         Ok(())
     }
     fn dependencies(&self) {
@@ -432,6 +444,18 @@ impl Pages {
             )
         })?;
         Ok(settings)
+    }
+}
+fn repaint_page(hwnd: HWND) {
+    unsafe {
+        // Page templates omit WS_CLIPCHILDREN so this erase also clears
+        // behind transparent group boxes before all their controls repaint.
+        let _ = RedrawWindow(
+            Some(hwnd),
+            None,
+            None,
+            RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW,
+        );
     }
 }
 pub fn show(
