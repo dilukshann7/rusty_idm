@@ -66,7 +66,7 @@ pub fn show_add_download(
     settings: &Settings,
 ) -> Result<Option<AddedDownload>, AppError> {
     let mut draft = Draft {
-        category: "General".into(),
+        category: "Automatic".into(),
         remember: true,
         ..Default::default()
     };
@@ -144,7 +144,8 @@ fn finish_download(
             continue;
         }
         request.deferred = draft.deferred;
-        request.category = Some(draft.category.trim().to_owned());
+        request.category = (!draft.category.eq_ignore_ascii_case("Automatic"))
+            .then(|| draft.category.trim().to_owned());
         request.description = draft.description;
         if draft.authorization {
             request = request.with_authorization(draft.login, draft.password);
@@ -284,7 +285,7 @@ fn update_path_hint(dialog: HWND) {
         &format!("&Remember this path for \"{}\" category", category),
     );
 }
-fn category_changed(dialog: HWND, context: &Context, selection: bool) {
+fn category_changed(dialog: HWND, _context: &Context, selection: bool) {
     // CBN_SELCHANGE can arrive before the editable text has been synchronized.
     if selection {
         if let Ok(combo) = item(dialog, CATEGORY_COMBO) {
@@ -304,13 +305,8 @@ fn category_changed(dialog: HWND, context: &Context, selection: bool) {
             }
         }
     }
-    let category = value(dialog, CATEGORY_COMBO);
-    let old_path = PathBuf::from(value(dialog, PATH_EDIT));
-    let name = old_path
-        .file_name()
-        .unwrap_or_else(|| std::ffi::OsStr::new("download.bin"));
-    let path = download_form::folder_for(&context.settings, &category).join(name);
-    set_value(dialog, PATH_EDIT, &path.to_string_lossy());
+    // Category changes classify the entry only. The selected save path is owned
+    // by the user once File Info opens and must never be rewritten here.
     update_path_hint(dialog);
 }
 unsafe extern "system" fn dialog_proc(
@@ -761,11 +757,11 @@ pub fn show_browser_download(
             .map_err(|_| AppError("Invalid browser download.".into()))?;
     let draft = Draft {
         url: capture.url.clone(),
-        path: download_form::folder_for(settings, "General")
+        path: download_form::folder_for(settings, "Automatic")
             .join(filename)
             .to_string_lossy()
             .into_owned(),
-        category: "General".into(),
+        category: "Automatic".into(),
         remember: true,
         ..Default::default()
     };

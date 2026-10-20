@@ -32,10 +32,25 @@ and the release's `SHA256SUMS.txt`. This release is unsigned.
 - Chrome capture through an extension, native host and secured local bridge.
 - Tray/background operation, hidden login startup and single-instance launches.
 
-History is session-only. Restart-resume, segmentation, named queues, Move/Rename,
-address refresh and automatic updates are not included. Chrome capture covers
+The published v0.1.0 release has session-only history and does not include named
+queues or restart recovery. Move/Rename, segmentation, address refresh and automatic
+updates are not included. Chrome capture covers
 supported public GET downloads; private/authenticated/streaming downloads remain
 with the browser. Preferences use LocalAppData, including portable execution.
+
+## Unreleased source: queues and Windows icons
+
+The `codex/queues-and-system-icons` source adds named manual queues, category
+hierarchies and Windows-associated file icons. **Download Later** saves to Main
+download queue; the **Queues** menu manages selected queues and their order.
+Queue state and checkpoint metadata use Windows current-user encryption under
+LocalAppData. After restart, unfinished entries remain held. Credentials must be
+entered again; unsafe continuation requires an explicit restart confirmation.
+Ordinary unqueued downloads keep their session lifecycle.
+
+See the [queue and recovery guide](docs/queues-and-system-icons.md). These source
+changes have not been compiled or exercised in the desktop app. They are not part
+of the published v0.1.0 installer.
 
 ## Source and release build
 

@@ -30,6 +30,10 @@ mod icons;
 #[cfg(windows)]
 pub mod platform;
 #[cfg(windows)]
+mod queue_ui;
+#[cfg(windows)]
+mod shell_icons;
+#[cfg(windows)]
 mod tray;
 
 #[cfg(windows)]

@@ -27,6 +27,9 @@ pub struct Controls {
     images: ToolbarImages,
     dpi: u32,
     categories: Vec<HTREEITEM>,
+    navigation: Vec<(Category, String, HTREEITEM)>,
+    shell: crate::shell_icons::ShellImages,
+    navigation_generation: usize,
 }
 impl Controls {
     pub fn new(owner: HWND) -> Result<Self, AppError> {
@@ -93,13 +96,6 @@ impl Controls {
                     return Err(AppError("Cannot create toolbar buttons.".into()));
                 }
             }
-            let root = insert_tree(tree, TVI_ROOT, "Categories", -1)?;
-            let mut categories = vec![];
-            for (index, category) in Category::ALL.iter().enumerate() {
-                categories.push(insert_tree(tree, root, category.label(), index as isize)?);
-            }
-            send(tree, TVM_EXPAND, TVE_EXPAND.0 as usize, root.0);
-            send(tree, TVM_SELECTITEM, TVGN_CARET as usize, categories[0].0);
             for (index, (label, width)) in [
                 ("File Name", 230),
                 ("Size", 90),
@@ -124,6 +120,7 @@ impl Controls {
                     return Err(AppError("Cannot create download columns.".into()));
                 }
             }
+            let shell = crate::shell_icons::ShellImages::new(owner, tree, list, dpi)?;
             Ok(Self {
                 toolbar,
                 tree,
@@ -134,7 +131,10 @@ impl Controls {
                 font,
                 images,
                 dpi,
-                categories,
+                categories: vec![],
+                navigation: vec![],
+                shell,
+                navigation_generation: 0,
             })
         }
     }
@@ -180,6 +180,7 @@ impl Controls {
         self.font = font;
         images.attach(self.toolbar);
         self.images = images;
+        self.shell.invalidate(dpi)?;
         self.dpi = dpi;
         send(self.toolbar, TB_AUTOSIZE, 0, 0);
         Ok(())
@@ -210,7 +211,7 @@ impl Controls {
             self.tree,
             TVM_SELECTITEM,
             TVGN_CARET as usize,
-            self.categories[0].0,
+            self.categories.first().map_or(0, |h| h.0),
         );
     }
     /// Select the row under the pointer; empty space must not reuse an old row.
@@ -292,6 +293,8 @@ impl Controls {
         Some((id, screen))
     }
     pub fn refresh(&mut self, owner: HWND, view: &ViewModel, category: Category, closing: bool) {
+        self.navigation(view, category);
+        self.shell.drain();
         let selected = self.selected();
         let visible = view.visible_jobs(category);
         if self.rows != visible {
@@ -301,11 +304,12 @@ impl Controls {
             self.cached.clear();
             for (row, id) in self.rows.iter().enumerate() {
                 let job = &view.jobs[id];
-                let columns = presenter::format_snapshot(job).columns;
+                let columns = row_columns(view, job);
                 let mut name = wide(&columns[0]);
                 // Store an index into this stable current row->JobId vector, never a truncated u64.
                 let item = LVITEMW {
-                    mask: LVIF_TEXT | LVIF_PARAM,
+                    mask: LVIF_TEXT | LVIF_PARAM | LVIF_IMAGE,
+                    iImage: self.shell.index(crate::shell_icons::ShellImages::file(job)),
                     iItem: row as i32,
                     pszText: PWSTR(name.as_mut_ptr()),
                     lParam: LPARAM(row as isize),
@@ -331,7 +335,7 @@ impl Controls {
             }
         } else {
             for (row, id) in self.rows.iter().enumerate() {
-                let columns = presenter::format_snapshot(&view.jobs[id]).columns;
+                let columns = row_columns(view, &view.jobs[id]);
                 if let Some(old) = self.cached.get(id) {
                     for column in 0..7 {
                         if old[column] != columns[column] {
@@ -342,12 +346,76 @@ impl Controls {
                 self.cached.insert(*id, columns);
             }
         }
+        for (row, id) in self.rows.iter().enumerate() {
+            let image = self
+                .shell
+                .index(crate::shell_icons::ShellImages::file(&view.jobs[id]));
+            let item = LVITEMW {
+                mask: LVIF_IMAGE,
+                iItem: row as i32,
+                iImage: image,
+                ..Default::default()
+            };
+            send(self.list, LVM_SETITEMW, 0, &item as *const _ as isize);
+        }
+        for (category, label, handle) in &self.navigation {
+            let key = crate::shell_icons::ShellImages::stock(match category {
+                Category::Filtered(_, kind) => {
+                    Some(rusty_engine::categories::BUILTIN[*kind as usize])
+                }
+                _ => None,
+            });
+            let image = self.shell.index(key);
+            let mut text = wide(if let Category::Queue(id) = category {
+                view.queues
+                    .get(id)
+                    .map(|q| format!("{} ({}/{})", q.name, q.completed, q.entries.len()))
+                    .unwrap_or_else(|| label.clone())
+            } else {
+                label.clone()
+            });
+            let item = TVITEMW {
+                mask: TVIF_IMAGE | TVIF_SELECTEDIMAGE | TVIF_TEXT,
+                pszText: PWSTR(text.as_mut_ptr()),
+                hItem: *handle,
+                iImage: image,
+                iSelectedImage: image,
+                ..Default::default()
+            };
+            send(self.tree, TVM_SETITEMW, 0, &item as *const _ as isize);
+        }
         self.actions(owner, view, closing);
+        let queue_status =
+            if let Category::Queue(id) = category {
+                view.queues
+                    .get(&id)
+                    .map(|q| {
+                        format!(
+                        "  |  {}: {}  |  {} active / {} completed / {} entries  |  parallelism {}",
+                        q.name,
+                        if q.error.is_some(){"Held: storage failure"}else if q.stopping {
+                            "Stopping"
+                        } else if q.running {
+                            "Running"
+                        } else {
+                            "Held"
+                        },
+                        q.active,
+                        q.completed,
+                        q.entries.len(),
+                        q.parallelism
+                    )
+                    })
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
         let text = wide(format!(
-            "{} downloads  |  {} shown  |  {}/s{}",
+            "{} downloads  |  {} shown  |  {}/s{}{}",
             view.jobs.len(),
             self.rows.len(),
             presenter::format_bytes(view.aggregate_speed()),
+            queue_status,
             if closing {
                 "  |  Stopping transfers…"
             } else {
@@ -355,6 +423,136 @@ impl Controls {
             }
         ));
         send(self.status, SB_SETTEXTW, 0, text.as_ptr() as isize);
+    }
+    pub fn category_for(&self, index: isize) -> Option<Category> {
+        let token = index as usize;
+        if token >> 16 != self.navigation_generation {
+            return None;
+        }
+        self.navigation.get(token & 0xffff).map(|n| n.0)
+    }
+    pub fn invalidate_associations(&mut self) -> Result<(), AppError> {
+        self.shell.invalidate(self.dpi)
+    }
+    pub fn poll_icons(&mut self, owner: HWND, view: &ViewModel, category: Category, closing: bool) {
+        self.refresh(owner, view, category, closing);
+    }
+    fn navigation(&mut self, view: &ViewModel, selected: Category) {
+        let mut entries = vec![];
+        for (status, parent) in [
+            (0, Category::All),
+            (1, Category::Unfinished),
+            (2, Category::Finished),
+        ] {
+            entries.push((parent, parent.label().to_owned()));
+            for kind in 0..5 {
+                entries.push((
+                    Category::Filtered(status, kind),
+                    rusty_engine::categories::BUILTIN[kind as usize].to_owned(),
+                ));
+            }
+            if status == 0 {
+                let custom: std::collections::BTreeSet<_> = view
+                    .jobs
+                    .values()
+                    .filter_map(|j| j.category.as_deref())
+                    .filter(|c| {
+                        !rusty_engine::categories::BUILTIN
+                            .iter()
+                            .any(|b| b.eq_ignore_ascii_case(c))
+                            && !c.eq_ignore_ascii_case("Automatic")
+                    })
+                    .collect();
+                for name in custom {
+                    entries.push((
+                        Category::Custom(presenter::category_key(name)),
+                        name.to_owned(),
+                    ));
+                }
+            }
+        }
+        entries.push((Category::QueueRoot, "Queues".into()));
+        for q in view.queues.values() {
+            entries.push((Category::Queue(q.id), q.name.clone()));
+        }
+        if self
+            .navigation
+            .iter()
+            .map(|(c, n, _)| (*c, n.clone()))
+            .collect::<Vec<_>>()
+            == entries
+        {
+            return;
+        }
+        let expansion: Vec<_> = self
+            .navigation
+            .iter()
+            .filter(|(c, _, _)| {
+                matches!(
+                    c,
+                    Category::All | Category::Unfinished | Category::Finished | Category::QueueRoot
+                )
+            })
+            .map(|(c, _, h)| {
+                (
+                    *c,
+                    send(
+                        self.tree,
+                        TVM_GETITEMSTATE,
+                        h.0 as usize,
+                        TVIS_EXPANDED.0 as isize,
+                    )
+                    .0 != 0,
+                )
+            })
+            .collect();
+        self.navigation_generation = self.navigation_generation.wrapping_add(1).max(1);
+        send(self.tree, WM_SETREDRAW, 0, 0);
+        send(self.tree, TVM_DELETEITEM, 0, TVI_ROOT.0);
+        self.navigation.clear();
+        self.categories.clear();
+        let mut parent = TVI_ROOT;
+        for (index, (category, label)) in entries.into_iter().enumerate() {
+            let root = matches!(
+                category,
+                Category::All | Category::Unfinished | Category::Finished | Category::QueueRoot
+            );
+            let Ok(handle) = (unsafe {
+                insert_tree(
+                    self.tree,
+                    if root { TVI_ROOT } else { parent },
+                    &label,
+                    ((self.navigation_generation << 16) | index) as isize,
+                )
+            }) else {
+                continue;
+            };
+            if root {
+                parent = handle;
+                self.categories.push(handle);
+            }
+            if root {
+                send(self.tree, TVM_EXPAND, TVE_EXPAND.0 as usize, handle.0);
+            }
+            self.navigation.push((category, label, handle));
+        }
+        for (category, _, handle) in &self.navigation {
+            if expansion.iter().find(|(c, _)| c == category).map_or(
+                matches!(category, Category::All | Category::QueueRoot),
+                |(_, expanded)| *expanded,
+            ) {
+                send(self.tree, TVM_EXPAND, TVE_EXPAND.0 as usize, handle.0);
+            }
+        }
+        if let Some((_, _, handle)) = self
+            .navigation
+            .iter()
+            .find(|n| n.0 == selected)
+            .or_else(|| self.navigation.first())
+        {
+            send(self.tree, TVM_SELECTITEM, TVGN_CARET as usize, handle.0);
+        }
+        send(self.tree, WM_SETREDRAW, 1, 0);
     }
     pub fn actions(&self, owner: HWND, view: &ViewModel, closing: bool) {
         let actions = view.actions(self.selected());
@@ -464,4 +662,16 @@ fn set_cell(list: HWND, row: usize, column: usize, text: &str) {
         ..Default::default()
     };
     send(list, LVM_SETITEMTEXTW, row, &item as *const _ as isize);
+}
+
+fn row_columns(view: &ViewModel, job: &rusty_engine::JobSnapshot) -> [String; 7] {
+    let mut columns = presenter::format_snapshot(job).columns;
+    if let Some(queue) = job.queue_id.and_then(|q| view.queues.get(&q)) {
+        let order = job
+            .entry_id
+            .and_then(|e| queue.entries.iter().position(|id| *id == e))
+            .map_or(0, |i| i + 1);
+        columns[6] = format!("{} #{} | {}", queue.name, order, columns[6]);
+    }
+    columns
 }

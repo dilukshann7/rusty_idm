@@ -60,7 +60,8 @@ enum Action {
     Command(u16),
     ContextMenu(POINT),
     DoubleClick,
-    Category(Category),
+    Category(isize),
+    AssociationsChanged,
     Selection,
     Layout,
     Dpi(u32, RECT),
@@ -385,7 +386,7 @@ impl AppState {
             return;
         }
         let active = self.view.active();
-        let accepted = !active || message(Some(owner), "Stop downloads and exit?", "Stop all running and waiting downloads, clean up their partial files, and exit Rusty?", true);
+        let accepted = !active || message(Some(owner), "Stop downloads and exit?", "Exit Rusty? Queued downloads keep their recovery data. Ordinary downloads are stopped and their partial files cleaned up.", true);
         if self.lifecycle.begin_close(active, accepted) {
             if let Some(browser) = &self.browser {
                 browser.close();
@@ -412,11 +413,12 @@ impl AppState {
             .as_ref()
             .map(|e| e.drain_events())
             .unwrap_or_default();
-        let changed = !events.is_empty();
+
         for event in events {
             match &event {
                 Event::JobChanged(snapshot) => {
-                    let newly_completed = snapshot.state == rusty_engine::JobState::Completed
+                    let newly_completed = !snapshot.restored
+                        && snapshot.state == rusty_engine::JobState::Completed
                         && self.view.jobs.get(&snapshot.id).map_or(true, |previous| {
                             previous.state != rusty_engine::JobState::Completed
                         });
@@ -446,6 +448,7 @@ impl AppState {
                         }
                     }
                 }
+                Event::QueuesChanged(_) => {}
                 Event::JobRemoved(id) => self.details.remove(*id),
                 Event::CommandRejected { message: text } => {
                     message(Some(window.hwnd), "Download command", text, false);
@@ -462,8 +465,8 @@ impl AppState {
             }
         }
         self.details.prune();
-        if changed {
-            self.controls.refresh(
+        {
+            self.controls.poll_icons(
                 window.hwnd,
                 &self.view,
                 self.category,
@@ -552,7 +555,13 @@ impl AppState {
                 }
                 self.controls.layout(owner);
             }
-            Action::Category(category) => {
+            Action::AssociationsChanged => {
+                self.controls.invalidate_associations()?;
+            }
+            Action::Category(index) => {
+                let Some(category) = self.controls.category_for(index) else {
+                    return Ok(());
+                };
                 self.category = category;
                 self.controls.refresh(
                     owner,
@@ -568,6 +577,7 @@ impl AppState {
             Action::Command(EXIT) => self.close(owner),
             Action::ContextMenu(position) if self.lifecycle.accepts_submissions() => {
                 if let Some((selected, position)) = self.controls.context_target(position) {
+                    let queues: Vec<_> = self.view.queues.values().cloned().collect();
                     let command = self
                         .view
                         .jobs
@@ -579,6 +589,7 @@ impl AppState {
                                 job,
                                 &self.view.actions(Some(selected)),
                                 self.settings.double_click_action,
+                                &queues,
                             )
                         })
                         .transpose()?
@@ -588,7 +599,18 @@ impl AppState {
                     self.events(window);
                     if self.lifecycle.accepts_submissions() {
                         if let Some(command) = command {
-                            self.download_command(window, Some(selected), command)?;
+                            if command >= QUEUE_DYNAMIC_BASE {
+                                if let Some(queue) =
+                                    queues.get((command - QUEUE_DYNAMIC_BASE) as usize)
+                                {
+                                    self.command(
+                                        owner,
+                                        Command::AssignQueue(selected, Some(queue.id)),
+                                    );
+                                }
+                            } else {
+                                self.download_command(window, Some(selected), command)?;
+                            }
                         }
                     }
                 }
@@ -606,6 +628,51 @@ impl AppState {
                 let selected = self.controls.selected();
                 let actions = self.view.actions(selected);
                 match id {
+                    QUEUE_NEW => {
+                        if let Some(name) = crate::queue_ui::name(owner, "Create queue", "")? {
+                            self.command(owner, Command::CreateQueue(name));
+                        }
+                    }
+                    QUEUE_RENAME | QUEUE_DELETE | QUEUE_START | QUEUE_STOP | QUEUE_ONE
+                    | QUEUE_TWO => {
+                        let q = match self.category {
+                            Category::Queue(q) => q,
+                            _ => rusty_engine::QueueId::MAIN,
+                        };
+                        match id {
+                            QUEUE_RENAME => {
+                                let current = self
+                                    .view
+                                    .queues
+                                    .get(&q)
+                                    .map(|q| q.name.as_str())
+                                    .unwrap_or("");
+                                if let Some(name) =
+                                    crate::queue_ui::name(owner, "Rename queue", current)?
+                                {
+                                    self.command(owner, Command::RenameQueue(q, name));
+                                }
+                            }
+                            QUEUE_DELETE => {
+                                self.command(owner, Command::DeleteQueue(q));
+                            }
+                            QUEUE_START => {
+                                self.command(owner, Command::StartQueue(q));
+                            }
+                            QUEUE_STOP => {
+                                self.command(owner, Command::StopQueue(q));
+                            }
+                            _ => {
+                                self.command(
+                                    owner,
+                                    Command::QueueParallelism(
+                                        q,
+                                        if id == QUEUE_ONE { 1 } else { 2 },
+                                    ),
+                                );
+                            }
+                        }
+                    }
                     SHOW_MANAGER => platform::bring_to_front(owner),
                     ADD => {
                         if let Some(download) = dialogs::show_add_download(owner, &self.settings)? {
@@ -631,7 +698,7 @@ impl AppState {
                             .refresh(owner, &self.view, self.category, false);
                     }
                     ABOUT => {
-                        message(Some(owner), "About Rusty Download Manager", "Rusty Download Manager 0.1.0\n\nNative Windows controls and single-stream HTTP/HTTPS downloads.\nTwo simultaneous downloads. History lasts for this session.\n\nPause/resume, speed limits, guarded replacement and Chrome capture.\nClose the manager to keep Rusty in the tray. Use Exit to stop it.\nChrome integration requires one-time extension setup.", false);
+                        message(Some(owner), "About Rusty Download Manager", "Rusty Download Manager 0.1.0\n\nNative Windows controls and single-stream HTTP/HTTPS downloads.\nTwo simultaneous downloads. Queues recover held after restart.\n\nPause/resume, speed limits, guarded replacement and Chrome capture.\nClose the manager to keep Rusty in the tray. Use Exit to stop it.\nChrome integration requires one-time extension setup.", false);
                     }
                     _ => self.download_command(window, selected, id)?,
                 }
@@ -667,16 +734,13 @@ impl AppState {
         };
         let actions = self.view.actions(Some(id));
         match command {
-            START if actions.start => {
-                self.command(
-                    owner,
-                    if job.state == rusty_engine::JobState::Paused {
-                        Command::Resume(id)
-                    } else {
-                        Command::Start(id)
-                    },
-                );
-            }
+            QUEUE_ADD=>{self.command(owner,Command::AssignQueue(id,Some(rusty_engine::QueueId::MAIN)));},
+            QUEUE_REMOVE=>{self.command(owner,Command::AssignQueue(id,None));},
+            QUEUE_UP|QUEUE_DOWN=>{self.command(owner,Command::MoveQueueEntry(id,command==QUEUE_UP));},
+            CREDENTIALS=>{if let Some((login,password))=crate::queue_ui::credentials(owner)?{self.command(owner,Command::SupplyCredentials(id,login,password));}},
+            RESTART_REQUIRED=>{if message(Some(owner),"Restart download?",&format!("Restart {} from zero?\n\nSave as: {}\n\nVerified saved bytes will be discarded. Modified partials will be preserved. If a file already exists at this destination, this approves replacing it only after a successful download.",job.filename,job.destination.display()),true){self.command(owner,Command::ConfirmRestart(id));}},
+            CATEGORY_EDIT=>{if let Some(category)=crate::queue_ui::name(owner,"Category (Automatic or a category name)",job.category.as_deref().unwrap_or("Automatic"))?{self.command(owner,Command::SetCategory(id,(!category.eq_ignore_ascii_case("Automatic")).then_some(category)));}},
+            START if actions.start => {self.command(owner,Command::Activate(id));}
             STOP if actions.stop => {
                 self.command(owner, Command::Cancel(id));
             }
@@ -970,11 +1034,7 @@ unsafe fn window_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                     match (header.idFrom as u16, header.code) {
                         (TREE, TVN_SELCHANGEDW) => {
                             let tree = &*(lparam.0 as *const NMTREEVIEWW);
-                            if let Some(category) =
-                                Category::ALL.get(tree.itemNew.lParam.0 as usize)
-                            {
-                                signals.push(Action::Category(*category));
-                            }
+                            signals.push(Action::Category(tree.itemNew.lParam.0));
                         }
                         (LIST, LVN_ITEMCHANGED) => signals.push(Action::Selection),
                         (LIST, NM_DBLCLK) => {
@@ -987,6 +1047,11 @@ unsafe fn window_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                         _ => {}
                     }
                 }
+                crate::shell_icons::ASSOCIATIONS_CHANGED => {
+                    signals.push(Action::AssociationsChanged);
+                    return LRESULT(0);
+                }
+                WM_SETTINGCHANGE => signals.push(Action::AssociationsChanged),
                 bridge::BROWSER_WAKE => signals.push(Action::Browser),
                 bridge::ENGINE_WAKE | WM_TIMER => {
                     signals.push(Action::Engine);
@@ -1013,7 +1078,7 @@ impl AppState {
             let mut updated = self.settings.clone();
             crate::download_form::remember_folder(
                 &mut updated,
-                download.request.category.as_deref().unwrap_or("General"),
+                download.request.category.as_deref().unwrap_or("Automatic"),
                 &download.request.destination,
             );
             match settings::save(&updated) {

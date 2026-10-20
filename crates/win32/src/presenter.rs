@@ -12,6 +12,10 @@ pub enum Category {
     Video,
     Unfinished,
     Finished,
+    Filtered(u8, u8),
+    QueueRoot,
+    Queue(rusty_engine::QueueId),
+    Custom(u64),
 }
 impl Category {
     pub const ALL: [Self; 8] = [
@@ -34,36 +38,36 @@ impl Category {
             Self::Video => "Video",
             Self::Unfinished => "Unfinished",
             Self::Finished => "Finished",
+            Self::Filtered(_, kind) => rusty_engine::categories::BUILTIN[kind as usize],
+            Self::QueueRoot => "Queues",
+            Self::Queue(_) => "Queue",
+            Self::Custom(_) => "Custom category",
         }
     }
     fn matches(self, job: &JobSnapshot) -> bool {
-        let extension = job
-            .destination
-            .extension()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_ascii_lowercase();
-        if !matches!(self, Self::All | Self::Finished | Self::Unfinished) {
-            if let Some(category) = &job.category {
-                return category.eq_ignore_ascii_case(self.label());
-            }
-        }
+        let category =
+            rusty_engine::categories::effective(&job.destination, job.category.as_deref());
         match self {
             Self::All => true,
             Self::Finished => job.state == JobState::Completed,
             Self::Unfinished => job.state != JobState::Completed,
-            Self::Compressed => ["zip", "7z", "rar", "tar", "gz"].contains(&extension.as_str()),
-            Self::Documents => ["pdf", "txt", "doc", "docx", "xls", "xlsx", "ppt", "pptx"]
-                .contains(&extension.as_str()),
-            Self::Music => ["mp3", "wav", "flac", "m4a"].contains(&extension.as_str()),
-            Self::Programs => ["exe", "msi", "msix"].contains(&extension.as_str()),
-            Self::Video => ["mp4", "mkv", "webm", "avi"].contains(&extension.as_str()),
+            Self::QueueRoot => job.queue_id.is_some(),
+            Self::Queue(id) => job.queue_id == Some(id),
+            Self::Custom(hash) => category.is_some_and(|c| category_key(c) == hash),
+            Self::Filtered(status, kind) => {
+                (status == 0 || (job.state == JobState::Completed) == (status == 2))
+                    && category.is_some_and(|c| {
+                        c.eq_ignore_ascii_case(rusty_engine::categories::BUILTIN[kind as usize])
+                    })
+            }
+            other => category.is_some_and(|c| c.eq_ignore_ascii_case(other.label())),
         }
     }
 }
 #[derive(Default)]
 pub struct ViewModel {
     pub jobs: BTreeMap<JobId, JobSnapshot>,
+    pub queues: BTreeMap<rusty_engine::QueueId, rusty_engine::QueueSnapshot>,
 }
 #[derive(Default)]
 pub struct ActionAvailability {
@@ -85,21 +89,40 @@ impl ViewModel {
             Event::JobRemoved(id) => {
                 self.jobs.remove(&id);
             }
+            Event::QueuesChanged(queues) => {
+                self.queues = queues.into_iter().map(|q| (q.id, q)).collect()
+            }
             _ => {}
         }
     }
     pub fn visible_jobs(&self, category: Category) -> Vec<JobId> {
-        self.jobs
+        let mut jobs: Vec<_> = self
+            .jobs
             .values()
             .filter(|s| category.matches(s))
             .map(|s| s.id)
-            .collect()
+            .collect();
+        if let Category::Queue(id) = category {
+            if let Some(queue) = self.queues.get(&id) {
+                jobs.sort_by_key(|id| {
+                    self.jobs[id]
+                        .entry_id
+                        .and_then(|entry| queue.entries.iter().position(|e| *e == entry))
+                        .unwrap_or(usize::MAX)
+                });
+            }
+        }
+        jobs
     }
     pub fn actions(&self, selected: Option<JobId>) -> ActionAvailability {
         let job = selected.and_then(|id| self.jobs.get(&id));
         ActionAvailability {
             start: job.is_some_and(|s| {
-                (s.state == JobState::Waiting && s.deferred) || s.state == JobState::Paused
+                (s.state == JobState::Waiting && s.deferred)
+                    || s.state == JobState::Paused
+                    || (s.state == JobState::Failed
+                        && s.entry_id.is_some()
+                        && s.readiness == rusty_engine::EntryReadiness::Ready)
             }),
             stop: job.is_some_and(|s| s.state.is_active() && s.state != JobState::Cancelling),
             stop_all: self
@@ -164,19 +187,24 @@ pub struct RowText {
     pub columns: [String; 7],
 }
 pub fn format_snapshot(job: &JobSnapshot) -> RowText {
-    let state = match job.state {
-        JobState::Waiting if job.deferred => "Download later".into(),
-        JobState::Running => job
-            .total
-            .filter(|n| *n > 0)
-            .map(|n| {
-                format!(
-                    "Downloading — {}%",
-                    ((job.received as u128 * 100) / n as u128).min(100)
-                )
-            })
-            .unwrap_or("Downloading".into()),
-        state => format!("{state:?}"),
+    let state = match job.readiness {
+        rusty_engine::EntryReadiness::CredentialsRequired => "Credentials required".into(),
+        rusty_engine::EntryReadiness::RestartRequired => "Restart required".into(),
+        rusty_engine::EntryReadiness::RecoveryRequired => "Recovery required".into(),
+        rusty_engine::EntryReadiness::Ready => match job.state {
+            JobState::Waiting if job.deferred => "Download later".into(),
+            JobState::Running => job
+                .total
+                .filter(|n| *n > 0)
+                .map(|n| {
+                    format!(
+                        "Downloading — {}%",
+                        ((job.received as u128 * 100) / n as u128).min(100)
+                    )
+                })
+                .unwrap_or("Downloading".into()),
+            state => format!("{state:?}"),
+        },
     };
     let description = job
         .error
@@ -287,3 +315,10 @@ fn local_time(_: std::time::SystemTime) -> String {
 #[cfg(test)]
 #[path = "presenter_tests.rs"]
 mod tests;
+
+pub fn category_key(name: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    name.to_ascii_lowercase().hash(&mut h);
+    h.finish()
+}

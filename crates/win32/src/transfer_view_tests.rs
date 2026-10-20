@@ -20,6 +20,11 @@ use std::{
 
 fn job() -> JobSnapshot {
     JobSnapshot {
+        entry_id: None,
+        restored: false,
+        recovery_paths: vec![],
+        queue_id: None,
+        readiness: rusty_engine::EntryReadiness::Ready,
         id: JobId(1),
         filename: "sample.mp4".into(),
         source_host: "example.com".into(),

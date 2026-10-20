@@ -40,6 +40,7 @@ pub fn show(
     job: &JobSnapshot,
     actions: &ActionAvailability,
     double_click: DoubleClickAction,
+    queues: &[rusty_engine::QueueSnapshot],
 ) -> Result<Option<u16>, AppError> {
     unsafe {
         let root = Menu(LoadMenuW(
@@ -62,12 +63,60 @@ pub fn show(
             (STOP, actions.stop),
             (REMOVE, actions.remove),
             (DETAILS, actions.details),
+            (
+                QUEUE_REMOVE,
+                job.queue_id.is_some()
+                    && !matches!(
+                        job.state,
+                        rusty_engine::JobState::Running
+                            | rusty_engine::JobState::Pausing
+                            | rusty_engine::JobState::Cancelling
+                    ),
+            ),
+            (
+                CREDENTIALS,
+                job.readiness == rusty_engine::EntryReadiness::CredentialsRequired,
+            ),
+            (
+                RESTART_REQUIRED,
+                job.readiness == rusty_engine::EntryReadiness::RestartRequired,
+            ),
+            (QUEUE_UP, job.queue_id.is_some()),
+            (QUEUE_DOWN, job.queue_id.is_some()),
         ] {
             let _ = EnableMenuItem(
                 menu,
                 id as u32,
                 MF_BYCOMMAND | if available { MF_ENABLED } else { MF_GRAYED },
             );
+        }
+        let queue_menu = (0..GetMenuItemCount(Some(menu)))
+            .map(|i| GetSubMenu(menu, i))
+            .find(|m| {
+                !m.0.is_null() && GetMenuState(*m, QUEUE_ADD as u32, MF_BYCOMMAND) != u32::MAX
+            })
+            .unwrap_or_default();
+        if !queue_menu.0.is_null() {
+            let _ = DeleteMenu(queue_menu, QUEUE_ADD as u32, MF_BYCOMMAND);
+            for (index, queue) in queues.iter().enumerate() {
+                let label = platform::wide(&queue.name);
+                AppendMenuW(
+                    queue_menu,
+                    MF_STRING
+                        | if matches!(
+                            job.state,
+                            rusty_engine::JobState::Running
+                                | rusty_engine::JobState::Pausing
+                                | rusty_engine::JobState::Cancelling
+                        ) {
+                            MF_GRAYED
+                        } else {
+                            MF_ENABLED
+                        },
+                    QUEUE_DYNAMIC_BASE as usize + index,
+                    windows::core::PCWSTR(label.as_ptr()),
+                )?;
+            }
         }
         // Locate by its first command rather than tying this to resource positions.
         let choices = (0..GetMenuItemCount(Some(menu)))

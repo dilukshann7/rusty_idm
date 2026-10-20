@@ -3,7 +3,7 @@ use rusty_engine::{validate_request, ErrorKind, JobError, ReplacementPolicy};
 use std::path::{Path, PathBuf};
 
 pub const CATEGORIES: [&str; 6] = [
-    "General",
+    "Automatic",
     "Compressed",
     "Documents",
     "Music",
@@ -52,6 +52,12 @@ pub fn folder_for<'a>(settings: &'a Settings, category: &str) -> &'a Path {
     settings
         .category_destinations
         .get(&category.trim().to_lowercase())
+        .or_else(|| {
+            category
+                .eq_ignore_ascii_case("Automatic")
+                .then(|| settings.category_destinations.get("general"))
+                .flatten()
+        })
         .map(PathBuf::as_path)
         .unwrap_or(&settings.default_destination)
 }

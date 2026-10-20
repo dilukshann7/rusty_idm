@@ -33,6 +33,10 @@ impl CaptureLease {
             *state = LeaseState::Expired;
         }
     }
+    /// Safe inside an admission action; unlike state(), this takes no lease lock.
+    pub fn deadline_elapsed(&self) -> bool {
+        Instant::now() >= self.deadline
+    }
     pub fn state(&self) -> LeaseState {
         let mut state = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         self.expire(&mut state);

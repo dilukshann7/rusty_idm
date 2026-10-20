@@ -43,16 +43,21 @@ pub fn format_transfer(job: &JobSnapshot) -> TransferText {
     let title = percent
         .map(|p| format!("{}% {}", p / 100, job.filename))
         .unwrap_or_else(|| job.filename.clone());
-    let status = match job.state {
-        JobState::Waiting if job.deferred => "Download later",
-        JobState::Waiting => "Waiting for a connection...",
-        JobState::Running => "Receiving data...",
-        JobState::Pausing => "Pausing download...",
-        JobState::Paused => "Paused.",
-        JobState::Cancelling => "Stopping download...",
-        JobState::Completed => "Download complete.",
-        JobState::Failed => "Download failed.",
-        JobState::Cancelled => "Download cancelled.",
+    let status = match job.readiness {
+        rusty_engine::EntryReadiness::CredentialsRequired => "Credentials required.",
+        rusty_engine::EntryReadiness::RestartRequired => "Restart required.",
+        rusty_engine::EntryReadiness::RecoveryRequired => "Recovery required.",
+        rusty_engine::EntryReadiness::Ready => match job.state {
+            JobState::Waiting if job.deferred => "Download later",
+            JobState::Waiting => "Waiting for a connection...",
+            JobState::Running => "Receiving data...",
+            JobState::Pausing => "Pausing download...",
+            JobState::Paused => "Paused.",
+            JobState::Cancelling => "Stopping download...",
+            JobState::Completed => "Download complete.",
+            JobState::Failed => "Download failed.",
+            JobState::Cancelled => "Download cancelled.",
+        },
     }
     .to_owned();
     let size = job.total.map(amount).unwrap_or_else(|| "Unknown".into());
@@ -95,6 +100,12 @@ pub fn format_transfer(job: &JobSnapshot) -> TransferText {
             )
         })
         .unwrap_or_default();
+    let retained = job
+        .recovery_paths
+        .iter()
+        .map(|p| format!("\r\nPreserved recovery file: {}", p.display()))
+        .collect::<String>();
+    let error = format!("{error}{retained}");
     let details = format!(
         "File: {}\r\nSave as: {}\r\nTotal: {}\r\nConnections: 1\r\nResume capability: {}\r\nSpeed limit: {}\r\n{}{}",
         job.filename,

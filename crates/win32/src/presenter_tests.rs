@@ -3,6 +3,11 @@ use std::path::PathBuf;
 
 fn snapshot(id: u64, filename: &str, state: JobState) -> JobSnapshot {
     JobSnapshot {
+        entry_id: None,
+        restored: false,
+        recovery_paths: vec![],
+        queue_id: None,
+        readiness: rusty_engine::EntryReadiness::Ready,
         deferred: false,
         category: None,
         description: String::new(),

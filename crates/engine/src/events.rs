@@ -11,6 +11,7 @@ use std::{
 pub enum Event {
     JobChanged(JobSnapshot),
     JobRemoved(JobId),
+    QueuesChanged(Vec<crate::QueueSnapshot>),
     CommandRejected { message: String },
     ShutdownComplete,
 }
@@ -25,6 +26,7 @@ struct Queue {
     jobs: BTreeMap<JobId, Pending>,
     error: Option<String>,
     shutdown: bool,
+    queues: Option<Vec<crate::QueueSnapshot>>,
     // Private requests never leave the engine; snapshots expose no credentials.
     known: BTreeMap<JobId, (DownloadRequest, Option<JobSnapshot>)>,
 }
@@ -93,6 +95,7 @@ impl EventBus {
                 }
                 Event::CommandRejected { message } => queue.error = Some(message),
                 Event::ShutdownComplete => queue.shutdown = true,
+                Event::QueuesChanged(queues) => queue.queues = Some(queues),
             }
         }
         if !self.pending.swap(true, Ordering::AcqRel) {
@@ -130,6 +133,9 @@ impl EventBus {
                 result.push(Event::JobRemoved(id));
             }
         }
+        if let Some(queues) = queue.queues.take() {
+            result.push(Event::QueuesChanged(queues));
+        }
         if let Some(message) = queue.error.take() {
             result.push(Event::CommandRejected { message });
         }
@@ -149,6 +155,11 @@ mod tests {
     use super::*;
     fn snapshot(received: u64, state: crate::JobState) -> JobSnapshot {
         JobSnapshot {
+            entry_id: None,
+            restored: false,
+            recovery_paths: vec![],
+            queue_id: None,
+            readiness: crate::EntryReadiness::Ready,
             deferred: false,
             category: None,
             description: String::new(),

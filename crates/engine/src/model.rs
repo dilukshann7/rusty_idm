@@ -28,7 +28,7 @@ impl JobState {
 }
 
 /// Opaque approval token. Never equate approval with permission to remove a target.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DestinationIdentity {
     pub(crate) size: u64,
     pub(crate) modified: Option<SystemTime>,
@@ -54,6 +54,7 @@ pub struct DownloadRequest {
     pub(crate) authorization: Option<Authorization>,
     /// Set only after the caller explicitly chooses an additional copy.
     pub allow_duplicate: bool,
+    pub(crate) recovery: Option<crate::storage::Recovery>,
 }
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Authorization {
@@ -96,6 +97,11 @@ impl fmt::Debug for DownloadRequest {
 #[derive(Clone, Debug)]
 pub struct JobSnapshot {
     pub id: JobId,
+    pub entry_id: Option<crate::EntryId>,
+    pub restored: bool,
+    pub recovery_paths: Vec<PathBuf>,
+    pub queue_id: Option<crate::QueueId>,
+    pub readiness: crate::EntryReadiness,
     pub filename: String,
     pub source_host: String,
     pub display_url: String,
@@ -132,6 +138,8 @@ pub enum ErrorKind {
     Io,
     Cleanup,
     ShuttingDown,
+    RestartRequired,
+    Storage,
 }
 impl JobError {
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
@@ -212,7 +220,11 @@ pub fn validate_request(
         )
     };
     let url = Url::parse(url.trim()).map_err(|_| invalid())?;
-    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
         return Err(invalid());
     }
     // Examine components with Windows separators even in portable model tests.
@@ -303,6 +315,7 @@ pub fn validate_request(
         description: String::new(),
         authorization: None,
         allow_duplicate: false,
+        recovery: None,
     })
 }
 

@@ -25,7 +25,22 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+#[path = "service_queues.rs"]
+mod queue_support;
+use queue_support::QueueRuntime;
+
 pub enum Command {
+    CreateQueue(String),
+    RenameQueue(QueueId, String),
+    DeleteQueue(QueueId),
+    StartQueue(QueueId),
+    StopQueue(QueueId),
+    QueueParallelism(QueueId, u8),
+    AssignQueue(JobId, Option<QueueId>),
+    MoveQueueEntry(JobId, bool),
+    SupplyCredentials(JobId, String, String),
+    ConfirmRestart(JobId),
+    SetCategory(JobId, Option<String>),
     External(ExternalCommand),
     Submit(DownloadRequest),
     Start(JobId),
@@ -163,11 +178,18 @@ impl EngineHandle {
 }
 // Dropping all senders closes the channel and initiates cleanup; Drop never joins.
 pub fn spawn_engine(wake: Arc<dyn Fn() + Send + Sync>) -> EngineHandle {
-    spawn_engine_with_executor(wake, Arc::new(HttpExecutor))
+    spawn(wake, Arc::new(HttpExecutor), true)
 }
 pub fn spawn_engine_with_executor(
     wake: Arc<dyn Fn() + Send + Sync>,
     executor: Arc<dyn TransferExecutor>,
+) -> EngineHandle {
+    spawn(wake, executor, false)
+}
+fn spawn(
+    wake: Arc<dyn Fn() + Send + Sync>,
+    executor: Arc<dyn TransferExecutor>,
+    durable: bool,
 ) -> EngineHandle {
     let (sender, receiver) = mpsc::channel(64);
     let bus = Arc::new(EventBus::new(wake));
@@ -180,7 +202,7 @@ pub fn spawn_engine_with_executor(
             .enable_all()
             .build()
         {
-            Ok(runtime) => runtime.block_on(actor(receiver, events, flag, executor)),
+            Ok(runtime) => runtime.block_on(actor(receiver, events, flag, executor, durable)),
             Err(_) => {
                 flag.store(true, Ordering::Release);
                 events.publish(Event::CommandRejected {
@@ -207,6 +229,7 @@ struct Job {
     started: bool,
     restart: bool,
     resume_after_pause: bool,
+    user_held: bool,
 }
 type ProgressMap = Arc<Mutex<HashMap<JobId, TransferProgress>>>;
 async fn actor(
@@ -214,6 +237,7 @@ async fn actor(
     bus: Arc<EventBus>,
     closing: Arc<AtomicBool>,
     executor: Arc<dyn TransferExecutor>,
+    durable: bool,
 ) {
     let mut jobs: BTreeMap<JobId, Job> = BTreeMap::new();
     let mut waiting = VecDeque::new();
@@ -221,6 +245,8 @@ async fn actor(
     let mut task_jobs: HashMap<Id, JobId> = HashMap::new();
     let progress: ProgressMap = Arc::new(Mutex::new(HashMap::new()));
     let mut next_id = 1u64;
+    let mut queues = QueueRuntime::new(durable);
+    queues.restore(&mut jobs, &mut next_id, &bus);
     let mut receipts: HashMap<RequestId, Record> = HashMap::new();
     let mut shutdown = false;
     let mut tick = tokio::time::interval(Duration::from_millis(100));
@@ -235,7 +261,7 @@ async fn actor(
             for job in jobs.values_mut() {
                 job.restart = false;
                 job.resume_after_pause = false;
-                cancel_job(job, &bus);
+                shutdown_job(job, &bus);
             }
             waiting.clear();
         }
@@ -256,23 +282,30 @@ async fn actor(
                                 let result=lease.try_accept(|| {
                                     if closing.load(Ordering::Acquire) { return Err(SubmissionError::Closing); }
                                     let (job_id,created_new)=match &action {
-                                        SubmissionAction::Submit(request)=>(admit(request.clone(),&mut jobs,&mut waiting,&mut next_id,&bus)?,true),
+                                        SubmissionAction::Submit(request)=>(admit(request.clone(),&mut jobs,&mut waiting,&mut next_id,&bus,&queues)?,true),
                                         SubmissionAction::Show(id)=> { if !jobs.contains_key(id) { return Err(SubmissionError::NotFound); } (*id,false) },
                                         SubmissionAction::Activate(id)=> { let job=jobs.get_mut(id).ok_or(SubmissionError::NotFound)?; activate_external(job,&mut waiting,&bus)?; (*id,false) },
                                         SubmissionAction::Restart(id)=> {
                                             let job=jobs.get(id).ok_or(SubmissionError::NotFound)?;
-                                            if has_retained_partial(job) { return Err(SubmissionError::RecoveryRequired); }
+                                            if job.snapshot.readiness!=EntryReadiness::Ready || has_retained_partial(job) { return Err(SubmissionError::RecoveryRequired); }
                                             if jobs.iter().any(|(other_id,other)|other_id!=id && other.snapshot.state.is_active() && same_destination(&job.request.destination,&other.request.destination)) { return Err(SubmissionError::InvalidAction); }
                                             let job=jobs.get_mut(id).expect("checked");
                                             // Approval inspection happens before acknowledging this action.
                                             let identity=inspect_destination(&job.request.destination).map_err(|_|SubmissionError::InvalidAction)?;
                                             job.request.replacement=identity.map(ReplacementPolicy::Approved).unwrap_or(ReplacementPolicy::Deny);
                                             if job.snapshot.state.is_terminal() && !bus.terminal_pending(*id) || job.snapshot.state==JobState::Waiting && !job.started {
+                                                if let Some(recovery)=&job.request.recovery {recovery.clear().map_err(|_|SubmissionError::InvalidAction)?;}
                                                 let replacement=job.request.replacement.clone(); reset_job(job,replacement); waiting.retain(|j|j!=id); waiting.push_back(*id); bus.publish(Event::JobChanged(job.snapshot.clone()));
                                             } else { job.restart=true; job.resume_after_pause=false; cancel_job(job,&bus); }
                                             (*id,false)
                                         }
                                     };
+                                    if lease.deadline_elapsed() {
+                                        waiting.retain(|queued|*queued!=job_id);
+                                        if created_new { jobs.remove(&job_id);bus.publish(Event::JobRemoved(job_id)); }
+                                        else if let Some(job)=jobs.get_mut(&job_id) { if job.snapshot.state==JobState::Waiting {job.snapshot.deferred=true;job.request.deferred=true;} }
+                                        return Err(SubmissionError::Expired);
+                                    }
                                     Ok(SubmissionReceipt{id:id.clone(),job_id,created_new})
                                 }).map_err(|e|match e { LeaseFailure::Expired=>SubmissionError::Expired,LeaseFailure::Revoked=>SubmissionError::Revoked,LeaseFailure::AlreadyAccepted=>SubmissionError::InvalidAction,LeaseFailure::Action(e)=>e });
                                 receipts.insert(id,Record{action,result:result.clone(),cancelled:false,at:Instant::now()}); let _=reply.send(result);
@@ -290,15 +323,19 @@ async fn actor(
                             }
                         }
                     },
-                    None | Some(Command::Shutdown) => { shutdown = true; closing.store(true, Ordering::Release); receiver.close(); for job in jobs.values_mut() { job.restart = false; job.resume_after_pause = false; cancel_job(job, &bus); } waiting.clear(); },
+                    None | Some(Command::Shutdown) => { shutdown = true; closing.store(true, Ordering::Release); receiver.close(); for job in jobs.values_mut() { job.restart = false; job.resume_after_pause = false; shutdown_job(job, &bus); } waiting.clear(); },
+                    Some(command) if queue_support::handles(&command) => {
+                        queues.command(command, &mut jobs, &mut waiting, &bus).await;
+                    },
                     Some(Command::Submit(request)) => {
                         if closing.load(Ordering::Acquire) { reject(&bus, "The engine is shutting down."); continue; }
-                        if admit(request,&mut jobs,&mut waiting,&mut next_id,&bus).is_err() { reject(&bus,"Download admission rejected. Check duplicates, entry limits and save path."); }
+                        if admit(request,&mut jobs,&mut waiting,&mut next_id,&bus,&queues).is_err() { reject(&bus,"Download admission rejected. Check duplicates, entry limits and save path."); }
                     },
                     Some(Command::Start(id)) => {
                         if closing.load(Ordering::Acquire) { reject(&bus, "The engine is shutting down."); continue; }
                         if let Some(job) = jobs.get_mut(&id) {
                             if job.snapshot.state != JobState::Waiting || !job.snapshot.deferred { reject(&bus, "Only a download saved for later can be started."); continue; }
+                            job.user_held = false;
                             job.snapshot.deferred = false; job.request.deferred = false;
                             waiting.push_back(id); bus.publish(Event::JobChanged(job.snapshot.clone()));
                         }
@@ -306,6 +343,7 @@ async fn actor(
                     Some(Command::Cancel(id)) => { if let Some(job) = jobs.get_mut(&id) { job.restart = false; job.resume_after_pause = false; cancel_job(job, &bus); } },
                     Some(Command::Pause(id)) => {
                         if let Some(job) = jobs.get_mut(&id) {
+                            job.user_held = true;
                             if job.snapshot.state == JobState::Running && job.cancel.try_pause() {
                                 job.snapshot.state = JobState::Pausing;
                                 job.snapshot.bytes_per_second = 0; job.snapshot.eta_seconds = None;
@@ -315,6 +353,7 @@ async fn actor(
                     },
                     Some(Command::Resume(id)) => {
                         if let Some(job) = jobs.get_mut(&id) {
+                            job.user_held = false;
                             if job.snapshot.state == JobState::Paused {
                                 job.snapshot.state = JobState::Waiting;
                                 waiting.push_back(id);
@@ -323,22 +362,10 @@ async fn actor(
                         }
                     },
                     Some(Command::Activate(id)) => {
-                        if let Some(job) = jobs.get_mut(&id) {
-                            match job.snapshot.state {
-                                JobState::Paused => { job.snapshot.state = JobState::Waiting; waiting.push_back(id); },
-                                JobState::Pausing => job.resume_after_pause = true,
-                                JobState::Waiting if job.snapshot.deferred => { job.snapshot.deferred = false; job.request.deferred = false; waiting.push_back(id); },
-                                state if state.can_retry() => {
-                                    if has_retained_partial(job) { reject(&bus, "This entry has retained recovery files. Copy its recovery paths and use a numbered copy."); continue; }
-                                    if bus.terminal_pending(id) { reject(&bus, "Wait for the previous result before resuming this entry."); continue; }
-                                    reset_job(job, ReplacementPolicy::Deny); waiting.push_back(id);
-                                },
-                                _ => {},
-                            }
-                            bus.publish(Event::JobChanged(job.snapshot.clone()));
-                        }
+                        if let Some(job)=jobs.get_mut(&id){if activate_external(job,&mut waiting,&bus).is_err(){reject(&bus,"Supply credentials, confirm the required restart, or wait for the previous result before resuming.");}}
                     },
                     Some(Command::Restart(id)) => {
+                        if jobs.get(&id).is_some_and(|j|j.snapshot.readiness!=EntryReadiness::Ready){reject(&bus,"Supply credentials or confirm the required restart before redownloading.");continue;}
                         let conflict = jobs.get(&id).is_some_and(|job| jobs.iter().any(|(other_id, other)| *other_id != id && other.snapshot.state.is_active() && same_destination(&job.request.destination, &other.request.destination)));
                         if conflict { reject(&bus, "Another active download uses that filename. Stop it or choose a numbered copy."); continue; }
                         if let Some(job) = jobs.get_mut(&id) {
@@ -368,10 +395,12 @@ async fn actor(
                     },
                     Some(Command::CancelAll) => { for job in jobs.values_mut() { job.restart = false; job.resume_after_pause = false; cancel_job(job, &bus); } },
                     Some(Command::Remove(id)) => {
+                        if jobs.get(&id).is_some_and(has_retained_partial) { reject(&bus,"Recovery files must be resolved before removing this entry. Use the required restart action or inspect its recovery paths.");continue; }
                         if jobs.get(&id).is_some_and(|job| job.snapshot.state.is_terminal() && has_retained_partial(job)) && bus.terminal_pending(id) { reject(&bus, "A partial file needs attention. Read its recovery path before removing the entry."); continue; }
                         if let Some(job) = jobs.get_mut(&id) { job.restart = false; job.resume_after_pause = false; if job.snapshot.state.is_terminal() { jobs.remove(&id); bus.publish(Event::JobRemoved(id)); } else { job.remove = true; cancel_job(job, &bus); if job.snapshot.state.is_terminal() { jobs.remove(&id); bus.publish(Event::JobRemoved(id)); } } }
                     },
                     Some(Command::Retry(id)) => {
+                        if jobs.get(&id).is_some_and(|j|j.snapshot.readiness!=EntryReadiness::Ready){reject(&bus,"Supply credentials or confirm the required restart before retrying.");continue;}
                         if let Some(job) = jobs.get_mut(&id) {
                             if !job.snapshot.state.can_retry() { reject(&bus, "Only failed or cancelled entries can be retried."); continue; }
                             if has_retained_partial(job) { reject(&bus, "A retained partial needs attention. Use Add URL with a new filename; this version cannot resume retained bytes."); continue; }
@@ -381,6 +410,7 @@ async fn actor(
                             waiting.push_back(id); bus.publish(Event::JobChanged(job.snapshot.clone()));
                         }
                     },
+                    Some(_) => reject(&bus, "Unsupported queue command."),
                 }
             },
             result = tasks.join_next_with_id(), if !tasks.is_empty() => {
@@ -391,8 +421,12 @@ async fn actor(
                     match result {
                         Ok(TransferOutcome::Completed { bytes }) if job.snapshot.state != JobState::Cancelling => { job.snapshot.received = bytes; job.snapshot.total = Some(bytes); job.snapshot.state = JobState::Completed; },
                         Ok(TransferOutcome::Completed { .. }) => job.snapshot.state = JobState::Cancelled,
-                        Ok(TransferOutcome::Cancelled) => job.snapshot.state = JobState::Cancelled,
-                        Err(error) => { job.snapshot.state = JobState::Failed; job.snapshot.error = Some(error); },
+                        Ok(TransferOutcome::Cancelled) if job.cancel.preserving() => { job.snapshot.state=JobState::Waiting;job.snapshot.deferred=true; },
+                        Ok(TransferOutcome::Cancelled) => {
+                            job.snapshot.state=JobState::Cancelled;
+                            if let Some(recovery)=&job.request.recovery {if let Err(error)=crate::output::discard_checkpoint(recovery){job.snapshot.state=JobState::Failed;job.snapshot.error=Some(error);}}
+                        },
+                        Err(error) => { job.snapshot.state = JobState::Failed; if error.kind==ErrorKind::RestartRequired {job.snapshot.readiness=EntryReadiness::RestartRequired;} job.snapshot.error = Some(error); },
                     }
                     job.snapshot.bytes_per_second = 0; job.snapshot.eta_seconds = None;
                     if job.restart && !shutdown && !closing.load(Ordering::Acquire) && !has_retained_partial(job) {
@@ -429,6 +463,11 @@ async fn actor(
                 }
             },
         }
+        if !shutdown {
+            queues.pump(&mut jobs, &mut waiting, &bus);
+        }
+        queues.reconcile(&jobs, &bus);
+        queues.publish(&jobs, &bus);
         // Queued cancellations cannot admit work; cleanup must release the task slot.
         while !shutdown
             && !closing.load(Ordering::Acquire)
@@ -443,15 +482,25 @@ async fn actor(
                 .count()
                 < 2
         {
-            let Some(id) = waiting.pop_front() else {
+            let Some(position) = waiting.iter().position(|id| {
+                jobs.get(id).is_some_and(|j| {
+                    j.snapshot.readiness == EntryReadiness::Ready && queues.slot_available(j, &jobs)
+                })
+            }) else {
+                break;
+            };
+            let Some(id) = waiting.remove(position) else {
                 break;
             };
             let Some(job) = jobs.get_mut(&id) else {
                 continue;
             };
-            if job.snapshot.state != JobState::Waiting {
+            if job.snapshot.state != JobState::Waiting
+                || job.snapshot.readiness != EntryReadiness::Ready
+            {
                 continue;
             }
+            job.snapshot.restored = false;
             job.snapshot.state = JobState::Running;
             if !job.started {
                 job.snapshot.last_try = Some(SystemTime::now());
@@ -462,6 +511,7 @@ async fn actor(
                 job.cancel.try_resume();
                 continue;
             }
+            job.cancel.attach_recovery(job.request.recovery.clone());
             job.started = true;
             let updates = progress.clone();
             let sink: ProgressSink = Arc::new(move |p| {
@@ -482,6 +532,9 @@ fn reject(bus: &EventBus, message: &str) {
     });
 }
 fn has_retained_partial(job: &Job) -> bool {
+    if !job.snapshot.recovery_paths.is_empty() {
+        return true;
+    }
     job.snapshot
         .error
         .as_ref()
@@ -509,9 +562,18 @@ fn reset_job(job: &mut Job, replacement: ReplacementPolicy) {
     job.restart = false;
     job.resume_after_pause = false;
     job.remove = false;
+    job.user_held = false;
 }
 fn restart_job(job: &mut Job, bus: &EventBus) -> bool {
     job.restart = false;
+    if let Some(recovery) = &job.request.recovery {
+        if let Err(error) = recovery.clear() {
+            job.snapshot.error = Some(error);
+            job.snapshot.state = JobState::Failed;
+            bus.publish(Event::JobChanged(job.snapshot.clone()));
+            return false;
+        }
+    }
     match inspect_destination(&job.request.destination) {
         Ok(identity) => {
             reset_job(
@@ -531,9 +593,30 @@ fn restart_job(job: &mut Job, bus: &EventBus) -> bool {
         }
     }
 }
+fn shutdown_job(job: &mut Job, bus: &EventBus) {
+    if job.snapshot.entry_id.is_some() {
+        if job.started && !job.snapshot.state.is_terminal() {
+            job.cancel.preserve_on_exit();
+        }
+        job.snapshot.deferred = true;
+        job.request.deferred = true;
+    } else {
+        cancel_job(job, bus);
+    }
+}
 fn cancel_job(job: &mut Job, bus: &EventBus) {
     match job.snapshot.state {
-        JobState::Waiting if !job.started => job.snapshot.state = JobState::Cancelled,
+        JobState::Waiting if !job.started => {
+            if let Some(recovery) = &job.request.recovery {
+                if let Err(error) = crate::output::discard_checkpoint(recovery) {
+                    job.snapshot.state = JobState::Failed;
+                    job.snapshot.error = Some(error);
+                    bus.publish(Event::JobChanged(job.snapshot.clone()));
+                    return;
+                }
+            }
+            job.snapshot.state = JobState::Cancelled;
+        }
         JobState::Waiting | JobState::Running | JobState::Pausing | JobState::Paused => {
             if !job.cancel.try_cancel() {
                 return;
@@ -553,7 +636,9 @@ fn admit(
     waiting: &mut VecDeque<JobId>,
     next_id: &mut u64,
     bus: &EventBus,
+    queues: &QueueRuntime,
 ) -> Result<JobId, SubmissionError> {
+    let mut request = request;
     if jobs.len() + bus.removed_pending() >= 1000 {
         return Err(SubmissionError::InvalidAction);
     }
@@ -568,9 +653,23 @@ fn admit(
     }
     let id = JobId(*next_id);
     *next_id += 1;
+    let entry_id = if request.deferred {
+        Some(
+            queues
+                .admit(&mut request)
+                .map_err(|_| SubmissionError::InvalidAction)?,
+        )
+    } else {
+        None
+    };
     bus.register_request(id, &request);
     let snapshot = JobSnapshot {
         id,
+        entry_id,
+        restored: false,
+        recovery_paths: vec![],
+        queue_id: entry_id.map(|_| QueueId::MAIN),
+        readiness: EntryReadiness::Ready,
         filename: request
             .destination
             .file_name()
@@ -605,6 +704,7 @@ fn admit(
             started: false,
             restart: false,
             resume_after_pause: false,
+            user_held: false,
             sample: (Instant::now(), 0),
         },
     );
@@ -619,6 +719,10 @@ fn activate_external(
     waiting: &mut VecDeque<JobId>,
     bus: &EventBus,
 ) -> Result<(), SubmissionError> {
+    if job.snapshot.readiness != EntryReadiness::Ready {
+        return Err(SubmissionError::RecoveryRequired);
+    }
+    job.user_held = false;
     match job.snapshot.state {
         JobState::Paused => {
             job.snapshot.state = JobState::Waiting;
@@ -631,7 +735,19 @@ fn activate_external(
             waiting.push_back(job.snapshot.id);
         }
         state if state.can_retry() => {
-            if has_retained_partial(job) {
+            if has_retained_partial(job)
+                && (job
+                    .request
+                    .recovery
+                    .as_ref()
+                    .and_then(|r| r.checkpoint())
+                    .is_none()
+                    || job
+                        .snapshot
+                        .error
+                        .as_ref()
+                        .is_some_and(|e| e.retained_original.is_some()))
+            {
                 return Err(SubmissionError::RecoveryRequired);
             }
             if bus.terminal_pending(job.snapshot.id) {

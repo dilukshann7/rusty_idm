@@ -26,6 +26,9 @@ pub struct TransferControl {
     token: CancellationToken,
     commit: Arc<Mutex<CommitState>>,
     settings: watch::Sender<TransferSettings>,
+    preserve: Arc<std::sync::atomic::AtomicBool>,
+    recovery: Arc<Mutex<Option<crate::storage::Recovery>>>,
+    checkpoint_ack: watch::Sender<Option<Result<(), JobError>>>,
 }
 #[derive(Clone, Copy, Default)]
 struct TransferSettings {
@@ -44,7 +47,38 @@ impl TransferControl {
             token,
             commit: Arc::new(Mutex::new(CommitState::Pending)),
             settings: watch::channel(TransferSettings::default()).0,
+            preserve: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            recovery: Arc::new(Mutex::new(None)),
+            checkpoint_ack: watch::channel(None).0,
         }
+    }
+    pub(crate) fn attach_recovery(&self, recovery: Option<crate::storage::Recovery>) {
+        *self.recovery.lock().unwrap_or_else(|p| p.into_inner()) = recovery;
+        self.checkpoint_ack.send_replace(None);
+        self.settings.send_modify(|_| {});
+    }
+    fn recovery(&self) -> Option<crate::storage::Recovery> {
+        self.recovery
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+    pub(crate) async fn wait_checkpoint(&self) -> Result<(), JobError> {
+        let mut ack = self.checkpoint_ack.subscribe();
+        tokio::time::timeout(Duration::from_secs(10),async {
+            loop {
+                if let Some(result)=ack.borrow_and_update().clone(){return result;}
+                ack.changed().await.map_err(|_|JobError::new(ErrorKind::Storage,"Queue storage failed: checkpoint acknowledgement was lost."))?;
+            }
+        }).await.map_err(|_|JobError::new(ErrorKind::Storage,"Queue storage failed: checkpoint acknowledgement timed out; the entry remains held."))?
+    }
+    pub(crate) fn preserve_on_exit(&self) {
+        self.preserve
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.try_cancel();
+    }
+    pub(crate) fn preserving(&self) -> bool {
+        self.preserve.load(std::sync::atomic::Ordering::Acquire)
     }
     pub fn token(&self) -> CancellationToken {
         self.token.clone()
@@ -68,6 +102,28 @@ impl TransferControl {
         self.settings
             .send_modify(|settings| settings.bytes_per_second = bytes_per_second.unwrap_or(0));
     }
+    async fn wait_until_resumed_output(&self, output: &mut OutputFile) -> Result<bool, JobError> {
+        let mut settings = self.settings.subscribe();
+        loop {
+            if output.adopt_recovery(self.recovery()) {
+                let result = output.checkpoint().await;
+                self.checkpoint_ack.send_replace(Some(result.clone()));
+                result?;
+            }
+            if self.token.is_cancelled() {
+                return Ok(false);
+            }
+            if !settings.borrow_and_update().paused {
+                return Ok(true);
+            }
+            tokio::select! {
+                biased;
+                _ = self.token.cancelled() => return Ok(false),
+                _ = settings.changed() => {}
+            }
+        }
+    }
+    #[cfg(test)]
     async fn wait_until_resumed(&self) -> bool {
         let mut settings = self.settings.subscribe();
         loop {
@@ -77,11 +133,7 @@ impl TransferControl {
             if !settings.borrow_and_update().paused {
                 return true;
             }
-            tokio::select! {
-                biased;
-                _ = self.token.cancelled() => return false,
-                _ = settings.changed() => {}
-            }
+            tokio::select! {biased; _=self.token.cancelled()=>return false, _=settings.changed()=>{}}
         }
     }
     async fn pause_requested(&self) {
@@ -181,11 +233,22 @@ pub async fn controlled_transfer(
     if cancel.is_cancelled() {
         return Ok(TransferOutcome::Cancelled);
     }
-    let mut output = OutputFile::prepare(&request.destination, &request.replacement).await?;
+    let mut output = OutputFile::durable_prepare(&request).await?;
     let result = stream(&request, &control, progress, &mut output).await;
+    output.adopt_recovery(control.recovery());
+    if control.recovery().is_some() && (control.preserving() || result.is_err()) {
+        output.checkpoint().await?;
+        return match result {
+            Err(error) => Err(output.preserved_error(error)),
+            _ => Ok(TransferOutcome::Cancelled),
+        };
+    }
     match result {
         Ok(TransferOutcome::Completed { .. }) if cancel.is_cancelled() => {
             output.abort().await?;
+            if let Some(recovery) = control.recovery() {
+                recovery.clear()?;
+            }
             Ok(TransferOutcome::Cancelled)
         }
         Ok(done @ TransferOutcome::Completed { .. }) => {
@@ -197,6 +260,9 @@ pub async fn controlled_transfer(
         }
         Ok(TransferOutcome::Cancelled) => {
             output.abort().await?;
+            if let Some(recovery) = control.recovery() {
+                recovery.clear()?;
+            }
             Ok(TransferOutcome::Cancelled)
         }
         Err(error) => {
@@ -229,19 +295,36 @@ async fn stream(
         .build()
         .map_err(|_| JobError::new(ErrorKind::Network, "Cannot initialize the HTTP client."))?;
     let cancel = control.token();
-    let mut received = 0u64;
-    let mut total = None;
-    let mut validator: Option<String> = None;
-    let mut representation_url = None;
+    let saved = request.recovery.as_ref().and_then(|r| r.checkpoint());
+    let mut received = saved.as_ref().map_or(0, |c| c.durable);
+    let mut total = saved.as_ref().and_then(|c| c.total);
+    let mut validator = saved.as_ref().and_then(|c| c.etag.clone());
+    let mut representation_url = saved
+        .as_ref()
+        .and_then(|c| c.response_url.as_deref())
+        .and_then(|s| url::Url::parse(s).ok());
+    let mut strict = request.recovery.is_some();
+    if received > 0 && (validator.is_none() || total.is_none() || representation_url.is_none()) {
+        return Err(JobError::new(
+            ErrorKind::RestartRequired,
+            "Restart required: no safe continuation validator is available.",
+        ));
+    }
+    let mut checkpoint_at = tokio::time::Instant::now();
     'connect: loop {
+        if output.adopt_recovery(control.recovery()) {
+            output.checkpoint().await?;
+        }
+        strict |= control.recovery().is_some();
         if control.settings.borrow().paused {
+            output.checkpoint().await?;
             progress(TransferProgress {
                 received,
                 total,
                 resume_capable: validator.is_some(),
                 paused: true,
             });
-            if !control.wait_until_resumed().await {
+            if !control.wait_until_resumed_output(output).await? {
                 return Ok(TransferOutcome::Cancelled);
             }
         }
@@ -306,12 +389,18 @@ async fn stream(
                     response.content_length(),
                 )
             {
-                return Err(JobError::new(ErrorKind::Http, "The server changed the file or returned an invalid resume range. Retry to download a fresh copy."));
+                return Err(JobError::new(if strict {ErrorKind::RestartRequired}else{ErrorKind::Http}, "Restart required: the server changed the file or returned an invalid resume range."));
             }
         } else {
             // Range ignored, representation changed, or no safe validator: replace
             // the owned partial contents rather than append incompatible bytes.
             if received != 0 {
+                if strict {
+                    return Err(JobError::new(
+                        ErrorKind::RestartRequired,
+                        "Restart required: the server did not accept a safe continuation.",
+                    ));
+                }
                 output.restart().await?;
             }
             received = 0;
@@ -319,6 +408,13 @@ async fn stream(
             validator = total.and_then(|_| strong_etag(response.headers()));
             representation_url = Some(response.url().clone());
         }
+        output.representation(
+            total,
+            representation_url.as_ref().map(|u| u.as_str().to_owned()),
+            validator.clone(),
+        );
+        output.checkpoint().await?;
+        checkpoint_at = tokio::time::Instant::now();
         progress(TransferProgress {
             received,
             total,
@@ -326,13 +422,15 @@ async fn stream(
             paused: false,
         });
         loop {
-            let chunk = tokio::select! {
-                biased;
-                _ = cancel.cancelled() => return Ok(TransferOutcome::Cancelled),
-                _ = control.pause_requested() => continue 'connect,
-                // Only network waits count toward the read timeout. A low bandwidth
-                // limit must not time out while deliberately waiting to write.
-                chunk = tokio::time::timeout(Duration::from_secs(30), response.chunk()) => chunk.map_err(|_| JobError::new(ErrorKind::Network, "The response made no progress for 30 seconds."))?.map_err(|_| JobError::new(ErrorKind::Network, "The response was interrupted."))?,
+            let read_deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+            let chunk = loop {
+                tokio::select! {
+                    biased;
+                    _=cancel.cancelled()=>return Ok(TransferOutcome::Cancelled),
+                    _=control.pause_requested()=>continue 'connect,
+                    _=tokio::time::sleep_until(checkpoint_at+Duration::from_secs(5)), if control.recovery().is_some()=>{output.checkpoint().await?;checkpoint_at=tokio::time::Instant::now();},
+                    chunk=tokio::time::timeout_at(read_deadline,response.chunk())=>break chunk.map_err(|_|JobError::new(ErrorKind::Network,"The response made no progress for 30 seconds."))?.map_err(|_|JobError::new(ErrorKind::Network,"The response was interrupted."))?,
+                }
             };
             let Some(chunk) = chunk else {
                 break;
@@ -366,6 +464,10 @@ async fn stream(
                 }
                 output.write(&chunk[offset..end]).await?;
                 received += (end - offset) as u64;
+                if checkpoint_at.elapsed() >= Duration::from_secs(5) {
+                    output.checkpoint().await?;
+                    checkpoint_at = tokio::time::Instant::now();
+                }
                 offset = end;
                 progress(TransferProgress {
                     received,

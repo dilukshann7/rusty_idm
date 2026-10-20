@@ -39,6 +39,20 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "&Options...", 1008
     END
+    POPUP "&Queues"
+    BEGIN
+        MENUITEM "&Create queue...", 1026
+        MENUITEM "&Rename selected queue...", 1027
+        MENUITEM "&Delete empty queue", 1028
+        MENUITEM SEPARATOR
+        MENUITEM "&Start selected queue", 1029
+        MENUITEM "S&top selected queue", 1030
+        MENUITEM SEPARATOR
+        MENUITEM "&One download at a time", 1031
+        MENUITEM "T&wo downloads at a time", 1032
+        MENUITEM "Move entry &up", 1033
+        MENUITEM "Move entry &down", 1034
+    END
     POPUP "&View"
     BEGIN
         MENUITEM "&All Downloads", 1012
@@ -75,11 +89,11 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "Remo&ve", 1004
         MENUITEM SEPARATOR
-        POPUP "Add to &queue", GRAYED
+        POPUP "Add to &queue"
         BEGIN
-            MENUITEM "Main download queue", 1018, GRAYED
+            MENUITEM "Main download queue", 1018
         END
-        MENUITEM "Delete from queue", 1019, GRAYED
+        MENUITEM "Delete from queue", 1019
         MENUITEM SEPARATOR
         POPUP "On &Double click"
         BEGIN
@@ -88,6 +102,11 @@ BEGIN
             MENUITEM "Properties", 1022
         END
         MENUITEM SEPARATOR
+        MENUITEM "Supply &credentials...", 1024
+        MENUITEM "Confirm required restart...", 1025
+        MENUITEM "Set category...", 1035
+        MENUITEM "Move up in queue", 1033
+        MENUITEM "Move down in queue", 1034
         MENUITEM "&Properties", 1010
     END
 END
@@ -255,4 +274,29 @@ BEGIN
     BEGIN
         VALUE "Translation", 0x409, 1200
     END
+END
+
+209 DIALOGEX 0, 0, 230, 62
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Queue name"
+FONT 8, "Tahoma"
+BEGIN
+    LTEXT "Name", -1, 8, 9, 40, 10
+    EDITTEXT 2601, 48, 7, 174, 14, ES_AUTOHSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON "OK", IDOK, 116, 38, 50, 14
+    PUSHBUTTON "Cancel", IDCANCEL, 172, 38, 50, 14
+END
+
+210 DIALOGEX 0, 0, 246, 84
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Download credentials"
+FONT 8, "Tahoma"
+BEGIN
+    LTEXT "Login", -1, 8, 10, 48, 10
+    EDITTEXT 2105, 58, 7, 180, 14, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "Password", -1, 8, 30, 48, 10
+    EDITTEXT 2106, 58, 27, 180, 14, ES_PASSWORD | ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "Used for this session only.", -1, 8, 48, 180, 10
+    DEFPUSHBUTTON "OK", IDOK, 132, 64, 50, 14
+    PUSHBUTTON "Cancel", IDCANCEL, 188, 64, 50, 14
 END

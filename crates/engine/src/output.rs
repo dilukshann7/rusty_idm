@@ -57,7 +57,7 @@ pub fn inspect_destination(path: &Path) -> Result<Option<DestinationIdentity>, J
 }
 
 #[cfg(windows)]
-fn identify_destination(file: &std::fs::File) -> Result<DestinationIdentity, JobError> {
+pub(crate) fn identify_destination(file: &std::fs::File) -> Result<DestinationIdentity, JobError> {
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::{
         Foundation::HANDLE,
@@ -124,6 +124,10 @@ pub struct OutputFile {
     partial: PathBuf,
     destination: PathBuf,
     retain: bool,
+    recovery: Option<crate::storage::Recovery>,
+    total: Option<u64>,
+    response_url: Option<String>,
+    etag: Option<String>,
     #[cfg(windows)]
     original: Option<std::fs::File>,
 }
@@ -172,7 +176,7 @@ impl OutputFile {
             let id = NEXT_PARTIAL.fetch_add(1, Ordering::Relaxed);
             let partial = parent.join(format!(".rusty-{}-{id}.part", std::process::id()));
             let mut options = OpenOptions::new();
-            options.write(true).create_new(true);
+            options.read(true).write(true).create_new(true);
             #[cfg(windows)]
             {
                 use windows::Win32::{
@@ -184,7 +188,7 @@ impl OutputFile {
                     .share_mode(FILE_SHARE_READ.0);
             }
             match options.open(&partial).await {
-                Ok(file) => return Ok(Self { file: Some(file), partial, destination: destination.to_owned(), retain: false, #[cfg(windows)] original }),
+                Ok(file) => return Ok(Self { file: Some(file), partial, destination: destination.to_owned(), retain: false, recovery: None, total: None, response_url: None, etag: None, #[cfg(windows)] original }),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(_) => return Err(JobError::new(ErrorKind::Io, "Cannot reserve a partial file. Check the save folder, permissions and available space.")),
             }
@@ -193,6 +197,114 @@ impl OutputFile {
             ErrorKind::Io,
             "Cannot reserve a unique partial filename.",
         ))
+    }
+    pub(crate) async fn durable_prepare(
+        request: &crate::DownloadRequest,
+    ) -> Result<Self, JobError> {
+        if let Some(recovery) = &request.recovery {
+            if let Some(checkpoint) = recovery.checkpoint() {
+                let file = reopen_verified(&checkpoint).map_err(|e| {
+                    JobError::new(
+                        ErrorKind::RestartRequired,
+                        format!("Restart required: {e}. The recorded file was preserved."),
+                    )
+                    .retained(checkpoint.partial.clone())
+                })?;
+                #[cfg(windows)]
+                let original = match &request.replacement {
+                    ReplacementPolicy::Approved(expected) => {
+                        Some(guard_destination(&request.destination, expected)?)
+                    }
+                    ReplacementPolicy::Deny => None,
+                };
+                // Restored approvals never survive restart. Do not overwrite an existing file.
+                if matches!(request.replacement, ReplacementPolicy::Deny)
+                    && request.destination.exists()
+                {
+                    return Err(JobError::new(ErrorKind::RestartRequired,"Restart required: the destination exists and requires fresh overwrite approval.").retained(checkpoint.partial));
+                }
+                return Ok(Self {
+                    file: Some(File::from_std(file)),
+                    partial: checkpoint.partial,
+                    destination: request.destination.clone(),
+                    retain: true,
+                    recovery: Some(recovery.clone()),
+                    total: checkpoint.total,
+                    response_url: checkpoint.response_url,
+                    etag: checkpoint.etag,
+                    #[cfg(windows)]
+                    original,
+                });
+            }
+        }
+        let mut output = Self::prepare(&request.destination, &request.replacement).await?;
+        output.recovery = request.recovery.clone();
+        if output.recovery.is_some() {
+            output.retain = true;
+            output.checkpoint().await?;
+        }
+        Ok(output)
+    }
+    pub(crate) fn adopt_recovery(&mut self, recovery: Option<crate::storage::Recovery>) -> bool {
+        if self.recovery.is_none() && recovery.is_some() {
+            self.recovery = recovery;
+            self.retain = true;
+            return true;
+        }
+        false
+    }
+    pub(crate) fn representation(
+        &mut self,
+        total: Option<u64>,
+        url: Option<String>,
+        etag: Option<String>,
+    ) {
+        self.total = total;
+        self.response_url = url.and_then(|s| url::Url::parse(&s).ok()).map(|mut u| {
+            let _ = u.set_username("");
+            let _ = u.set_password(None);
+            u.into()
+        });
+        self.etag = etag;
+    }
+    pub(crate) async fn checkpoint(&mut self) -> Result<(), JobError> {
+        self.checkpoint_inner().await.map_err(|error| {
+            crate::storage::storage_error(error.message).retained(self.partial.clone())
+        })
+    }
+    async fn checkpoint_inner(&mut self) -> Result<(), JobError> {
+        let Some(recovery) = self.recovery.clone() else {
+            return Ok(());
+        };
+        let file = self.file.as_mut().expect("open partial");
+        file.flush()
+            .await
+            .map_err(|_| JobError::new(ErrorKind::Io, "Cannot flush queued partial."))?;
+        file.sync_all()
+            .await
+            .map_err(|_| JobError::new(ErrorKind::Io, "Cannot sync queued partial."))?;
+        let file = file
+            .try_clone()
+            .await
+            .map_err(|_| JobError::new(ErrorKind::Io, "Cannot inspect queued partial."))?
+            .into_std()
+            .await;
+        let path = self.partial.clone();
+        let total = self.total;
+        let response_url = self.response_url.clone();
+        let etag = self.etag.clone();
+        let checkpoint = tokio::task::spawn_blocking(move || {
+            make_checkpoint(file, path, total, response_url, etag)
+        })
+        .await
+        .map_err(|_| JobError::new(ErrorKind::Io, "Checkpoint worker failed."))??;
+        recovery
+            .save(checkpoint)
+            .map_err(|e| e.retained(self.partial.clone()))
+    }
+    pub(crate) fn preserved_error(&self, mut error: JobError) -> JobError {
+        error.retained_partial = Some(self.partial.clone());
+        error
     }
     pub fn partial_path(&self) -> &Path {
         &self.partial
@@ -278,6 +390,7 @@ impl OutputFile {
         control: crate::transfer::TransferControl,
     ) -> Result<bool, JobError> {
         self.retain = true; // Any finalization failure retains recoverable downloaded bytes.
+        self.checkpoint().await?;
         let file = self.file.as_mut().expect("open partial");
         file.flush().await.map_err(|_| {
             JobError::new(ErrorKind::Io, "Cannot flush the completed partial file.")
@@ -290,6 +403,7 @@ impl OutputFile {
         let file = self.file.take().expect("open partial").into_std().await;
         let partial = self.partial.clone();
         let destination = self.destination.clone();
+        let recovery = self.recovery.clone();
         #[cfg(windows)]
         let original = self.original.take();
         let (file, result, retained_original, cleanup_failed) =
@@ -299,9 +413,18 @@ impl OutputFile {
                 #[cfg(windows)]
                 let mut backup = None;
                 let result = control.commit_file(|| {
+                    if let Some(r) = &recovery {
+                        r.journal(
+                            r.checkpoint()
+                                .ok_or_else(|| std::io::Error::other("Missing final checkpoint"))?,
+                            None,
+                        )
+                        .map_err(std::io::Error::other)?;
+                    }
                     #[cfg(windows)]
                     if let Some(original) = original.as_ref() {
-                        let path = backup_original(original, &destination)?;
+                        let path =
+                            backup_original_journaled(original, &destination, recovery.as_ref())?;
                         publish_or_restore(original, &file, &partial, &destination, &path)
                             .map_err(|failure| {
                                 retained_original = failure.retained_original;
@@ -331,7 +454,7 @@ impl OutputFile {
                     .retained(self.partial.clone())
             })?;
         let committed = result.map_err(|e| {
-            let kind = if e.kind() == std::io::ErrorKind::AlreadyExists || self.destination.exists() { ErrorKind::DestinationChanged } else { ErrorKind::Io };
+            let kind = if e.get_ref().and_then(|inner|inner.downcast_ref::<JobError>()).is_some_and(|error|error.kind==ErrorKind::Storage) { ErrorKind::Storage } else if e.kind() == std::io::ErrorKind::AlreadyExists || self.destination.exists() { ErrorKind::DestinationChanged } else { ErrorKind::Io };
             let mut error = JobError::new(kind, format!("Cannot finalize the download: {e}. The completed partial has been retained at {}.", self.partial.display())).retained(self.partial.clone());
             if let Some(original) = retained_original.as_ref() {
                 error = error.original_retained(original.clone());
@@ -344,14 +467,254 @@ impl OutputFile {
         }
         if !committed {
             self.file = Some(File::from_std(file));
+            let recovery = self.recovery.clone();
             self.abort().await?;
+            if let Some(recovery) = recovery {
+                recovery.clear()?;
+            }
+            return Ok(false);
+        }
+        if committed {
+            if let Some(recovery) = &self.recovery {
+                recovery.finish()?;
+            }
         }
         Ok(committed)
     }
 }
 
+#[cfg(not(windows))]
+pub(crate) fn identify_destination(file: &std::fs::File) -> Result<DestinationIdentity, JobError> {
+    let m = file
+        .metadata()
+        .map_err(|_| JobError::new(ErrorKind::Io, "Cannot inspect partial file."))?;
+    Ok(DestinationIdentity {
+        size: m.len(),
+        modified: m.modified().ok(),
+    })
+}
+fn hashes(file: &mut std::fs::File, length: u64) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
+    use std::io::{Read, Seek};
+    file.rewind()?;
+    let mut full = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut prefix = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut buffer = [0u8; 65536];
+    let mut offset = 0;
+    while offset < length {
+        let count = ((length - offset).min(buffer.len() as u64)) as usize;
+        file.read_exact(&mut buffer[..count])?;
+        full.update(&buffer[..count]);
+        if offset < 65536 {
+            prefix.update(&buffer[..count.min((65536 - offset) as usize)]);
+        }
+        offset += count as u64;
+    }
+    file.seek(std::io::SeekFrom::Start(length))?;
+    Ok((
+        prefix.finish().as_ref().to_vec(),
+        full.finish().as_ref().to_vec(),
+    ))
+}
+fn make_checkpoint(
+    mut file: std::fs::File,
+    partial: PathBuf,
+    total: Option<u64>,
+    response_url: Option<String>,
+    etag: Option<String>,
+) -> Result<crate::storage::Checkpoint, JobError> {
+    let identity = identify_destination(&file)?;
+    let durable = identity.size;
+    let (prefix_hash, bytes_hash) = hashes(&mut file, durable)
+        .map_err(|_| JobError::new(ErrorKind::Io, "Cannot hash checkpoint bytes."))?;
+    Ok(crate::storage::Checkpoint {
+        partial,
+        identity,
+        durable,
+        prefix_hash,
+        bytes_hash,
+        total,
+        response_url,
+        etag,
+    })
+}
+fn open_owned(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows::Win32::{
+            Foundation::{GENERIC_READ, GENERIC_WRITE},
+            Storage::FileSystem::{DELETE, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ},
+        };
+        options
+            .access_mode(GENERIC_READ.0 | GENERIC_WRITE.0 | DELETE.0)
+            .share_mode(FILE_SHARE_READ.0)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0);
+    }
+    #[cfg(not(windows))]
+    {
+        if std::fs::symlink_metadata(path)?.file_type().is_symlink() {
+            return Err(std::io::Error::other("Partial is a symbolic link"));
+        }
+    }
+    options.open(path)
+}
+fn same_file(a: &DestinationIdentity, b: &DestinationIdentity) -> bool {
+    #[cfg(windows)]
+    {
+        a.volume == b.volume && a.index == b.index
+    }
+    #[cfg(not(windows))]
+    {
+        a.modified == b.modified
+    }
+}
+fn verify(file: &mut std::fs::File, c: &crate::storage::Checkpoint) -> std::io::Result<()> {
+    let identity = identify_destination(file).map_err(std::io::Error::other)?;
+    if !same_file(&identity, &c.identity) || identity.size < c.durable {
+        return Err(std::io::Error::other(
+            "Partial identity or durable length changed",
+        ));
+    }
+    let (prefix, full) = hashes(file, c.durable)?;
+    if prefix != c.prefix_hash || full != c.bytes_hash {
+        return Err(std::io::Error::other("Recorded partial bytes changed"));
+    }
+    Ok(())
+}
+fn reopen_verified(c: &crate::storage::Checkpoint) -> std::io::Result<std::fs::File> {
+    let mut file = open_owned(&c.partial)?;
+    verify(&mut file, c)?;
+    // Only a verified file's uncheckpointed tail can be discarded.
+    file.set_len(c.durable)?;
+    file.sync_all()?;
+    Ok(file)
+}
+pub(crate) fn discard_checkpoint(recovery: &crate::storage::Recovery) -> Result<(), JobError> {
+    let mut preserved = None;
+    if let Some(c) = recovery.checkpoint() {
+        match open_owned(&c.partial) {
+            Ok(mut file) => {
+                if verify(&mut file, &c).is_ok() {
+                    delete_owned(&file, &c.partial).map_err(|_| {
+                        JobError::new(
+                            ErrorKind::Cleanup,
+                            "Cannot remove the verified old partial.",
+                        )
+                        .retained(c.partial)
+                    })?;
+                } else {
+                    preserved = Some(c.partial);
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {
+                return Err(JobError::new(
+                    ErrorKind::Io,
+                    "Cannot inspect the partial for a confirmed restart.",
+                )
+                .retained(c.partial))
+            }
+        }
+    }
+    recovery
+        .store
+        .update(|s| {
+            let e = s
+                .entries
+                .get_mut(&recovery.entry)
+                .ok_or("Recovery entry is missing.")?;
+            if let Some(path) = preserved {
+                if !e.retained_files.contains(&path) {
+                    e.retained_files.push(path);
+                }
+            }
+            e.checkpoint = None;
+            e.journal = None;
+            e.completed = false;
+            e.completed_bytes = None;
+            Ok(())
+        })
+        .map_err(crate::storage::storage_error)
+}
+pub(crate) fn recover_finalization(
+    entry: &crate::storage::StoredEntry,
+    recovery: &crate::storage::Recovery,
+) -> Result<bool, JobError> {
+    let Some(journal) = &entry.journal else {
+        return Ok(entry.completed);
+    };
+    let ambiguous = || {
+        let mut e = JobError::new(
+            ErrorKind::Cleanup,
+            "Interrupted finalization requires recovery. All ambiguous files were preserved.",
+        )
+        .retained(journal.checkpoint.partial.clone());
+        if let Some((path, _)) = &journal.original {
+            e = e.original_retained(path.clone());
+        }
+        e
+    };
+    if let Ok(mut destination) = open_owned(&entry.destination) {
+        if verify(&mut destination, &journal.checkpoint).is_ok()
+            && destination
+                .metadata()
+                .is_ok_and(|m| m.len() == journal.checkpoint.durable)
+        {
+            #[cfg(windows)]
+            if let Some((path, identity)) = &journal.original {
+                if path.exists() {
+                    let original = guard_destination(path, identity).map_err(|_| ambiguous())?;
+                    delete_owned(&original, path).map_err(|_| ambiguous())?;
+                }
+            }
+            recovery.finish()?;
+            return Ok(true);
+        }
+    }
+    #[cfg(windows)]
+    if let Some((path, identity)) = &journal.original {
+        if path.exists() {
+            if entry.destination.exists() {
+                return Err(ambiguous());
+            }
+            let original = guard_destination(path, identity).map_err(|_| ambiguous())?;
+            no_replace(&original, path, &entry.destination).map_err(|_| ambiguous())?;
+        } else if inspect_destination(&entry.destination)
+            .ok()
+            .flatten()
+            .as_ref()
+            != Some(identity)
+        {
+            return Err(ambiguous());
+        }
+    }
+    let mut partial = open_owned(&journal.checkpoint.partial).map_err(|_| ambiguous())?;
+    verify(&mut partial, &journal.checkpoint).map_err(|_| ambiguous())?;
+    recovery
+        .store
+        .update(|s| {
+            s.entries
+                .get_mut(&entry.id)
+                .ok_or("Recovery entry is missing.")?
+                .journal = None;
+            Ok(())
+        })
+        .map_err(crate::storage::storage_error)?;
+    Ok(false)
+}
+
 #[cfg(windows)]
 fn backup_original(original: &std::fs::File, destination: &Path) -> std::io::Result<PathBuf> {
+    backup_original_journaled(original, destination, None)
+}
+#[cfg(windows)]
+fn backup_original_journaled(
+    original: &std::fs::File,
+    destination: &Path,
+    recovery: Option<&crate::storage::Recovery>,
+) -> std::io::Result<PathBuf> {
     let parent = destination
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -359,6 +722,17 @@ fn backup_original(original: &std::fs::File, destination: &Path) -> std::io::Res
     for _ in 0..128 {
         let id = NEXT_PARTIAL.fetch_add(1, Ordering::Relaxed);
         let backup = parent.join(format!(".rusty-{}-{id}.original", std::process::id()));
+        if let Some(r) = recovery {
+            r.journal(
+                r.checkpoint()
+                    .ok_or_else(|| std::io::Error::other("Missing final checkpoint"))?,
+                Some((
+                    backup.clone(),
+                    identify_destination(original).map_err(std::io::Error::other)?,
+                )),
+            )
+            .map_err(std::io::Error::other)?;
+        }
         match no_replace(original, destination, &backup) {
             Ok(()) => return Ok(backup),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -512,6 +886,10 @@ mod tests {
             partial: partial.clone(),
             destination: dir.path().join("file.bin"),
             retain: false,
+            recovery: None,
+            total: None,
+            response_url: None,
+            etag: None,
             original: None,
         };
         let error = output.abort().await.unwrap_err();
@@ -542,6 +920,10 @@ mod tests {
                 partial,
                 destination: dir.join("file.bin"),
                 retain: false,
+                recovery: None,
+                total: None,
+                response_url: None,
+                etag: None,
                 original: None,
             },
             moved,
@@ -597,6 +979,10 @@ mod tests {
             partial: partial.clone(),
             destination: target.clone(),
             retain: false,
+            recovery: None,
+            total: None,
+            response_url: None,
+            etag: None,
             original: Some(original),
         };
         let error = output.finalize().await.unwrap_err();
