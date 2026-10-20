@@ -962,7 +962,9 @@ unsafe fn window_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             }
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, pointer as isize);
             (*pointer).alive.set(true);
-            return LRESULT(1);
+            // Default nonclient creation stores the title passed to CreateWindowExW.
+            // Returning TRUE ourselves skips that initialization and leaves it blank.
+            return DefWindowProcW(hwnd, msg, wparam, lparam);
         }
         let pointer = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Signals;
         if !pointer.is_null() {
