@@ -41,3 +41,13 @@ mod tray;
 
 #[cfg(windows)]
 pub use app::{run, AppError};
+
+#[cfg(windows)]
+mod native_form;
+#[cfg(windows)]
+mod options;
+#[cfg(windows)]
+mod options_editors;
+
+#[cfg(windows)]
+mod configuration_system;

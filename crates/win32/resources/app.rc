@@ -192,23 +192,16 @@ BEGIN
     CONTROL "&Don't show this dialog again", 2507, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 8, 117, 294, 10
 END
 
-202 DIALOGEX 0, 0, 330, 158
-STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+202 DIALOGEX 0, 0, 356, 310
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN
 EXSTYLE WS_EX_CONTROLPARENT
-CAPTION "Options"
+CAPTION "Rusty Download Manager Configuration"
 FONT 8, "Tahoma"
 BEGIN
-    LTEXT "Default save &folder:", -1, 8, 8, 314, 9
-    EDITTEXT 2102, 8, 20, 260, 13, ES_AUTOHSCROLL | WS_TABSTOP
-    PUSHBUTTON "&Browse...", 2103, 274, 20, 48, 14, WS_TABSTOP
-    GROUPBOX "Downloads", -1, 8, 42, 314, 80
-    CONTROL "&Ask what to do with duplicate links", 2406, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 16, 55, 296, 11
-    LTEXT "Otherwise:", 2408, 16, 78, 45, 9
-    COMBOBOX 2407, 66, 74, 246, 70, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    CONTROL "Show the download &complete dialog", 2509, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 16, 103, 296, 11
-    LTEXT "Folders and download preferences are remembered.", -1, 8, 128, 314, 10
-    DEFPUSHBUTTON "&Save", IDOK, 220, 140, 48, 14, WS_TABSTOP
-    PUSHBUTTON "Cancel", IDCANCEL, 274, 140, 48, 14, WS_TABSTOP
+    CONTROL "", 3100, "SysTabControl32", WS_TABSTOP | WS_CLIPSIBLINGS, 8, 6, 340, 278
+    DEFPUSHBUTTON "OK", IDOK, 186, 291, 50, 15
+    PUSHBUTTON "Cancel", IDCANCEL, 242, 291, 50, 15
+    PUSHBUTTON "Help", 9, 298, 291, 50, 15
 END
 
 203 DIALOGEX 0, 0, 380, 145
@@ -362,4 +355,180 @@ BEGIN
     PUSHBUTTON "Stop", 2743, 192, 260, 50, 15
     PUSHBUTTON "Apply", 2744, 328, 260, 50, 15
     PUSHBUTTON "Close", 2745, 390, 260, 50, 15
+END
+
+213 DIALOGEX 0, 0, 332, 260
+STYLE DS_SETFONT | DS_CONTROL | WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS
+EXSTYLE WS_EX_CONTROLPARENT
+FONT 8, "Tahoma"
+BEGIN
+    CONTROL "", 3101, "Static", SS_ICON, 6, 4, 22, 22
+    RTEXT "Browser/System Integration", 3102, 40, 11, 284, 12
+    CONTROL "", -1, "Static", SS_ETCHEDHORZ, 34, 28, 290, 1
+    LTEXT "Extension setup is required for browser capture.", 3103, 90, 37, 166, 12
+    PUSHBUTTON "Restart", 3110, 264, 34, 60, 15
+    CONTROL "Launch Rusty Download Manager on startup", 3111, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 58, 308, 11
+    CONTROL "Automatically download URLs placed on the clipboard", 3112, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 75, 308, 11
+    GROUPBOX "Capture downloads from the following browsers:", -1, 8, 95, 316, 101
+    CONTROL "", 3113, "SysListView32", LVS_REPORT | LVS_NOCOLUMNHEADER | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP, 18, 109, 296, 62
+    PUSHBUTTON "Add browser...", 3114, 232, 176, 82, 15
+    LTEXT "Keys to prevent or force downloading with Rusty", -1, 12, 205, 242, 11
+    PUSHBUTTON "Keys...", 3115, 264, 202, 60, 15
+    LTEXT "Customize Rusty items in browser context menus", -1, 12, 225, 242, 11
+    PUSHBUTTON "Edit...", 3116, 264, 222, 60, 15
+    LTEXT "Customize Rusty download panels in browsers", -1, 12, 245, 242, 11
+    PUSHBUTTON "Edit...", 3117, 264, 242, 60, 15
+END
+
+214 DIALOGEX 0, 0, 332, 260
+STYLE DS_SETFONT | DS_CONTROL | WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS
+EXSTYLE WS_EX_CONTROLPARENT
+FONT 8, "Tahoma"
+BEGIN
+    CONTROL "", 3101, "Static", SS_ICON, 6, 4, 22, 22
+    RTEXT "Downloaded file types", 3102, 40, 11, 284, 12
+    CONTROL "", -1, "Static", SS_ETCHEDHORZ, 34, 28, 290, 1
+    LTEXT "Automatically start downloading the following file types:", -1, 8, 37, 316, 10
+    EDITTEXT 3130, 8, 49, 316, 44, ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON "Default", 3131, 264, 98, 60, 15
+    LTEXT "Do not download automatically from these sites:", -1, 8, 123, 316, 10
+    EDITTEXT 3132, 8, 135, 316, 35, ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | WS_TABSTOP
+    LTEXT "Host names or *.example.com; separate with spaces.", -1, 8, 178, 246, 18
+    PUSHBUTTON "Default", 3133, 264, 175, 60, 15
+    LTEXT "Do not download automatically from these addresses:", -1, 8, 207, 316, 10
+    PUSHBUTTON "Edit list...", 3134, 8, 222, 108, 15
+END
+
+215 DIALOGEX 0, 0, 332, 260
+STYLE DS_SETFONT | DS_CONTROL | WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS
+EXSTYLE WS_EX_CONTROLPARENT
+FONT 8, "Tahoma"
+BEGIN
+    CONTROL "", 3101, "Static", SS_ICON, 6, 4, 22, 22
+    RTEXT "Categories, file types, folders", 3102, 40, 11, 284, 12
+    CONTROL "", -1, "Static", SS_ETCHEDHORZ, 34, 28, 290, 1
+    GROUPBOX "Save To...", -1, 8, 35, 316, 142
+    LTEXT "Category", -1, 20, 50, 176, 10
+    COMBOBOX 3150, 20, 63, 182, 104, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON "New", 3151, 264, 46, 50, 15
+    PUSHBUTTON "Edit...", 3152, 264, 67, 50, 15
+    LTEXT "Automatically put these file types in this category:", -1, 20, 88, 294, 10
+    EDITTEXT 3153, 20, 101, 294, 13, ES_READONLY | ES_AUTOHSCROLL
+    LTEXT "Default download directory for this category:", -1, 20, 122, 294, 10
+    EDITTEXT 3154, 20, 135, 232, 13, ES_AUTOHSCROLL | WS_TABSTOP
+    PUSHBUTTON "Browse", 3155, 260, 134, 54, 15
+    CONTROL "Change this category folder on last selected", 3156, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 20, 156, 294, 11
+    CONTROL "Set file creation date as provided by the server", 3157, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 186, 312, 11
+    GROUPBOX "Temporary directory", -1, 8, 207, 316, 49
+    EDITTEXT 3158, 18, 220, 234, 13, ES_AUTOHSCROLL | WS_TABSTOP
+    PUSHBUTTON "Browse", 3159, 260, 219, 54, 15
+    LTEXT "File parts are stored here; existing recovery paths are preserved.", -1, 18, 238, 296, 12
+END
+
+216 DIALOGEX 0, 0, 332, 260
+STYLE DS_SETFONT | DS_CONTROL | WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS
+EXSTYLE WS_EX_CONTROLPARENT
+FONT 8, "Tahoma"
+BEGIN
+    CONTROL "", 3101, "Static", SS_ICON, 6, 4, 22, 22
+    RTEXT "Default download settings", 3102, 40, 11, 284, 12
+    CONTROL "", -1, "Static", SS_ETCHEDHORZ, 34, 28, 290, 1
+    LTEXT "Customize the download progress dialog", -1, 70, 37, 184, 11
+    PUSHBUTTON "Edit...", 3170, 264, 34, 60, 15
+    CONTROL "Show start download dialog", 3171, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 55, 308, 11
+    CONTROL "Do not start downloading; only add files to the queue", 3172, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 32, 69, 288, 11
+    CONTROL "Show download complete dialog", 3173, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 83, 308, 11
+    LTEXT "These dialog preferences do not change queue processing.", -1, 20, 98, 304, 10
+    CONTROL "", -1, "Static", SS_ETCHEDHORZ, 8, 111, 316, 1
+    CONTROL "Start downloading immediately while displaying File Info", 3174, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 120, 312, 11
+    CONTROL "Show queue selection when pressing Download Later", 3175, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 136, 312, 11
+    CONTROL "Show queue selection when confirming URL batches", 3176, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 152, 312, 11
+    CONTROL "Ignore file modification time changes when resuming", 3177, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 168, 312, 11
+    CONTROL "", -1, "Static", SS_ETCHEDHORZ, 8, 183, 316, 1
+    LTEXT "If a duplicate download link is added:", -1, 8, 190, 316, 9
+    COMBOBOX 3178, 8, 201, 316, 70, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT "User-Agent for manually added downloads:", -1, 8, 220, 316, 9
+    EDITTEXT 3179, 8, 231, 316, 13, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "Virus checking settings", -1, 170, 250, 86, 10
+    PUSHBUTTON "Edit...", 3180, 264, 247, 60, 13
+END
+
+217 DIALOGEX 0, 0, 296, 176
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+FONT 8, "Tahoma"
+BEGIN
+    LTEXT "", 3200, 8, 8, 280, 28
+    CONTROL "", 3210, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 40, 272, 11
+    CONTROL "", 3211, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 54, 272, 11
+    CONTROL "", 3212, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 68, 272, 11
+    CONTROL "", 3213, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 82, 272, 11
+    CONTROL "", 3214, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 96, 272, 11
+    CONTROL "", 3215, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 110, 272, 11
+    CONTROL "", 3216, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 124, 272, 11
+    CONTROL "", 3217, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 138, 272, 11
+    DEFPUSHBUTTON "OK", IDOK, 178, 155, 50, 15
+    PUSHBUTTON "Cancel", IDCANCEL, 236, 155, 52, 15
+END
+218 DIALOGEX 0, 0, 332, 186
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+FONT 8, "Tahoma"
+BEGIN
+    LTEXT "Exact HTTP(S) addresses; a trailing * matches a URL prefix.", -1, 8, 8, 316, 20
+    LISTBOX 3220, 8, 32, 316, 112, LBS_NOTIFY | WS_BORDER | WS_VSCROLL | WS_HSCROLL | WS_TABSTOP
+    PUSHBUTTON "Add...", 3221, 8, 151, 48, 15
+    PUSHBUTTON "Edit...", 3222, 62, 151, 48, 15
+    PUSHBUTTON "Remove", 3223, 116, 151, 48, 15
+    DEFPUSHBUTTON "OK", IDOK, 218, 165, 50, 15
+    PUSHBUTTON "Cancel", IDCANCEL, 274, 165, 50, 15
+END
+219 DIALOGEX 0, 0, 324, 104
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+FONT 8, "Tahoma"
+BEGIN
+    LTEXT "", 3200, 8, 8, 308, 20
+    EDITTEXT 3201, 8, 32, 308, 43, ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON "OK", IDOK, 210, 83, 50, 15
+    PUSHBUTTON "Cancel", IDCANCEL, 266, 83, 50, 15
+END
+220 DIALOGEX 0, 0, 324, 166
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+FONT 8, "Tahoma"
+BEGIN
+    LTEXT "Category name", -1, 8, 8, 308, 9
+    EDITTEXT 3230, 8, 20, 308, 13, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "File types (separated by spaces)", -1, 8, 42, 308, 9
+    EDITTEXT 3231, 8, 54, 308, 34, ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | WS_TABSTOP
+    LTEXT "Default download folder", -1, 8, 98, 308, 9
+    EDITTEXT 3232, 8, 110, 248, 13, ES_AUTOHSCROLL | WS_TABSTOP
+    PUSHBUTTON "Browse", 3234, 264, 109, 52, 15
+    CONTROL "Remember the last selected folder", 3233, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 8, 132, 248, 11
+    DEFPUSHBUTTON "OK", IDOK, 210, 145, 50, 15
+    PUSHBUTTON "Cancel", IDCANCEL, 266, 145, 50, 15
+END
+221 DIALOGEX 0, 0, 324, 172
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+FONT 8, "Tahoma"
+BEGIN
+    CONTROL "Check completed files with this scanner", 3240, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 8, 8, 308, 11
+    EDITTEXT 3241, 8, 27, 248, 13, ES_AUTOHSCROLL | WS_TABSTOP
+    PUSHBUTTON "Browse", 3242, 264, 26, 52, 15
+    LTEXT "Arguments: one per line; use a standalone {file} argument.", -1, 8, 50, 308, 20
+    EDITTEXT 3243, 8, 72, 308, 62, ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON "OK", IDOK, 210, 151, 50, 15
+    PUSHBUTTON "Cancel", IDCANCEL, 266, 151, 50, 15
+END
+222 DIALOGEX 0, 0, 324, 170
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+FONT 8, "Tahoma"
+BEGIN
+    LTEXT "Browser", -1, 8, 8, 308, 9
+    COMBOBOX 3250, 8, 20, 308, 80, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT "Extension ID (copy from that browser extension details)", -1, 8, 43, 308, 10
+    EDITTEXT 3251, 8, 56, 308, 13, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "Installed browser executable (optional for standard installs)", -1, 8, 80, 308, 10
+    EDITTEXT 3252, 8, 93, 248, 13, ES_AUTOHSCROLL | WS_TABSTOP
+    PUSHBUTTON "Browse", 3253, 264, 92, 52, 15
+    LTEXT "Install Rusty in this browser and approve website access. Registration is applied only when you save Options.", 3254, 8, 116, 308, 28
+    DEFPUSHBUTTON "OK", IDOK, 210, 149, 50, 15
+    PUSHBUTTON "Cancel", IDCANCEL, 266, 149, 50, 15
 END

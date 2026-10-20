@@ -74,6 +74,7 @@ impl Default for PanelPolicy {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CapturePolicy {
+    pub restart_generation: u64,
     pub revision: u64,
     pub browsers: Vec<BrowserKind>,
     pub extensions: Vec<String>,
@@ -86,6 +87,7 @@ pub struct CapturePolicy {
 impl Default for CapturePolicy {
     fn default() -> Self {
         Self {
+            restart_generation: 0,
             revision: 1,
             browsers: BrowserKind::ALL.to_vec(),
             extensions: extensions(DEFAULT_EXTENSIONS).expect("factory extensions"),

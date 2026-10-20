@@ -22,8 +22,9 @@ async function desktopPolicy(force = false) {
     try { const reply = await native.send({ op: 'policy', payload: { browser: BROWSER } });
       if (reply.status !== 'policy' || reply.browser !== BROWSER) { policy = null; return null; }
       const changed = !policy || policy.revision !== reply.policy.revision;
+      const reconnect = policy && policy.restart_generation !== reply.policy.restart_generation;
       policy = reply.policy; policyAt = Date.now();
-      if (changed) await ensureMenu(); return policy;
+      if (changed) await ensureMenu(); if (reconnect) native.failPort(); return policy;
     } catch { policy = null; return null; }
     finally { policyFlight = null; }
   })(); return policyFlight;

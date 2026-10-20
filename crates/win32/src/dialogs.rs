@@ -11,6 +11,7 @@ use rusty_browser_bridge::{
     protocol::CaptureRequest,
 };
 use rusty_engine::{validate_request, DownloadRequest, ReplacementPolicy};
+use std::os::windows::ffi::OsStringExt;
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},
@@ -158,34 +159,36 @@ fn finish_download(
 }
 
 pub fn show_options(owner: HWND, settings: &Settings) -> Result<Option<Settings>, AppError> {
-    let mut draft = Draft {
-        path: settings.default_destination.to_string_lossy().into_owned(),
-        duplicate_choice: settings.duplicate_choice.clone(),
-        show_completion_dialog: settings.show_completion_dialog,
-        ..Default::default()
-    };
-    loop {
-        let Some(chosen) = show(owner, Mode::Options, &draft, settings, None)? else {
-            return Ok(None);
-        };
-        draft = chosen;
-        let folder = PathBuf::from(&draft.path);
-        if !folder.is_absolute() || !folder.is_dir() {
-            message(
-                Some(owner),
-                "Folder unavailable",
-                "Select an existing absolute folder for downloads.",
-                false,
-            );
-            continue;
+    crate::options::show(owner, settings)
+}
+pub(crate) fn choose_folder(owner: HWND, current: &Path) -> Result<Option<PathBuf>, AppError> {
+    pick(owner, Mode::Options, current)
+}
+pub(crate) fn choose_program(owner: HWND) -> Result<Option<PathBuf>, AppError> {
+    unsafe {
+        let dialog: IFileOpenDialog =
+            CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
+        dialog.SetOptions(
+            dialog.GetOptions()?
+                | FOS_FORCEFILESYSTEM
+                | FOS_PATHMUSTEXIST
+                | FOS_FILEMUSTEXIST
+                | FOS_NOCHANGEDIR,
+        )?;
+        dialog.SetTitle(w!("Select a Windows program"))?;
+        if let Err(error) = dialog.Show(Some(owner)) {
+            if error.code() == windows::core::HRESULT::from_win32(ERROR_CANCELLED.0) {
+                return Ok(None);
+            }
+            return Err(error.into());
         }
-        let mut updated = settings.clone();
-        updated.default_destination = folder;
-        updated.duplicate_choice = draft.duplicate_choice;
-        updated.show_completion_dialog = draft.show_completion_dialog;
-        return Ok(Some(updated));
+        let path = dialog.GetResult()?.GetDisplayName(SIGDN_FILESYSPATH)?;
+        let result = PathBuf::from(std::ffi::OsString::from_wide(path.as_wide()));
+        CoTaskMemFree(Some(path.0.cast()));
+        Ok(Some(result))
     }
 }
+
 fn show(
     owner: HWND,
     mode: Mode,

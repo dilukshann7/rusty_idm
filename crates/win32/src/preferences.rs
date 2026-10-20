@@ -58,9 +58,21 @@ impl ScannerPreferences {
         Ok(())
     }
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BrowserRegistration {
+    pub browser: rusty_browser_bridge::policy::BrowserKind,
+    pub extension_id: String,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Configuration {
+    #[serde(skip)]
+    pub registrations: Vec<BrowserRegistration>,
+    #[serde(skip)]
+    pub renamed_categories: Vec<(String, String)>,
+    #[serde(default)]
+    pub browser_executables:
+        std::collections::BTreeMap<rusty_browser_bridge::policy::BrowserKind, PathBuf>,
     pub revision: u64,
     pub startup: Option<bool>,
     pub clipboard: bool,
@@ -82,6 +94,9 @@ pub struct Configuration {
 impl Default for Configuration {
     fn default() -> Self {
         Self {
+            registrations: vec![],
+            renamed_categories: vec![],
+            browser_executables: Default::default(),
             revision: 1,
             startup: None,
             clipboard: false,
