@@ -72,6 +72,8 @@ Interfaces: accepted settings revision; clipboard owned actions; held queue sele
 
 Files: README, feature guide/spec status, source-check scripts as necessary.
 - [x] Document usage, four-browser setup, defaults and deferred runtime matrix.
-- [ ] Run cargo fmt --all, scripts/verify-source.ps1 and git diff --check; these are not compilation/runtime verification.
-- [ ] One fresh GPT-6.1 Sol source review of complete implementation against the spec and Review Focus; fix important findings inline and rerun allowed checks.
-- [ ] Commit, leave feature checkout available and report actual verification boundaries. No merge/push/release without request.
+- [x] Run cargo fmt --all, scripts/verify-source.ps1 and git diff --check; these are not compilation/runtime verification.
+- [x] One fresh GPT-6.1 Sol source review of complete implementation against the spec and Review Focus; fix important findings inline and rerun allowed checks.
+- [x] Commit, leave feature checkout available and report actual verification boundaries. No merge/push/release without request.
+
+Final source review and corrections are recorded in [VALIDATION](../../VALIDATION.md#unreleased-compact-configuration-source). All checked verification steps are source-only; builds/tests/runtime remain explicitly deferred.

@@ -7,10 +7,12 @@ pub enum SubmissionAction {
     Show(JobId),
     Activate(JobId),
     Restart(JobId),
+    RestartApproved(JobId, crate::ReplacementPolicy),
 }
 impl SubmissionAction {
     pub(crate) fn same(&self, other: &Self) -> bool {
         match (self, other) {
+            (Self::RestartApproved(a, pa), Self::RestartApproved(b, pb)) => a == b && pa == pb,
             (Self::Show(a), Self::Show(b))
             | (Self::Activate(a), Self::Activate(b))
             | (Self::Restart(a), Self::Restart(b)) => a == b,

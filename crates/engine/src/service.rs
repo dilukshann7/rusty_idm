@@ -309,12 +309,24 @@ async fn actor(
                             ExternalCommand::Apply{id,action,lease,reply}=> {
                                 if let Some(record)=receipts.get(&id) { let _=reply.send(if record.action.same(&action) { record.result.clone() } else { Err(SubmissionError::InvalidAction) }); continue; }
                                 if receipts.len()>=MAX_RECEIPTS { let _=reply.send(Err(SubmissionError::Busy)); continue; }
-                                let result=lease.try_accept(|| {
+                                let mut result=lease.try_accept(|| {
                                     if closing.load(Ordering::Acquire) { return Err(SubmissionError::Closing); }
                                     let (job_id,created_new)=match &action {
-                                        SubmissionAction::Submit(request)=>(admit(request.clone(),&mut jobs,&mut waiting,&mut next_id,&bus,&queues)?,true),
+                                        SubmissionAction::Submit(request)=>(admit(request.clone(),&mut jobs,&mut waiting,&mut next_id,&bus,&queues,true)?,true),
                                         SubmissionAction::Show(id)=> { if !jobs.contains_key(id) { return Err(SubmissionError::NotFound); } (*id,false) },
                                         SubmissionAction::Activate(id)=> { let job=jobs.get_mut(id).ok_or(SubmissionError::NotFound)?; activate_external(job,&mut waiting,&bus)?; (*id,false) },
+                                        SubmissionAction::RestartApproved(id,replacement)=>{
+                                            let job=jobs.get(id).ok_or(SubmissionError::NotFound)?;
+                                            if job.snapshot.readiness!=EntryReadiness::Ready || has_retained_partial(job){return Err(SubmissionError::RecoveryRequired);}
+                                            if !(job.snapshot.state.is_terminal()&&!bus.terminal_pending(*id) || job.snapshot.state==JobState::Waiting&&!job.started){return Err(SubmissionError::Busy);}
+                                            if jobs.iter().any(|(other,entry)|other!=id&&entry.snapshot.state.is_active()&&same_destination(&job.request.destination,&entry.request.destination)){return Err(SubmissionError::Busy);}
+                                            let actual=inspect_destination(&job.request.destination).map_err(|_|SubmissionError::InvalidAction)?;
+                                            let approved=match replacement{ReplacementPolicy::Deny=>None,ReplacementPolicy::Approved(identity)=>Some(identity.clone())};
+                                            if actual!=approved{return Err(SubmissionError::InvalidAction);}
+                                            let job=jobs.get_mut(id).expect("checked");
+                                            if let Some(recovery)=&job.request.recovery{recovery.clear().map_err(|_|SubmissionError::InvalidAction)?;}
+                                            reset_job(job,replacement.clone());waiting.retain(|j|j!=id);waiting.push_back(*id);bus.publish(Event::JobChanged(job.snapshot.clone()));(*id,false)
+                                        },
                                         SubmissionAction::Restart(id)=> {
                                             let job=jobs.get(id).ok_or(SubmissionError::NotFound)?;
                                             if job.snapshot.readiness!=EntryReadiness::Ready || has_retained_partial(job) { return Err(SubmissionError::RecoveryRequired); }
@@ -332,12 +344,31 @@ async fn actor(
                                     };
                                     if lease.deadline_elapsed() {
                                         waiting.retain(|queued|*queued!=job_id);
-                                        if created_new { jobs.remove(&job_id);bus.publish(Event::JobRemoved(job_id)); }
+                                        if created_new {
+                                            if let Some(entry)=jobs.get(&job_id).and_then(|j|j.snapshot.entry_id){if let Err(error)=queues.rollback_admission(entry){reject(&bus,&format!("Expired admission is quarantined for recovery: {error}"));}}
+                                            jobs.remove(&job_id);bus.publish(Event::JobRemoved(job_id));
+                                        }
                                         else if let Some(job)=jobs.get_mut(&job_id) { if job.snapshot.state==JobState::Waiting {job.snapshot.deferred=true;job.request.deferred=true;} }
                                         return Err(SubmissionError::Expired);
                                     }
                                     Ok(SubmissionReceipt{id:id.clone(),job_id,created_new})
                                 }).map_err(|e|match e { LeaseFailure::Expired=>SubmissionError::Expired,LeaseFailure::Revoked=>SubmissionError::Revoked,LeaseFailure::AlreadyAccepted=>SubmissionError::InvalidAction,LeaseFailure::Action(e)=>e });
+                                // No task can run before this actor iteration ends. Publish the
+                                // durable commit only after the lease accepted the pending record.
+                                if let Ok(receipt)=&result {
+                                    if receipt.created_new {
+                                        if let Some(entry)=jobs.get(&receipt.job_id).and_then(|j|j.snapshot.entry_id){
+                                            if let Err(error)=queues.finish_admission(entry){
+                                                let job_id=receipt.job_id;
+                                                waiting.retain(|queued|*queued!=job_id);
+                                                let rollback=queues.rollback_admission(entry);
+                                                jobs.remove(&job_id);bus.publish(Event::JobRemoved(job_id));
+                                                reject(&bus,&format!("Admission was not started: {error}{}",if rollback.is_err(){". Its unacknowledged record remains quarantined for recovery."}else{""}));
+                                                result=Err(SubmissionError::RecoveryRequired);
+                                            }
+                                        }
+                                    }
+                                }
                                 receipts.insert(id,Record{action,result:result.clone(),cancelled:false,at:Instant::now()}); let _=reply.send(result);
                             },
                             ExternalCommand::Status{id,reply}=> { let status=receipts.get(&id).map(|r| if r.cancelled { SubmissionStatus::Declined(SubmissionError::Revoked) } else { match &r.result { Ok(receipt)=>SubmissionStatus::Accepted(receipt.clone()),Err(e)=>SubmissionStatus::Declined(*e) } }).unwrap_or(SubmissionStatus::Unknown); let _=reply.send(status); },
@@ -364,7 +395,7 @@ async fn actor(
                     },
                     Some(Command::Submit(request)) => {
                         if closing.load(Ordering::Acquire) { reject(&bus, "The engine is shutting down."); continue; }
-                        if admit(request,&mut jobs,&mut waiting,&mut next_id,&bus,&queues).is_err() { reject(&bus,"Download admission rejected. Check duplicates, entry limits and save path."); }
+                        if admit(request,&mut jobs,&mut waiting,&mut next_id,&bus,&queues,false).is_err() { reject(&bus,"Download admission rejected. Check duplicates, entry limits and save path."); }
                     },
                     Some(Command::ConfirmInfo(id)) => {
                         if let Some(job)=jobs.get_mut(&id) {
@@ -698,6 +729,7 @@ fn admit(
     next_id: &mut u64,
     bus: &EventBus,
     queues: &QueueRuntime,
+    pending_admission: bool,
 ) -> Result<JobId, SubmissionError> {
     let mut request = request;
     if jobs.len() + bus.removed_pending() >= 1000 {
@@ -724,7 +756,7 @@ fn admit(
     {
         Some(
             queues
-                .admit(&mut request)
+                .admit(&mut request, pending_admission)
                 .map_err(|_| SubmissionError::InvalidAction)?,
         )
     } else {

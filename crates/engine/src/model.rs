@@ -37,7 +37,7 @@ pub struct DestinationIdentity {
     #[cfg(windows)]
     pub(crate) index: u64,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReplacementPolicy {
     Deny,
     Approved(DestinationIdentity),

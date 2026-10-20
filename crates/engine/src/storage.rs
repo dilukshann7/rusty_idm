@@ -43,6 +43,8 @@ pub(crate) struct StoredEntry {
     #[serde(default)]
     pub ephemeral: bool,
     #[serde(default)]
+    pub admission_pending: bool,
+    #[serde(default)]
     pub staging: Option<Checkpoint>,
     pub id: EntryId,
     pub url: String,
@@ -70,7 +72,7 @@ pub(crate) struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            version: 3,
+            version: 4,
             next_entry: 1,
             next_queue: 2,
             queues: [(
@@ -124,7 +126,7 @@ impl Store {
                             .to_string()
                     })?;
                     validate(&state)?;
-                    state.version = 3;
+                    state.version = 4;
                     Ok(state)
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(State::default()),
@@ -254,7 +256,7 @@ pub(crate) fn storage_error(message: String) -> JobError {
     )
 }
 fn validate(s: &State) -> Result<(), String> {
-    if !matches!(s.version, 1 | 2 | 3)
+    if !matches!(s.version, 1 | 2 | 3 | 4)
         || !s.queues.contains_key(&QueueId::MAIN)
         || s.entries.len() > 1000
         || s.queues.len() > 100

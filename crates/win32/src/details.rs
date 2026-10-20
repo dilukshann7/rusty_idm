@@ -120,7 +120,10 @@ impl DetailsWindows {
                 )?;
             }
             if self.preferences.details {
-                expand(detail.hwnd.get(), true)?;
+                if let Err(error) = expand(detail.hwnd.get(), true) {
+                    destroy(detail.hwnd.get());
+                    return Err(error.into());
+                }
             }
             unsafe {
                 let _ = ShowWindow(

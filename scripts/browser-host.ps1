@@ -31,6 +31,11 @@ if(@($files | Where-Object {Test-Path -LiteralPath $_}).Count -gt 0){
 }
 if($registered -and ($registered -ne $manifestPath -or -not $owner)){throw 'Another registration owns this browser host. Nothing changed.'}
 if($Mode -eq 'Unregister' -and -not $owner){return}
+if($Mode -eq 'Unregister' -and $Browser -ne 'chrome'){
+    $ownedHost=Join-Path $root 'rusty-native-host.exe'
+    if($owner.host_exe -ne $ownedHost){throw 'The copied browser host ownership is ambiguous. It was preserved.'}
+    if(Test-Path -LiteralPath $ownedHost){$before[$ownedHost]=[IO.File]::ReadAllBytes($ownedHost);$files+=@($ownedHost)}
+}
 if($Mode -eq 'Register'){
     if(($Browser -eq 'firefox' -and $ExtensionId -cnotmatch '^[a-zA-Z0-9@._{}-]{3,200}$') -or ($Browser -ne 'firefox' -and $ExtensionId -cnotmatch '^[a-p]{32}$')){throw 'Enter this browser extension exact ID.'}
     foreach($binary in @($HostExe,$GuiExe)){if(-not [IO.Path]::IsPathRooted($binary) -or [IO.Path]::GetExtension($binary) -ine '.exe' -or -not (Test-Path -LiteralPath $binary -PathType Leaf)){throw 'Existing absolute host and application .exe paths are required.'}}

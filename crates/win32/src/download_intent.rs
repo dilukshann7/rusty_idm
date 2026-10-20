@@ -12,6 +12,10 @@ pub enum DownloadIntent {
         job_id: JobId,
         action: ExistingAction,
     },
+    RestartApproved {
+        job_id: JobId,
+        replacement: rusty_engine::ReplacementPolicy,
+    },
     Cancelled,
 }
 impl DownloadIntent {
@@ -23,6 +27,10 @@ impl DownloadIntent {
                 ExistingAction::Activate => SubmissionAction::Activate(job_id),
                 ExistingAction::Restart => SubmissionAction::Restart(job_id),
             }),
+            Self::RestartApproved {
+                job_id,
+                replacement,
+            } => Some(SubmissionAction::RestartApproved(job_id, replacement)),
             Self::Cancelled => None,
         }
     }

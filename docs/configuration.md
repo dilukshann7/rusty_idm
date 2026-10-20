@@ -60,7 +60,8 @@ set Windows creation time; it never replaces the normal resume validators.
   rewriting, modification-time tolerance and scanning default off.
 - With the start dialog disabled, category folders and duplicate preferences
   apply. Required overwrite, credentials and recovery decisions still prompt.
-- Queue-only takes precedence over immediate File Info downloading.
+- Queue-only applies when the start dialog is off. Re-enabling the start dialog
+  disables that held-admission mode.
 - Immediate File Info receives into one durable provisional transfer. Its
   destination and credentials are immutable. **Start Download** confirms that
   same transfer; final publication waits for confirmation. **Cancel** cancels

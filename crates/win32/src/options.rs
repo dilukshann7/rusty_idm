@@ -375,7 +375,7 @@ impl Pages {
         let chosen = (!temp.trim().is_empty()).then(|| PathBuf::from(temp.trim()));
         c.temporary_directory = chosen.filter(|p| Some(p) != system_default.as_ref());
         c.show_start_dialog = ui::checked(downloads, CFG_START_DIALOG);
-        c.queue_only = ui::checked(downloads, CFG_QUEUE_ONLY);
+        c.queue_only = !c.show_start_dialog && ui::checked(downloads, CFG_QUEUE_ONLY);
         c.immediate_info = ui::checked(downloads, CFG_IMMEDIATE);
         c.choose_queue_later = ui::checked(downloads, CFG_QUEUE_LATER);
         c.choose_queue_batch = ui::checked(downloads, CFG_QUEUE_BATCH);

@@ -48,11 +48,13 @@ impl QueueRuntime {
             attempted_start: BTreeMap::new(),
         }
     }
-    pub fn admit(&self, request: &mut DownloadRequest) -> Result<EntryId, String> {
+    pub fn admit(&self, request: &mut DownloadRequest, pending: bool) -> Result<EntryId, String> {
         let id = self.store.update(|s| {
             let id = EntryId(s.next_entry);
             s.next_entry += 1;
-            s.entries.insert(id, stored(id, request));
+            let mut entry = stored(id, request);
+            entry.admission_pending = pending;
+            s.entries.insert(id, entry);
             if request.deferred {
                 s.queues
                     .get_mut(&request.queue.unwrap_or(QueueId::MAIN))
@@ -67,6 +69,24 @@ impl QueueRuntime {
             entry: id,
         });
         Ok(id)
+    }
+    pub fn finish_admission(&self, entry: EntryId) -> Result<(), String> {
+        self.store.update(|s| {
+            s.entries
+                .get_mut(&entry)
+                .ok_or("Admission record is missing.")?
+                .admission_pending = false;
+            Ok(())
+        })
+    }
+    pub fn rollback_admission(&self, entry: EntryId) -> Result<(), String> {
+        self.store.update(|s| {
+            s.entries.remove(&entry);
+            for queue in s.queues.values_mut() {
+                queue.entries.retain(|e| *e != entry);
+            }
+            Ok(())
+        })
     }
     pub fn restore(&mut self, jobs: &mut BTreeMap<JobId, Job>, next: &mut u64, bus: &EventBus) {
         if let Some(problem) = self.store.problem() {
@@ -99,6 +119,10 @@ impl QueueRuntime {
                 EntryReadiness::Ready
             };
             let mut error = None;
+            if entry.admission_pending {
+                readiness = EntryReadiness::RecoveryRequired;
+                error=Some(JobError::new(ErrorKind::Storage,"An unacknowledged admission was preserved after a storage interruption. The browser may still own its download. Remove this held entry before adding it again."));
+            }
             let mut completed = entry.completed;
             if entry.staging.is_some() {
                 if let Err(e) = crate::output::recover_staging(
@@ -670,6 +694,7 @@ fn stored(id: EntryId, r: &DownloadRequest) -> StoredEntry {
     StoredEntry {
         options: r.options.clone(),
         ephemeral: !r.deferred,
+        admission_pending: false,
         staging: None,
         id,
         url: r.url.as_str().into(),

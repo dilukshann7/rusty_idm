@@ -55,7 +55,26 @@ impl Scanner {
         }
         self.waiting.retain(|w| w.snapshot.id != id);
     }
+    pub fn removed(&mut self, id: JobId) {
+        if let Some(record) = self.records.get_mut(&id) {
+            record.cancel.store(true, Ordering::Release);
+            if record.result.is_none() {
+                record.token = 0;
+                record.result=Some(Err("The download entry was removed before its scan completed. The file was not verified.".into()));
+            }
+        }
+        self.waiting.retain(|w| w.snapshot.id != id);
+    }
     pub fn enqueue(&mut self, snapshot: JobSnapshot, settings: ScannerPreferences) {
+        let obsolete: Vec<_> = self
+            .records
+            .iter()
+            .filter(|(_, r)| crate::duplicates::same_destination(&r.path, &snapshot.destination))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in obsolete {
+            self.invalidate(id);
+        }
         self.invalidate(snapshot.id);
         self.next = self.next.wrapping_add(1);
         let token = self.next;
@@ -133,7 +152,11 @@ impl Scanner {
         ready
     }
     pub fn allow_open(&self, owner: HWND, path: &Path) -> bool {
-        let record = self.records.values().find(|r| r.path == path);
+        let record = self
+            .records
+            .values()
+            .filter(|r| crate::duplicates::same_destination(&r.path, path))
+            .max_by_key(|r| r.token);
         match record.map(|r| &r.result) {
             Some(None) => {
                 message(Some(owner),"Virus check pending","The file is still being checked. Wait for the scanner result before opening it.",false);

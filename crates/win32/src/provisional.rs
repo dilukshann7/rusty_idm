@@ -54,6 +54,12 @@ pub fn manual(
     engine: &EngineClient,
     download: &AddedDownload,
 ) -> Result<(CaptureLease, Admission), AppError> {
+    manual_action(engine, SubmissionAction::Submit(download.request.clone()))
+}
+pub fn manual_action(
+    engine: &EngineClient,
+    action: SubmissionAction,
+) -> Result<(CaptureLease, Admission), AppError> {
     let guid = unsafe { CoCreateGuid() }?;
     let compact = format!("{:032x}", guid.to_u128());
     let id = RequestId::parse(&format!(
@@ -70,7 +76,7 @@ pub fn manual(
     engine
         .try_external(ExternalCommand::Apply {
             id: id.clone(),
-            action: SubmissionAction::Submit(download.request.clone()),
+            action,
             lease: lease.clone(),
             reply: tx,
         })

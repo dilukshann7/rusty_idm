@@ -107,11 +107,12 @@ chrome.downloads.onChanged.addListener(change => {
   } })().catch(showFailure);
 });
 async function explicitDownload(url, tab) {
-  if (tab?.incognito || !supportedUrl(url)) { await showOutcome('needs_attention'); return; }
+  if (tab?.incognito || !supportedUrl(url)) { await showOutcome('needs_attention'); return 'needs_attention'; }
   const id = crypto.randomUUID(); activeIds.add(id);
-  try { await showOutcome(await handoff(null, { id, url, source: 'context_menu', browser: BROWSER }, browser, native, ledger)); }
+  let outcome;
+  try { outcome = await handoff(null, { id, url, source: 'context_menu', browser: BROWSER }, browser, native, ledger); await showOutcome(outcome); }
   finally { activeIds.delete(id); }
-  await updateAlarm();
+  await updateAlarm(); return outcome;
 }
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   const url = info.menuItemId === 'rusty-download-link' ? info.linkUrl : info.menuItemId === 'rusty-download-selection' ? info.selectionText?.trim() : info.menuItemId === 'rusty-download-media' ? info.srcUrl : null;
@@ -140,8 +141,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
       if (message.type === 'panel-download' && policy?.panels.enabled && !excluded(policy, sender.url)) {
         const url = message.url;
         const extension = supportedUrl(url) ? new URL(url).pathname.split('.').pop().toLowerCase() : '';
-        if ((policy.panels.video && ['mp4','mkv','webm','mov','avi','m4v'].includes(extension)) || (policy.panels.audio && ['mp3','wav','ogg','m4a','flac','aac','opus'].includes(extension))) await explicitDownload(url, sender.tab);
-        return {};
+        if ((policy.panels.video && ['mp4','mkv','webm','mov','avi','m4v'].includes(extension)) || (policy.panels.audio && ['mp3','wav','ogg','m4a','flac','aac','opus'].includes(extension))) return { outcome: await explicitDownload(url, sender.tab) };
+        return { outcome: 'unsupported' };
       }
       return {};
     };

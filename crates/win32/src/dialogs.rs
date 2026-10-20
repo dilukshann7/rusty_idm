@@ -126,8 +126,9 @@ fn finish_download(
     lease: Option<&CaptureLease>,
     engine: &rusty_engine::EngineClient,
 ) -> Result<Option<AddedDownload>, AppError> {
+    let mut editable = settings.configuration.show_start_dialog;
     loop {
-        if settings.configuration.show_start_dialog {
+        if editable {
             let Some(info) = show(owner, Mode::Info, &draft, settings, lease)? else {
                 return Ok(None);
             };
@@ -145,6 +146,7 @@ fn finish_download(
                 "Enter a category name or choose one from the list.",
                 false,
             );
+            editable = true;
             continue;
         }
         let mut request = match validate_request(
@@ -155,6 +157,7 @@ fn finish_download(
             Ok(request) => request,
             Err(error) => {
                 message(Some(owner), "Invalid download", &error.message, false);
+                editable = true;
                 continue;
             }
         };
@@ -165,6 +168,7 @@ fn finish_download(
                 "Enter an absolute save path or use Browse.",
                 false,
             );
+            editable = true;
             continue;
         }
         if !request.destination.parent().is_some_and(Path::is_dir) {
@@ -174,13 +178,16 @@ fn finish_download(
                 "The save folder does not exist. Choose an existing folder.",
                 false,
             );
+            editable = true;
             continue;
         }
         request.options = settings.configuration.download_options(lease.is_none());
-        request.deferred = draft.deferred || settings.configuration.queue_only;
+        request.deferred = draft.deferred
+            || (!settings.configuration.show_start_dialog && settings.configuration.queue_only);
         if request.deferred && settings.configuration.choose_queue_later {
             let Some(queue) = crate::queue_picker::choose(owner, engine)? else {
-                if settings.configuration.show_start_dialog {
+                if editable {
+                    editable = true;
                     continue;
                 } else {
                     return Ok(None);

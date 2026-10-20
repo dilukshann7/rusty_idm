@@ -104,13 +104,15 @@ pub fn run_host<R: Read + Send, W: Write + Send>(
                         Err(e) if matches!(e.raw_os_error(), Some(2 | 231)) => {
                             if matches!(
                                 operation,
-                                Operation::Status { .. } | Operation::Abort { .. }
+                                Operation::Status { .. }
+                                    | Operation::Abort { .. }
+                                    | Operation::Policy(_)
                             ) {
                                 tx.send(Reply::new(id.clone(), ReplyStatus::Unknown))
                                     .map_err(|_| std::io::Error::other("Output closed"))?;
                                 return Ok(());
                             }
-                            if !matches!(operation, Operation::Capture(_) | Operation::Policy(_)) {
+                            if !matches!(operation, Operation::Capture(_)) {
                                 return Err(e);
                             }
                             {

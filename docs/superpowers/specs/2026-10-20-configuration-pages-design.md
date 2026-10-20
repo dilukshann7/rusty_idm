@@ -1,7 +1,7 @@
 # Compact configuration pages
 
 Date: 2026-10-20
-Status: Approved by the user on 2026-10-20; implementation in progress.
+Status: Approved by the user on 2026-10-20; implemented in source with a final source review and source checks. Compilation and runtime acceptance remain deferred.
 
 ## Intent and accepted requirements
 

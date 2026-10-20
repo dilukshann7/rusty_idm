@@ -285,6 +285,13 @@ impl AppState {
         {
             return Ok(DownloadIntent::Cancelled);
         }
+        if choice == DuplicateChoice::Overwrite {
+            let target = existing
+                .as_ref()
+                .map(|s| s.destination.as_path())
+                .unwrap_or(&download.request.destination);
+            if !message(Some(owner),"Replace existing download?",&format!("Download again and replace an existing file only after the transfer succeeds?\n\n{}",target.display()),true){return Ok(DownloadIntent::Cancelled);}
+        }
         match choice {
             DuplicateChoice::Numbered => {
                 let reserved = self
@@ -312,9 +319,24 @@ impl AppState {
             }
             DuplicateChoice::Overwrite if existing.is_some() => {
                 let existing = existing.expect("matched existing entry");
-                Ok(DownloadIntent::Existing {
+                if !existing.state.is_terminal()
+                    && existing.state != rusty_engine::JobState::Waiting
+                {
+                    message(
+                        Some(owner),
+                        "Download in use",
+                        "Stop this download before replacing it, or select a numbered copy.",
+                        false,
+                    );
+                    return Ok(DownloadIntent::Cancelled);
+                }
+                let replacement = rusty_engine::inspect_destination(&existing.destination)
+                    .map_err(|e| AppError(e.message))?
+                    .map(rusty_engine::ReplacementPolicy::Approved)
+                    .unwrap_or(rusty_engine::ReplacementPolicy::Deny);
+                Ok(DownloadIntent::RestartApproved {
                     job_id: existing.id,
-                    action: ExistingAction::Restart,
+                    replacement,
                 })
             }
             DuplicateChoice::Overwrite => {
@@ -347,11 +369,15 @@ impl AppState {
                         .as_ref()
                         .and_then(|engine| engine.find_duplicate(&download.request))
                         .unwrap_or(existing);
-                    let action = if latest.state == rusty_engine::JobState::Completed
+                    if latest.state == rusty_engine::JobState::Completed
                         && !latest.destination.is_file()
                     {
-                        ExistingAction::Restart
-                    } else if !latest.state.is_terminal() || latest.state.can_retry() {
+                        return Ok(DownloadIntent::RestartApproved {
+                            job_id: latest.id,
+                            replacement: rusty_engine::ReplacementPolicy::Deny,
+                        });
+                    }
+                    let action = if !latest.state.is_terminal() || latest.state.can_retry() {
                         ExistingAction::Activate
                     } else {
                         ExistingAction::Show
@@ -499,7 +525,10 @@ impl AppState {
                         }
                     }
                 }
-                Event::JobRemoved(id) => self.details.remove(*id),
+                Event::JobRemoved(id) => {
+                    self.details.remove(*id);
+                    self.scanner.removed(*id);
+                }
                 Event::CommandRejected { message: text } => {
                     if text == "Too many queue commands await acknowledgement." {
                         self.pending_create = None;
@@ -1306,7 +1335,9 @@ impl AppState {
                         Err(_) => "admission failed",
                     }
                 }
-                DownloadIntent::Existing { .. } => "duplicate kept; no batch transfer started",
+                DownloadIntent::Existing { .. } | DownloadIntent::RestartApproved { .. } => {
+                    "duplicate kept; no batch transfer started"
+                }
                 DownloadIntent::Cancelled => "cancelled",
             };
             results.push(format!("{}: {} — {}", n + 1, filename, result));
@@ -1327,8 +1358,7 @@ impl AppState {
     ) -> Result<DownloadIntent, AppError> {
         let client = self.engine.as_ref().expect("running engine").client();
         let immediate = self.settings.configuration.show_start_dialog
-            && self.settings.configuration.immediate_info
-            && !self.settings.configuration.queue_only;
+            && self.settings.configuration.immediate_info;
         let download = if immediate {
             prepared.initial(window.hwnd, &self.settings, lease, &client)?
         } else {
@@ -1337,7 +1367,7 @@ impl AppState {
         let Some(mut download) = download else {
             return Ok(DownloadIntent::Cancelled);
         };
-        if immediate {
+        if immediate && !download.request.deferred {
             download.request.options.confirmation_required = true;
         }
         self.resolve_download_intent(window, download, lease)
@@ -1380,6 +1410,20 @@ impl AppState {
                         self.details.show_or_update(owner, job)?;
                     }
                 }
+            }
+            DownloadIntent::RestartApproved {
+                job_id,
+                replacement,
+            } => {
+                let client = self.engine.as_ref().expect("running engine").client();
+                let (lease, admission) = crate::provisional::manual_action(
+                    &client,
+                    rusty_engine::submissions::SubmissionAction::RestartApproved(
+                        job_id,
+                        replacement,
+                    ),
+                )?;
+                crate::provisional::wait_admission(owner, &lease, admission)?;
             }
             DownloadIntent::Cancelled => {}
         }
