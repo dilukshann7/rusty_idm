@@ -56,6 +56,16 @@ See the [queue and recovery guide](docs/queues-and-system-icons.md). These sourc
 changes have not been compiled or exercised in the desktop app. They are not part
 of the published v0.1.0 installer.
 
+## Unreleased source: compact configuration
+
+The feature branch also adds four native Options pages, shared capture rules for
+Chrome/Brave/Edge/Firefox, category folders, optional clipboard capture, held URL
+batches, queue selection, provisional File Info transfers and external scanner
+integration. New automatic features default off. See the
+[configuration guide](docs/configuration.md) for setup, behavior and deferred
+runtime checks. These source changes are not in the published installer and
+have not been compiled or launched during this implementation.
+
 ## Source and release build
 
 The workspace contains `engine`, `win32`, `browser-bridge` and `native-host` crates.
