@@ -25,6 +25,7 @@ pub struct QueueSnapshot {
 pub enum EntryReadiness {
     Ready,
     CredentialsRequired,
+    ConfirmationRequired,
     RestartRequired,
     RecoveryRequired,
 }

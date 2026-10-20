@@ -52,6 +52,7 @@ pub enum Command {
     SetCategory(JobId, Option<String>),
     External(ExternalCommand),
     Submit(DownloadRequest),
+    ConfirmInfo(JobId),
     Start(JobId),
     Cancel(JobId),
     Pause(JobId),
@@ -340,6 +341,18 @@ async fn actor(
                         if closing.load(Ordering::Acquire) { reject(&bus, "The engine is shutting down."); continue; }
                         if admit(request,&mut jobs,&mut waiting,&mut next_id,&bus,&queues).is_err() { reject(&bus,"Download admission rejected. Check duplicates, entry limits and save path."); }
                     },
+                    Some(Command::ConfirmInfo(id)) => {
+                        if let Some(job)=jobs.get_mut(&id) {
+                            if !job.request.options.confirmation_required {continue;}
+                            let result=if let Some(r)=&job.request.recovery {r.store.update(|s|{let e=s.entries.get_mut(&r.entry).ok_or("Provisional download was removed.")?;e.options.confirmation_required=false;Ok(())})}else{Err("Provisional admission was not durable.".into())};
+                            if let Err(error)=result{reject(&bus,&error);continue;}
+                            job.request.options.confirmation_required=false;
+                            if job.snapshot.readiness==EntryReadiness::ConfirmationRequired {job.snapshot.readiness=EntryReadiness::Ready;}
+                            job.cancel.confirm();
+                            if job.snapshot.queue_id.is_none() && matches!(job.snapshot.state,JobState::Paused|JobState::Waiting){job.snapshot.state=JobState::Waiting;job.snapshot.deferred=false;job.request.deferred=false;waiting.push_back(id);}
+                            bus.publish(Event::JobChanged(job.snapshot.clone()));
+                        }
+                    },
                     Some(Command::Start(id)) => {
                         if closing.load(Ordering::Acquire) { reject(&bus, "The engine is shutting down."); continue; }
                         if let Some(job) = jobs.get_mut(&id) {
@@ -459,6 +472,7 @@ async fn actor(
                     }
                     if !matches!(job.snapshot.state, JobState::Running | JobState::Pausing) { continue; }
                     let update = updates.get(id).copied().unwrap_or(TransferProgress { received: job.snapshot.received, total: job.snapshot.total, resume_capable: job.snapshot.resume_capable, paused: false });
+                    if job.request.options.confirmation_required && update.paused && job.snapshot.state==JobState::Running {job.snapshot.state=JobState::Paused;}
                     if job.snapshot.state == JobState::Pausing && update.paused {
                         job.snapshot.state = JobState::Paused;
                         if job.resume_after_pause { job.resume_after_pause = false; job.snapshot.state = JobState::Waiting; waiting.push_back(*id); }
@@ -476,7 +490,7 @@ async fn actor(
             queues.clock_tick(&mut jobs, &mut waiting, &bus);
             queues.pump(&mut jobs, &mut waiting, &bus);
         }
-        queues.reconcile(&jobs, &bus);
+        queues.reconcile(&mut jobs, &bus);
         queues.publish(&jobs, &bus);
         // Queued cancellations cannot admit work; cleanup must release the task slot.
         while !shutdown
@@ -521,6 +535,8 @@ async fn actor(
                 job.cancel.try_resume();
                 continue;
             }
+            job.cancel
+                .require_confirmation(job.request.options.confirmation_required);
             job.cancel.attach_recovery(job.request.recovery.clone());
             job.started = true;
             let updates = progress.clone();
@@ -663,7 +679,14 @@ fn admit(
     }
     let id = JobId(*next_id);
     *next_id += 1;
-    let entry_id = if request.deferred {
+    request
+        .options
+        .validate()
+        .map_err(|_| SubmissionError::InvalidAction)?;
+    let entry_id = if request.deferred
+        || request.options.confirmation_required
+        || request.options.temporary_directory.is_some()
+    {
         Some(
             queues
                 .admit(&mut request)
@@ -678,7 +701,7 @@ fn admit(
         entry_id,
         restored: false,
         recovery_paths: vec![],
-        queue_id: entry_id.map(|_| QueueId::MAIN),
+        queue_id: request.deferred.then_some(QueueId::MAIN),
         readiness: EntryReadiness::Ready,
         filename: request
             .destination

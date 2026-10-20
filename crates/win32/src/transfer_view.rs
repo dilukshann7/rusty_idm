@@ -44,6 +44,9 @@ pub fn format_transfer(job: &JobSnapshot) -> TransferText {
         .map(|p| format!("{}% {}", p / 100, job.filename))
         .unwrap_or_else(|| job.filename.clone());
     let status = match job.readiness {
+        rusty_engine::EntryReadiness::ConfirmationRequired => {
+            "Confirm this download before starting."
+        }
         rusty_engine::EntryReadiness::CredentialsRequired => "Credentials required.",
         rusty_engine::EntryReadiness::RestartRequired => "Restart required.",
         rusty_engine::EntryReadiness::RecoveryRequired => "Recovery required.",

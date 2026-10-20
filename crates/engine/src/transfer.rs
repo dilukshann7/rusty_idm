@@ -28,6 +28,7 @@ pub struct TransferControl {
     settings: watch::Sender<TransferSettings>,
     preserve: Arc<std::sync::atomic::AtomicBool>,
     recovery: Arc<Mutex<Option<crate::storage::Recovery>>>,
+    confirmed: Arc<std::sync::atomic::AtomicBool>,
     checkpoint_ack: watch::Sender<Option<Result<(), JobError>>>,
 }
 #[derive(Clone, Copy, Default)]
@@ -49,7 +50,50 @@ impl TransferControl {
             settings: watch::channel(TransferSettings::default()).0,
             preserve: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             recovery: Arc::new(Mutex::new(None)),
+            confirmed: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             checkpoint_ack: watch::channel(None).0,
+        }
+    }
+    pub(crate) fn is_paused(&self) -> bool {
+        self.settings.borrow().paused
+    }
+    pub(crate) fn require_confirmation(&self, required: bool) {
+        self.confirmed
+            .store(!required, std::sync::atomic::Ordering::Release);
+    }
+    pub(crate) fn confirm(&self) {
+        self.confirmed
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.settings.send_modify(|_| {});
+    }
+    async fn await_confirmation(
+        &self,
+        output: &mut OutputFile,
+        progress: &ProgressSink,
+        bytes: u64,
+    ) -> Result<bool, JobError> {
+        let mut settings = self.settings.subscribe();
+        if self.confirmed.load(std::sync::atomic::Ordering::Acquire) {
+            return Ok(true);
+        }
+        self.try_pause();
+        output.checkpoint().await?;
+        progress(TransferProgress {
+            received: bytes,
+            total: Some(bytes),
+            resume_capable: true,
+            paused: true,
+        });
+        loop {
+            if self.token.is_cancelled() {
+                return Ok(false);
+            }
+            if self.confirmed.load(std::sync::atomic::Ordering::Acquire)
+                && !settings.borrow_and_update().paused
+            {
+                return Ok(true);
+            }
+            tokio::select! {biased;_=self.token.cancelled()=>return Ok(false),_=settings.changed()=>{}}
         }
     }
     pub(crate) fn attach_recovery(&self, recovery: Option<crate::storage::Recovery>) {
@@ -102,7 +146,10 @@ impl TransferControl {
         self.settings
             .send_modify(|settings| settings.bytes_per_second = bytes_per_second.unwrap_or(0));
     }
-    async fn wait_until_resumed_output(&self, output: &mut OutputFile) -> Result<bool, JobError> {
+    pub(crate) async fn wait_until_resumed_output(
+        &self,
+        output: &mut OutputFile,
+    ) -> Result<bool, JobError> {
         let mut settings = self.settings.subscribe();
         loop {
             if output.adopt_recovery(self.recovery()) {
@@ -234,7 +281,7 @@ pub async fn controlled_transfer(
         return Ok(TransferOutcome::Cancelled);
     }
     let mut output = OutputFile::durable_prepare(&request).await?;
-    let result = stream(&request, &control, progress, &mut output).await;
+    let result = stream(&request, &control, progress.clone(), &mut output).await;
     output.adopt_recovery(control.recovery());
     if control.recovery().is_some() && (control.preserving() || result.is_err()) {
         output.checkpoint().await?;
@@ -251,8 +298,25 @@ pub async fn controlled_transfer(
             }
             Ok(TransferOutcome::Cancelled)
         }
-        Ok(done @ TransferOutcome::Completed { .. }) => {
-            if output.finalize_controlled(control).await? {
+        Ok(done @ TransferOutcome::Completed { bytes }) => {
+            if !control
+                .await_confirmation(&mut output, &progress, bytes)
+                .await?
+            {
+                if control.preserving() {
+                    output.checkpoint().await?;
+                    return Ok(TransferOutcome::Cancelled);
+                }
+                output.abort().await?;
+                if let Some(r) = control.recovery() {
+                    r.clear()?;
+                }
+                return Ok(TransferOutcome::Cancelled);
+            }
+            if output
+                .finalize_with_progress(control, Some(progress))
+                .await?
+            {
                 Ok(done)
             } else {
                 Ok(TransferOutcome::Cancelled)
@@ -283,7 +347,12 @@ async fn stream(
 ) -> Result<TransferOutcome, JobError> {
     // System proxy discovery is reqwest's system-proxy feature; no custom proxy,
     // referer, credentials logging, certificate bypass or application retries.
+    request
+        .options
+        .validate()
+        .map_err(|e| JobError::new(ErrorKind::InvalidRequest, e))?;
     let client = reqwest::Client::builder()
+        .user_agent(request.options.user_agent.as_str())
         .redirect(reqwest::redirect::Policy::limited(10))
         .referer(false)
         .no_gzip()
@@ -407,6 +476,14 @@ async fn stream(
             total = response.content_length();
             validator = total.and_then(|_| strong_etag(response.headers()));
             representation_url = Some(response.url().clone());
+        }
+        if request.options.server_creation_time {
+            output.server_creation_time(
+                response
+                    .headers()
+                    .get(reqwest::header::LAST_MODIFIED)
+                    .and_then(|h| h.to_str().ok()),
+            );
         }
         output.representation(
             total,

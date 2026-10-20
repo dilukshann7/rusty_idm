@@ -53,11 +53,13 @@ impl QueueRuntime {
             let id = EntryId(s.next_entry);
             s.next_entry += 1;
             s.entries.insert(id, stored(id, request));
-            s.queues
-                .get_mut(&QueueId::MAIN)
-                .ok_or("Main queue is unavailable.")?
-                .entries
-                .push(id);
+            if request.deferred {
+                s.queues
+                    .get_mut(&QueueId::MAIN)
+                    .ok_or("Main queue is unavailable.")?
+                    .entries
+                    .push(id);
+            }
             Ok(id)
         })?;
         request.recovery = Some(Recovery {
@@ -83,6 +85,7 @@ impl QueueRuntime {
                     continue;
                 }
             };
+            request.options = entry.options.clone();
             request.deferred = true;
             request.category = entry.category.clone();
             request.description = entry.description.clone();
@@ -97,6 +100,18 @@ impl QueueRuntime {
             };
             let mut error = None;
             let mut completed = entry.completed;
+            if entry.staging.is_some() {
+                if let Err(e) = crate::output::recover_staging(
+                    entry,
+                    &request.recovery.clone().expect("recovery"),
+                ) {
+                    readiness = EntryReadiness::RecoveryRequired;
+                    error = Some(e);
+                }
+            }
+            if entry.options.confirmation_required && readiness == EntryReadiness::Ready {
+                readiness = EntryReadiness::ConfirmationRequired;
+            }
             if entry.journal.is_some() {
                 match crate::output::recover_finalization(
                     entry,
@@ -184,7 +199,43 @@ impl QueueRuntime {
         }
         self.publish(jobs, bus);
     }
-    pub fn reconcile(&mut self, jobs: &BTreeMap<JobId, Job>, bus: &EventBus) {
+    pub fn reconcile(&mut self, jobs: &mut BTreeMap<JobId, Job>, bus: &EventBus) {
+        let ephemeral: Vec<_> = self
+            .store
+            .snapshot()
+            .entries
+            .values()
+            .filter(|e| e.ephemeral)
+            .filter_map(|e| {
+                jobs.iter()
+                    .find(|(_, j)| {
+                        j.snapshot.entry_id == Some(e.id)
+                            && matches!(j.snapshot.state, JobState::Completed | JobState::Cancelled)
+                            && j.snapshot.recovery_paths.is_empty()
+                            && j.snapshot.error.is_none()
+                    })
+                    .map(|(id, _)| (*id, e.id))
+            })
+            .collect();
+        if !ephemeral.is_empty()
+            && self
+                .store
+                .update(|s| {
+                    for (_, entry) in &ephemeral {
+                        s.entries.remove(entry);
+                    }
+                    Ok(())
+                })
+                .is_ok()
+        {
+            for (id, _) in ephemeral {
+                if let Some(job) = jobs.get_mut(&id) {
+                    job.request.recovery = None;
+                    job.snapshot.entry_id = None;
+                    bus.publish(Event::JobChanged(job.snapshot.clone()));
+                }
+            }
+        }
         let state = self.store.snapshot();
         let removed: Vec<_> = state
             .entries
@@ -468,7 +519,7 @@ impl QueueRuntime {
                             s.next_entry += 1;
                             e
                         });
-                        let saved=s.entries.entry(entry).or_insert_with(||stored(entry,&job.request));
+                        let saved=s.entries.entry(entry).or_insert_with(||stored(entry,&job.request));saved.ephemeral=false;
                         if job.snapshot.state==JobState::Completed {saved.completed=true;saved.completed_bytes=Some(job.snapshot.received);}
                         for path in job.snapshot.recovery_paths.iter().cloned().chain(job.snapshot.error.iter().flat_map(|e|e.retained_partial.iter().chain(e.retained_original.iter()).cloned())) {if !saved.retained_files.contains(&path){saved.retained_files.push(path);}}
                         for q in s.queues.values_mut() {
@@ -613,6 +664,9 @@ fn check_name(name: &str) -> Result<(), String> {
 }
 fn stored(id: EntryId, r: &DownloadRequest) -> StoredEntry {
     StoredEntry {
+        options: r.options.clone(),
+        ephemeral: !r.deferred,
+        staging: None,
         id,
         url: r.url.as_str().into(),
         destination: r.destination.clone(),

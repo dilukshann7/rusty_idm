@@ -128,6 +128,7 @@ pub struct OutputFile {
     total: Option<u64>,
     response_url: Option<String>,
     etag: Option<String>,
+    creation_time: Option<std::time::SystemTime>,
     #[cfg(windows)]
     original: Option<std::fs::File>,
 }
@@ -135,6 +136,13 @@ impl OutputFile {
     pub async fn prepare(
         destination: &Path,
         replacement: &ReplacementPolicy,
+    ) -> Result<Self, JobError> {
+        Self::prepare_in(destination, replacement, None).await
+    }
+    async fn prepare_in(
+        destination: &Path,
+        replacement: &ReplacementPolicy,
+        temporary: Option<&Path>,
     ) -> Result<Self, JobError> {
         #[cfg(windows)]
         let original = match replacement {
@@ -167,10 +175,20 @@ impl OutputFile {
                 }
             }
         }
-        let parent = destination
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
+        let parent = temporary.unwrap_or_else(|| {
+            destination
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new("."))
+        });
+        if temporary.is_some() {
+            tokio::fs::create_dir_all(parent).await.map_err(|_| {
+                JobError::new(
+                    ErrorKind::Io,
+                    "Cannot create/open the configured temporary directory.",
+                )
+            })?;
+        }
         for _ in 0..128 {
             // Fixed short partial names also work beside very long final filenames.
             let id = NEXT_PARTIAL.fetch_add(1, Ordering::Relaxed);
@@ -188,7 +206,7 @@ impl OutputFile {
                     .share_mode(FILE_SHARE_READ.0);
             }
             match options.open(&partial).await {
-                Ok(file) => return Ok(Self { file: Some(file), partial, destination: destination.to_owned(), retain: false, recovery: None, total: None, response_url: None, etag: None, #[cfg(windows)] original }),
+                Ok(file) => return Ok(Self { file: Some(file), partial, destination: destination.to_owned(), retain: false, recovery: None, total: None, response_url: None, etag: None, creation_time: None, #[cfg(windows)] original }),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(_) => return Err(JobError::new(ErrorKind::Io, "Cannot reserve a partial file. Check the save folder, permissions and available space.")),
             }
@@ -203,13 +221,14 @@ impl OutputFile {
     ) -> Result<Self, JobError> {
         if let Some(recovery) = &request.recovery {
             if let Some(checkpoint) = recovery.checkpoint() {
-                let file = reopen_verified(&checkpoint).map_err(|e| {
-                    JobError::new(
-                        ErrorKind::RestartRequired,
-                        format!("Restart required: {e}. The recorded file was preserved."),
-                    )
-                    .retained(checkpoint.partial.clone())
-                })?;
+                let file = reopen_verified(&checkpoint, request.options.ignore_modified_time)
+                    .map_err(|e| {
+                        JobError::new(
+                            ErrorKind::RestartRequired,
+                            format!("Restart required: {e}. The recorded file was preserved."),
+                        )
+                        .retained(checkpoint.partial.clone())
+                    })?;
                 #[cfg(windows)]
                 let original = match &request.replacement {
                     ReplacementPolicy::Approved(expected) => {
@@ -232,12 +251,18 @@ impl OutputFile {
                     total: checkpoint.total,
                     response_url: checkpoint.response_url,
                     etag: checkpoint.etag,
+                    creation_time: checkpoint.creation_time,
                     #[cfg(windows)]
                     original,
                 });
             }
         }
-        let mut output = Self::prepare(&request.destination, &request.replacement).await?;
+        let mut output = Self::prepare_in(
+            &request.destination,
+            &request.replacement,
+            request.options.temporary_directory.as_deref(),
+        )
+        .await?;
         output.recovery = request.recovery.clone();
         if output.recovery.is_some() {
             output.retain = true;
@@ -293,11 +318,12 @@ impl OutputFile {
         let total = self.total;
         let response_url = self.response_url.clone();
         let etag = self.etag.clone();
-        let checkpoint = tokio::task::spawn_blocking(move || {
+        let mut checkpoint = tokio::task::spawn_blocking(move || {
             make_checkpoint(file, path, total, response_url, etag)
         })
         .await
         .map_err(|_| JobError::new(ErrorKind::Io, "Checkpoint worker failed."))??;
+        checkpoint.creation_time = self.creation_time;
         recovery
             .save(checkpoint)
             .map_err(|e| e.retained(self.partial.clone()))
@@ -386,11 +412,32 @@ impl OutputFile {
         .map(|_| ())
     }
     pub async fn finalize_controlled(
+        self,
+        control: crate::transfer::TransferControl,
+    ) -> Result<bool, JobError> {
+        self.finalize_with_progress(control, None).await
+    }
+    pub(crate) async fn finalize_with_progress(
         mut self,
         control: crate::transfer::TransferControl,
+        progress: Option<crate::transfer::ProgressSink>,
     ) -> Result<bool, JobError> {
         self.retain = true; // Any finalization failure retains recoverable downloaded bytes.
         self.checkpoint().await?;
+        if !self
+            .stage_for_publication(&control, progress.as_ref())
+            .await?
+        {
+            if control.preserving() {
+                return Ok(false);
+            }
+            let recovery = self.recovery.clone();
+            self.abort().await?;
+            if let Some(r) = recovery {
+                r.clear()?;
+            }
+            return Ok(false);
+        }
         let file = self.file.as_mut().expect("open partial");
         file.flush().await.map_err(|_| {
             JobError::new(ErrorKind::Io, "Cannot flush the completed partial file.")
@@ -401,6 +448,15 @@ impl OutputFile {
                 .retained(self.partial.clone())
         })?;
         let file = self.file.take().expect("open partial").into_std().await;
+        if let Some(at) = self.creation_time {
+            set_creation_time(&file, at).map_err(|_| {
+                JobError::new(
+                    ErrorKind::Io,
+                    "Cannot set the requested server creation time; the partial was preserved.",
+                )
+                .retained(self.partial.clone())
+            })?;
+        }
         let partial = self.partial.clone();
         let destination = self.destination.clone();
         let recovery = self.recovery.clone();
@@ -527,6 +583,7 @@ fn make_checkpoint(
     let (prefix_hash, bytes_hash) = hashes(&mut file, durable)
         .map_err(|_| JobError::new(ErrorKind::Io, "Cannot hash checkpoint bytes."))?;
     Ok(crate::storage::Checkpoint {
+        creation_time: None,
         partial,
         identity,
         durable,
@@ -583,15 +640,31 @@ fn verify(file: &mut std::fs::File, c: &crate::storage::Checkpoint) -> std::io::
     }
     Ok(())
 }
-fn reopen_verified(c: &crate::storage::Checkpoint) -> std::io::Result<std::fs::File> {
+fn reopen_verified(
+    c: &crate::storage::Checkpoint,
+    ignore_modified: bool,
+) -> std::io::Result<std::fs::File> {
     let mut file = open_owned(&c.partial)?;
     verify(&mut file, c)?;
+    let identity = identify_destination(&file).map_err(std::io::Error::other)?;
+    if !ignore_modified && identity.size == c.durable && identity.modified != c.identity.modified {
+        return Err(std::io::Error::other("Partial modification time changed"));
+    }
     // Only a verified file's uncheckpointed tail can be discarded.
     file.set_len(c.durable)?;
     file.sync_all()?;
     Ok(file)
 }
 pub(crate) fn discard_checkpoint(recovery: &crate::storage::Recovery) -> Result<(), JobError> {
+    if let Some(entry) = recovery
+        .store
+        .snapshot()
+        .entries
+        .get(&recovery.entry)
+        .cloned()
+    {
+        recover_staging(&entry, recovery)?;
+    }
     let mut preserved = None;
     if let Some(c) = recovery.checkpoint() {
         match open_owned(&c.partial) {
@@ -890,6 +963,7 @@ mod tests {
             total: None,
             response_url: None,
             etag: None,
+            creation_time: None,
             original: None,
         };
         let error = output.abort().await.unwrap_err();
@@ -924,6 +998,7 @@ mod tests {
                 total: None,
                 response_url: None,
                 etag: None,
+                creation_time: None,
                 original: None,
             },
             moved,
@@ -983,6 +1058,7 @@ mod tests {
             total: None,
             response_url: None,
             etag: None,
+            creation_time: None,
             original: Some(original),
         };
         let error = output.finalize().await.unwrap_err();
@@ -1050,3 +1126,8 @@ mod tests {
         assert_eq!(std::fs::read(&output.partial).unwrap(), b"download");
     }
 }
+
+#[path = "output_staging.rs"]
+mod staging;
+pub(crate) use staging::recover_staging;
+use staging::set_creation_time;

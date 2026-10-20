@@ -188,6 +188,9 @@ pub struct RowText {
 }
 pub fn format_snapshot(job: &JobSnapshot) -> RowText {
     let state = match job.readiness {
+        rusty_engine::EntryReadiness::ConfirmationRequired => {
+            "Confirm this download before starting".into()
+        }
         rusty_engine::EntryReadiness::CredentialsRequired => "Credentials required".into(),
         rusty_engine::EntryReadiness::RestartRequired => "Restart required".into(),
         rusty_engine::EntryReadiness::RecoveryRequired => "Recovery required".into(),

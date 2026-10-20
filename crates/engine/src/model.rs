@@ -86,6 +86,7 @@ impl DownloadOptions {
 }
 #[derive(Clone)]
 pub struct DownloadRequest {
+    pub options: DownloadOptions,
     pub(crate) url: Url,
     pub destination: PathBuf,
     pub replacement: ReplacementPolicy,
@@ -348,6 +349,7 @@ pub fn validate_request(
         return Err(invalid());
     }
     Ok(DownloadRequest {
+        options: Default::default(),
         url,
         destination,
         replacement,

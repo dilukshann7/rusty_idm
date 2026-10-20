@@ -20,6 +20,8 @@ pub(crate) struct StoredQueue {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Checkpoint {
+    #[serde(default)]
+    pub creation_time: Option<std::time::SystemTime>,
     pub partial: PathBuf,
     pub identity: DestinationIdentity,
     pub durable: u64,
@@ -36,6 +38,12 @@ pub(crate) struct Journal {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct StoredEntry {
+    #[serde(default)]
+    pub options: DownloadOptions,
+    #[serde(default)]
+    pub ephemeral: bool,
+    #[serde(default)]
+    pub staging: Option<Checkpoint>,
     pub id: EntryId,
     pub url: String,
     pub destination: PathBuf,
@@ -62,7 +70,7 @@ pub(crate) struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            version: 2,
+            version: 3,
             next_entry: 1,
             next_queue: 2,
             queues: [(
@@ -116,7 +124,7 @@ impl Store {
                             .to_string()
                     })?;
                     validate(&state)?;
-                    state.version = 2;
+                    state.version = 3;
                     Ok(state)
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(State::default()),
@@ -230,6 +238,7 @@ impl Recovery {
                 if let Some(e) = s.entries.get_mut(&self.entry) {
                     e.checkpoint = None;
                     e.journal = None;
+                    e.staging = None;
                     e.completed = false;
                     e.completed_bytes = None;
                 }
@@ -245,7 +254,7 @@ pub(crate) fn storage_error(message: String) -> JobError {
     )
 }
 fn validate(s: &State) -> Result<(), String> {
-    if !matches!(s.version, 1 | 2)
+    if !matches!(s.version, 1 | 2 | 3)
         || !s.queues.contains_key(&QueueId::MAIN)
         || s.entries.len() > 1000
         || s.queues.len() > 100
@@ -275,6 +284,7 @@ fn validate(s: &State) -> Result<(), String> {
         }
     }
     for (id, e) in &s.entries {
+        e.options.validate()?;
         crate::validate_request(
             &e.url,
             e.destination.clone(),
