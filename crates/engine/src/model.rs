@@ -43,6 +43,47 @@ pub enum ReplacementPolicy {
     Approved(DestinationIdentity),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DownloadOptions {
+    pub user_agent: String,
+    pub temporary_directory: Option<PathBuf>,
+    pub server_creation_time: bool,
+    pub ignore_modified_time: bool,
+    pub confirmation_required: bool,
+}
+impl Default for DownloadOptions {
+    fn default() -> Self {
+        Self {
+            user_agent: "RustyDownloadManager/0.1.0".into(),
+            temporary_directory: None,
+            server_creation_time: false,
+            ignore_modified_time: false,
+            confirmation_required: false,
+        }
+    }
+}
+impl DownloadOptions {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.user_agent.is_empty()
+            || self.user_agent.len() > 1024
+            || self
+                .user_agent
+                .chars()
+                .any(|c| c.is_control() || !c.is_ascii())
+        {
+            return Err("User-Agent must contain 1-1024 printable ASCII characters.".into());
+        }
+        if self
+            .temporary_directory
+            .as_ref()
+            .is_some_and(|p| !p.is_absolute())
+        {
+            return Err("Choose an absolute temporary directory.".into());
+        }
+        Ok(())
+    }
+}
 #[derive(Clone)]
 pub struct DownloadRequest {
     pub(crate) url: Url,

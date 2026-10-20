@@ -21,6 +21,7 @@ fn unicode_settings_roundtrip() {
     std::fs::create_dir(&folder).unwrap();
     let settings = Settings {
         schema_version: 1,
+        configuration: Default::default(),
         category_destinations: Default::default(),
         duplicate_choice: None,
         show_completion_dialog: true,
@@ -37,6 +38,7 @@ fn failed_save_preserves_prior_settings() {
     let path = dir.path().join("settings.json");
     let settings = Settings {
         schema_version: 1,
+        configuration: Default::default(),
         category_destinations: Default::default(),
         duplicate_choice: None,
         show_completion_dialog: true,
@@ -55,6 +57,7 @@ fn failed_save_preserves_prior_settings() {
     std::fs::write(&blocked_parent, b"file").unwrap();
     let valid = Settings {
         schema_version: 1,
+        configuration: Default::default(),
         category_destinations: Default::default(),
         duplicate_choice: None,
         show_completion_dialog: true,
@@ -72,6 +75,7 @@ fn failed_atomic_replace_preserves_prior_file_and_removes_temporary() {
     let path = dir.path().join("settings.json");
     let old = Settings {
         schema_version: 1,
+        configuration: Default::default(),
         category_destinations: Default::default(),
         duplicate_choice: None,
         show_completion_dialog: true,
@@ -84,6 +88,7 @@ fn failed_atomic_replace_preserves_prior_file_and_removes_temporary() {
     std::fs::create_dir(&folder).unwrap();
     let new = Settings {
         schema_version: 1,
+        configuration: Default::default(),
         category_destinations: Default::default(),
         duplicate_choice: None,
         show_completion_dialog: true,
@@ -131,6 +136,7 @@ fn duplicate_preference_roundtrips_without_storing_a_link() {
     let path = dir.path().join("settings.json");
     let mut settings = Settings {
         schema_version: 1,
+        configuration: Default::default(),
         category_destinations: Default::default(),
         duplicate_choice: None,
         show_completion_dialog: true,

@@ -31,6 +31,7 @@ fn remembers_only_the_selected_category_folder_and_uses_it_next_time() {
     let mut settings = crate::settings::Settings {
         schema_version: 1,
         default_destination: "C:/Downloads".into(),
+        configuration: Default::default(),
         category_destinations: Default::default(),
         duplicate_choice: None,
         show_completion_dialog: true,

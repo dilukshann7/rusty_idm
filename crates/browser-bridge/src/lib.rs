@@ -3,3 +3,6 @@ pub mod lease;
 pub mod protocol;
 #[cfg(windows)]
 pub mod windows;
+
+pub mod policy;
+pub mod private;

@@ -9,6 +9,8 @@ use std::{
 #[serde(deny_unknown_fields)]
 pub struct Settings {
     pub schema_version: u32,
+    #[serde(default)]
+    pub configuration: crate::preferences::Configuration,
     pub default_destination: PathBuf,
     #[serde(default)]
     pub category_destinations: std::collections::BTreeMap<String, PathBuf>,
@@ -66,14 +68,27 @@ pub fn load_from(path: &Path) -> Result<Settings, SettingsError> {
     if data.len() > 64 * 1024 {
         return Err(SettingsError("The settings file is too large.".into()));
     }
-    let settings: Settings = serde_json::from_slice(&data).map_err(|_| {
+    let mut settings: Settings = serde_json::from_slice(&data).map_err(|_| {
         SettingsError("The settings file is malformed. It has been preserved.".into())
     })?;
     validate(&settings)?;
+    if settings.schema_version == 1 {
+        for (name, folder) in &settings.category_destinations {
+            if let Some(rule) = settings
+                .configuration
+                .categories
+                .iter_mut()
+                .find(|r| r.name.eq_ignore_ascii_case(name))
+            {
+                rule.folder = Some(folder.clone());
+            }
+        }
+        settings.schema_version = 2;
+    }
     Ok(settings)
 }
-fn validate(settings: &Settings) -> Result<(), SettingsError> {
-    if settings.schema_version != 1 {
+pub fn validate(settings: &Settings) -> Result<(), SettingsError> {
+    if !matches!(settings.schema_version, 1 | 2) {
         return Err(SettingsError(
             "Unsupported settings version. The saved file has been preserved.".into(),
         ));
@@ -83,6 +98,7 @@ fn validate(settings: &Settings) -> Result<(), SettingsError> {
             "The default save folder is unavailable. Select an existing folder in Options.".into(),
         ));
     }
+    settings.configuration.validate().map_err(SettingsError)?;
     Ok(())
 }
 pub fn save_to(path: &Path, settings: &Settings) -> Result<(), SettingsError> {
@@ -92,7 +108,9 @@ pub fn save_to(path: &Path, settings: &Settings) -> Result<(), SettingsError> {
         .ok_or_else(|| SettingsError("Invalid settings path.".into()))?;
     std::fs::create_dir_all(parent)
         .map_err(|_| SettingsError("Cannot create the settings folder.".into()))?;
-    let data = serde_json::to_vec_pretty(settings)
+    let mut saved = settings.clone();
+    saved.schema_version = 2;
+    let data = serde_json::to_vec_pretty(&saved)
         .map_err(|_| SettingsError("Cannot serialize settings.".into()))?;
     if data.len() > 64 * 1024 {
         return Err(SettingsError("There are too many remembered category folders to save. The previous settings were preserved.".into()));
@@ -174,7 +192,8 @@ pub fn defaults() -> Result<Settings, SettingsError> {
         let folder = std::ffi::OsString::from_wide(raw.as_wide());
         CoTaskMemFree(Some(raw.0.cast()));
         Ok(Settings {
-            schema_version: 1,
+            schema_version: 2,
+            configuration: Default::default(),
             category_destinations: Default::default(),
             duplicate_choice: None,
             show_completion_dialog: true,
