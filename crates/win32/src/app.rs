@@ -61,6 +61,7 @@ enum Action {
     Command(u16),
     ContextMenu(POINT),
     QueueMenu(POINT),
+    ToolbarQueue(u16),
     DoubleClick,
     Category(isize),
     AssociationsChanged,
@@ -109,6 +110,7 @@ impl Signals {
                 Action::Command(_)
                     | Action::ContextMenu(_)
                     | Action::QueueMenu(_)
+                    | Action::ToolbarQueue(_)
                     | Action::DoubleClick
             )
         {
@@ -714,6 +716,22 @@ impl AppState {
                     .actions(owner, &self.view, self.lifecycle != Lifecycle::Open)
             }
             Action::Command(EXIT) => self.close(owner),
+            Action::ToolbarQueue(command) if self.lifecycle.accepts_submissions() => {
+                if let Some(anchor) = self.controls.queue_button_anchor(command) {
+                    let queues: Vec<_> = self.view.queues.values().cloned().collect();
+                    let selected = match self.category {
+                        Category::Queue(id) => id,
+                        _ => rusty_engine::QueueId::MAIN,
+                    };
+                    let choice = crate::toolbar::queues(owner, anchor, command, selected, &queues)?;
+                    self.events(window);
+                    if self.lifecycle.accepts_submissions() {
+                        if let Some(id) = choice.filter(|id| self.view.queues.contains_key(id)) {
+                            self.queue_action(window, id, command)?;
+                        }
+                    }
+                }
+            }
             Action::QueueMenu(position) if self.lifecycle.accepts_submissions() => {
                 if let Some((queue, position)) = self.controls.queue_context_target(position) {
                     let command = context_menu::show_queue(
@@ -796,6 +814,10 @@ impl AppState {
                         };
                         self.queue_action(window, queue, id)?;
                     }
+                    DELETE_COMPLETED => {
+                        self.command(owner, Command::RemoveCompleted);
+                    }
+                    TELL_FRIEND => crate::toolbar::share(owner)?,
                     SHOW_MANAGER => platform::bring_to_front(owner),
                     ADD => {
                         if let Some(prepared) =
@@ -1198,13 +1220,40 @@ unsafe fn window_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                 WM_GETMINMAXINFO if lparam.0 != 0 => {
                     let info = &mut *(lparam.0 as *mut MINMAXINFO);
                     let dpi = GetDpiForWindow(hwnd).max(96);
-                    info.ptMinTrackSize.x = scale(610, dpi);
+                    info.ptMinTrackSize.x = scale(910, dpi);
                     info.ptMinTrackSize.y = scale(360, dpi);
                     return LRESULT(0);
                 }
                 WM_NOTIFY if lparam.0 != 0 => {
                     let header = &*(lparam.0 as *const NMHDR);
                     match (header.idFrom as u16, header.code) {
+                        (TOOLBAR, TBN_GETINFOTIPW) => {
+                            let info = &mut *(lparam.0 as *mut NMTBGETINFOTIPW);
+                            if let Some(button) = crate::icons::BUTTONS
+                                .iter()
+                                .find(|button| button.command == info.iItem as u16)
+                            {
+                                if !info.pszText.is_null() && info.cchTextMax > 0 {
+                                    let text = platform::wide(button.tooltip);
+                                    let count = (text.len() - 1).min(info.cchTextMax as usize - 1);
+                                    std::ptr::copy_nonoverlapping(
+                                        text.as_ptr(),
+                                        info.pszText.0,
+                                        count,
+                                    );
+                                    *info.pszText.0.add(count) = 0;
+                                }
+                            }
+                            return LRESULT(0);
+                        }
+                        (TOOLBAR, TBN_DROPDOWN) => {
+                            let notification = &*(lparam.0 as *const NMTOOLBARW);
+                            if matches!(notification.iItem as u16, QUEUE_START | QUEUE_STOP) {
+                                signals.push(Action::ToolbarQueue(notification.iItem as u16));
+                                return LRESULT(TBDDRET_DEFAULT as isize);
+                            }
+                        }
+
                         (TREE, TVN_SELCHANGEDW) => {
                             let tree = &*(lparam.0 as *const NMTREEVIEWW);
                             signals.push(Action::Category(tree.itemNew.lParam.0));

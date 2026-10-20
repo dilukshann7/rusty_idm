@@ -14,6 +14,18 @@
 308 ICON "resources/icons/stop_all-disabled.ico"
 309 ICON "resources/icons/delete-disabled.ico"
 310 ICON "resources/icons/options-disabled.ico"
+311 ICON "resources/icons/resume.ico"
+312 ICON "resources/icons/resume-disabled.ico"
+313 ICON "resources/icons/delete_completed.ico"
+314 ICON "resources/icons/delete_completed-disabled.ico"
+315 ICON "resources/icons/scheduler.ico"
+316 ICON "resources/icons/scheduler-disabled.ico"
+317 ICON "resources/icons/start_queue.ico"
+318 ICON "resources/icons/start_queue-disabled.ico"
+319 ICON "resources/icons/stop_queue.ico"
+320 ICON "resources/icons/stop_queue-disabled.ico"
+321 ICON "resources/icons/tell_friend.ico"
+322 ICON "resources/icons/tell_friend-disabled.ico"
 
 101 MENU
 BEGIN
@@ -21,6 +33,23 @@ BEGIN
     BEGIN
         MENUITEM "&Add URL...\tCtrl+N", 1001
         MENUITEM "Add batch URLs...", 4050
+        MENUITEM "&Scheduler...", 1037
+        POPUP "&Queues"
+        BEGIN
+            MENUITEM "Create &new queue...", 1026
+            MENUITEM "&Edit queue...", 1036
+            MENUITEM "&Schedule...", 1037
+            MENUITEM "&Rename selected queue...", 1027
+            MENUITEM "&Delete empty queue", 1028
+            MENUITEM SEPARATOR
+            MENUITEM "&Start selected queue", 1029
+            MENUITEM "S&top selected queue", 1030
+            MENUITEM SEPARATOR
+            MENUITEM "&One download at a time", 1031
+            MENUITEM "T&wo downloads at a time", 1032
+            MENUITEM "Move entry &up", 1033
+            MENUITEM "Move entry &down", 1034
+        END
         MENUITEM SEPARATOR
         MENUITEM "E&xit Rusty", 1009
     END
@@ -29,6 +58,7 @@ BEGIN
         MENUITEM "&Open File", 1006
         MENUITEM "Open &Folder", 1007
         MENUITEM "&Delete Entry\tDel", 1004
+        MENUITEM "Delete &completed", 1040
     END
     POPUP "&Downloads"
     BEGIN
@@ -40,28 +70,13 @@ BEGIN
         MENUITEM SEPARATOR
         MENUITEM "&Options...", 1008
     END
-    POPUP "&Queues"
-    BEGIN
-        MENUITEM "Create &new queue...", 1026
-        MENUITEM "&Edit queue...", 1036
-        MENUITEM "&Schedule...", 1037
-        MENUITEM "&Rename selected queue...", 1027
-        MENUITEM "&Delete empty queue", 1028
-        MENUITEM SEPARATOR
-        MENUITEM "&Start selected queue", 1029
-        MENUITEM "S&top selected queue", 1030
-        MENUITEM SEPARATOR
-        MENUITEM "&One download at a time", 1031
-        MENUITEM "T&wo downloads at a time", 1032
-        MENUITEM "Move entry &up", 1033
-        MENUITEM "Move entry &down", 1034
-    END
     POPUP "&View"
     BEGIN
         MENUITEM "&All Downloads", 1012
     END
     POPUP "&Help"
     BEGIN
+        MENUITEM "Tell a &Friend...", 1041
         MENUITEM "&About Rusty", 1011
     END
 END
@@ -551,4 +566,14 @@ FONT 8, "Tahoma"
 BEGIN
     LTEXT "", 3270, 8, 8, 234, 20
     PUSHBUTTON "Cancel", IDCANCEL, 190, 37, 52, 15
+END
+
+225 DIALOGEX 0, 0, 304, 83
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+FONT 8, "Tahoma"
+BEGIN
+    LTEXT "Share Rusty Download Manager with a friend:", -1, 8, 9, 288, 12
+    EDITTEXT 3280, 8, 28, 288, 14, ES_READONLY | ES_AUTOHSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON "Copy link", IDOK, 174, 59, 58, 15
+    PUSHBUTTON "Close", IDCANCEL, 240, 59, 56, 15
 END

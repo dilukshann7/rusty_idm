@@ -100,3 +100,37 @@ impl Drop for Clipboard {
         }
     }
 }
+
+/// Copies only after an explicit product action; Windows owns the allocation
+/// after SetClipboardData succeeds.
+pub fn copy_text(owner: HWND, text: &str) -> Result<(), String> {
+    use windows::Win32::Foundation::{GlobalFree, HANDLE};
+    struct Allocation(Option<HGLOBAL>);
+    impl Drop for Allocation {
+        fn drop(&mut self) {
+            if let Some(memory) = self.0 {
+                unsafe {
+                    let _ = GlobalFree(Some(memory));
+                }
+            }
+        }
+    }
+    let value = crate::platform::wide(text);
+    let memory = unsafe { GlobalAlloc(GMEM_MOVEABLE, value.len() * 2) }
+        .map_err(|_| "Cannot allocate clipboard text.".to_owned())?;
+    let mut allocation = Allocation(Some(memory));
+    unsafe {
+        let pointer = GlobalLock(memory);
+        if pointer.is_null() {
+            return Err("Cannot prepare clipboard text.".into());
+        }
+        std::ptr::copy_nonoverlapping(value.as_ptr(), pointer.cast::<u16>(), value.len());
+        let _ = GlobalUnlock(memory);
+        OpenClipboard(Some(owner)).map_err(|_| "The clipboard is busy. Try again.".to_owned())?;
+        let result = EmptyClipboard().and_then(|_| SetClipboardData(13, Some(HANDLE(memory.0))));
+        let _ = CloseClipboard();
+        result.map_err(|_| "Windows could not copy the link.".to_owned())?;
+        allocation.0 = None;
+    }
+    Ok(())
+}

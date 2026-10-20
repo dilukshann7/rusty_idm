@@ -1,6 +1,6 @@
 use crate::{
     commands::*,
-    icons::{ToolbarImages, BUTTONS},
+    icons::{ToolbarImages, BUTTONS, TOOLBAR_HEIGHT},
     platform::{self, send, wide, Font},
     presenter::{self, Category, ViewModel},
     AppError,
@@ -87,6 +87,12 @@ impl Controls {
             send(toolbar, TB_BUTTONSTRUCTSIZE, size_of::<TBBUTTON>(), 0);
             let mut images = ToolbarImages::new(dpi)?;
             images.attach(toolbar);
+            send(
+                toolbar,
+                TB_SETEXTENDEDSTYLE,
+                0,
+                (TBSTYLE_EX_DRAWDDARROWS | TBSTYLE_EX_DOUBLEBUFFER) as isize,
+            );
             for (image, definition) in BUTTONS.iter().enumerate() {
                 let mut label = wide(definition.label);
                 label.push(0); // TB_ADDSTRINGW takes a double-NUL string list.
@@ -95,7 +101,13 @@ impl Controls {
                     iBitmap: image as i32,
                     idCommand: definition.command as i32,
                     fsState: TBSTATE_ENABLED as u8,
-                    fsStyle: (BTNS_BUTTON | BTNS_SHOWTEXT) as u8,
+                    fsStyle: (BTNS_BUTTON
+                        | BTNS_SHOWTEXT
+                        | if matches!(definition.command, QUEUE_START | QUEUE_STOP) {
+                            BTNS_DROPDOWN
+                        } else {
+                            0
+                        }) as u8,
                     iString: index,
                     ..Default::default()
                 };
@@ -103,6 +115,8 @@ impl Controls {
                     return Err(AppError("Cannot create toolbar buttons.".into()));
                 }
             }
+            images.size_buttons(toolbar);
+            let _ = ShowWindow(toolbar, SW_SHOWNOACTIVATE);
             for (index, (label, width)) in [
                 ("File Name", 230),
                 ("Size", 90),
@@ -154,7 +168,7 @@ impl Controls {
             }
             let width = client.right.max(1);
             let height = client.bottom.max(1);
-            let top = scale(54, self.dpi);
+            let top = scale(TOOLBAR_HEIGHT, self.dpi);
             let bottom = scale(20, self.dpi);
             let nav = scale(140, self.dpi).min(width / 2);
             let _ = MoveWindow(self.toolbar, 0, 0, width, top, true);
@@ -642,6 +656,26 @@ impl Controls {
             let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(self.tree), None, false);
         }
     }
+    pub fn queue_button_anchor(&self, command: u16) -> Option<POINT> {
+        let mut rect = RECT::default();
+        if send(
+            self.toolbar,
+            TB_GETRECT,
+            command as usize,
+            &mut rect as *mut _ as isize,
+        )
+        .0 == 0
+        {
+            return None;
+        }
+        let mut point = POINT {
+            x: rect.left,
+            y: rect.bottom,
+        };
+        unsafe { ClientToScreen(self.toolbar, &mut point) }
+            .as_bool()
+            .then_some(point)
+    }
     pub fn actions(&self, owner: HWND, view: &ViewModel, closing: bool) {
         let actions = view.actions(self.selected());
         for (id, enabled) in [
@@ -655,6 +689,11 @@ impl Controls {
             (OPEN_FOLDER, actions.open_folder),
             (DETAILS, actions.details),
             (OPTIONS, !closing),
+            (DELETE_COMPLETED, !closing),
+            (QUEUE_SCHEDULE, !view.queues.is_empty()),
+            (QUEUE_START, !view.queues.is_empty()),
+            (QUEUE_STOP, !view.queues.is_empty()),
+            (TELL_FRIEND, !closing),
         ] {
             let enabled = enabled && !closing;
             send(self.toolbar, TB_ENABLEBUTTON, id as usize, enabled as isize);
@@ -705,7 +744,14 @@ unsafe fn child(
             },
             class,
             PCWSTR(name.as_ptr()),
-            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(style),
+            WS_CHILD
+                | WS_TABSTOP
+                | WINDOW_STYLE(style)
+                | if id == TOOLBAR {
+                    WINDOW_STYLE(0)
+                } else {
+                    WS_VISIBLE
+                },
             0,
             0,
             0,

@@ -238,3 +238,8 @@ pub const ADD_BATCH: u16 = 4050;
 
 pub const ADMISSION_DIALOG: u16 = 224;
 pub const ADMISSION_TEXT: i32 = 3270;
+
+pub const DELETE_COMPLETED: u16 = 1040;
+pub const TELL_FRIEND: u16 = 1041;
+pub const SHARE_DIALOG: u16 = 225;
+pub const SHARE_LINK: i32 = 3280;

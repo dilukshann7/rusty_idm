@@ -73,3 +73,18 @@ Rusty, so this is portable execution, not isolated portable data storage.
 
 Use SHA256SUMS.txt to check downloaded artifacts with PowerShell Get-FileHash.
 See RELEASE_NOTES.md for the actual release checks and live behavior limitations.
+
+## Unreleased toolbar source
+
+The native command row follows the reference order: Add URL, Resume, Stop,
+Stop All, Delete, Delete Completed, Options, Scheduler, Start Queue, Stop Queue,
+and Tell a Friend. Outline icons are 32 pixels at 100% scale, with matching
+Windows-disabled artwork and labels underneath. Queue buttons have separate
+arrow menus; their main click acts on the selected sidebar queue, or Main.
+
+Delete Completed removes completed list entries through the engine without
+removing downloaded files; active transfers and entries with recovery files
+are excluded. Scheduler opens the existing queue editor. Tell a Friend opens
+a compact link dialog with an explicit Copy link action; it sends no message.
+The menu row is Tasks, File, Downloads, View, Help. Queue management is under
+Tasks → Queues. This is source-only work, not a rebuilt published installer.

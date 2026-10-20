@@ -21,7 +21,7 @@ function New-IconFrame([string]$name, [int]$size, [bool]$disabled) {
     $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
     $graphics.ScaleTransform(($size / 32.0), ($size / 32.0))
-    $colors = @{ add = '#60AC96'; stop = '#AD7784'; stop_all = '#A88998'; delete = '#A277B3'; options = '#8270C9' }
+    $colors = @{ add = '#70B99F'; resume = '#8EB9AB'; stop = '#9D9D9D'; stop_all = '#A0A0A0'; delete = '#AAAAAA'; delete_completed = '#AE72AC'; options = '#8270D4'; scheduler = '#AD81B2'; start_queue = '#83A2CD'; stop_queue = '#9B83CA'; tell_friend = '#A08BD4' }
     $color = [System.Drawing.ColorTranslator]::FromHtml($(if ($disabled) { '#BFBFBF' } else { $colors[$name] }))
     $pen = [System.Drawing.Pen]::new($color, 1.55)
     $pen.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
@@ -32,6 +32,45 @@ function New-IconFrame([string]$name, [int]$size, [bool]$disabled) {
     try {
         switch ($name) {
             'add' { Add-Polygon $path @(12,3, 20,3, 20,12, 29,12, 29,20, 20,20, 20,29, 12,29, 12,20, 3,20, 3,12, 12,12) }
+            'resume' {
+                $path.AddEllipse(3,3,26,26)
+                $path.StartFigure(); $path.AddLine(16,8,16,23)
+                $path.StartFigure(); $path.AddLine(10,17,16,23); $path.AddLine(16,23,22,17)
+            }
+            'delete_completed' {
+                $path.AddRectangle([System.Drawing.RectangleF]::new(5,7,22,23))
+                $path.StartFigure(); $path.AddLine(3,7,29,7)
+                $path.StartFigure(); $path.AddBezier(11,6,11,0,21,0,21,6)
+                $path.StartFigure(); $path.AddLine(10,17,14,22); $path.AddLine(14,22,23,12)
+            }
+            'scheduler' {
+                $path.AddEllipse(5,5,22,24)
+                $path.StartFigure(); $path.AddLine(16,10,16,18); $path.AddLine(16,18,21,14)
+                $path.StartFigure(); $path.AddBezier(4,10,-2,5,6,-1,10,4)
+                $path.StartFigure(); $path.AddBezier(22,4,27,-1,34,6,28,10)
+                $path.StartFigure(); $path.AddLine(8,27,6,30)
+                $path.StartFigure(); $path.AddLine(24,27,26,30)
+            }
+            'start_queue' {
+                $path.AddLine(22,3,4,3); $path.AddLine(4,3,4,25); $path.AddLine(4,25,10,25)
+                $path.StartFigure(); $path.AddLine(27,7,9,7); $path.AddLine(9,7,9,29); $path.AddLine(9,29,17,29)
+                $path.StartFigure(); $path.AddLine(23,13,23,29)
+                $path.StartFigure(); $path.AddLine(17,23,23,29); $path.AddLine(23,29,29,23)
+            }
+            'stop_queue' {
+                $path.AddLine(22,3,4,3); $path.AddLine(4,3,4,25); $path.AddLine(4,25,10,25)
+                $path.StartFigure(); $path.AddLine(27,7,9,7); $path.AddLine(9,7,9,29); $path.AddLine(9,29,16,29)
+                $path.StartFigure(); $path.AddRectangle([System.Drawing.RectangleF]::new(20,18,11,12))
+            }
+            'tell_friend' {
+                $path.AddRectangle([System.Drawing.RectangleF]::new(2,13,6,16))
+                $path.StartFigure(); $path.AddLine(8,14,14,8)
+                $path.AddBezier(14,8,16,6,13,1,17,1)
+                $path.AddBezier(17,1,21,1,23,9,21,12)
+                $path.AddLine(21,12,28,12); $path.AddBezier(28,12,31,12,30,17,29,19)
+                $path.AddLine(29,19,27,28); $path.AddLine(27,28,15,28)
+                $path.AddLine(15,28,8,25); $path.AddLine(8,25,8,14)
+            }
             'stop' {
                 $path.AddEllipse(3, 3, 26, 26)
                 $path.StartFigure(); $path.AddRectangle([System.Drawing.RectangleF]::new(11,11,10,10))
@@ -71,8 +110,8 @@ function New-IconFrame([string]$name, [int]$size, [bool]$disabled) {
     return $bitmap
 }
 
-$names = @('add', 'stop', 'stop_all', 'delete', 'options')
-$sizes = @(24, 30, 32, 36, 40, 48, 64, 96)
+$names = @('add', 'resume', 'stop', 'stop_all', 'delete', 'delete_completed', 'options', 'scheduler', 'start_queue', 'stop_queue', 'tell_friend')
+$sizes = @(24, 30, 32, 36, 40, 48, 56, 64, 80, 96)
 foreach ($name in $names) {
     foreach ($disabled in @($false, $true)) {
         $frames = [System.Collections.Generic.List[byte[]]]::new()
@@ -102,23 +141,23 @@ foreach ($name in $names) {
 }
 
 # Asset preview only: this does not launch or screenshot the application.
-$preview = [System.Drawing.Bitmap]::new(600, 210)
+$preview = [System.Drawing.Bitmap]::new(905, 170)
 $graphics = [System.Drawing.Graphics]::FromImage($preview)
-$font = [System.Drawing.Font]::new('Segoe UI', 10)
+$font = [System.Drawing.Font]::new('Tahoma', 8)
 $brush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(55,55,55))
 try {
     $graphics.Clear([System.Drawing.Color]::FromArgb(247,247,247))
-    $labels = @('Add URL', 'Stop', 'Stop All', 'Delete Entry', 'Options')
+    $labels = @('Add URL', 'Resume', 'Stop', 'Stop All', 'Delete', 'Delete Co...', 'Options', 'Scheduler', 'Start Qu...', 'Stop Qu...', 'Tell a Fri...')
     for ($row = 0; $row -lt 2; $row++) {
         for ($i = 0; $i -lt $names.Length; $i++) {
-            $bitmap = New-IconFrame $names[$i] 48 ($row -eq 1)
-            try { $graphics.DrawImageUnscaled($bitmap, 36 + $i * 120, 12 + $row * 100) }
+            $bitmap = New-IconFrame $names[$i] 32 ($row -eq 1 -or $i -in @(1,2,3,4))
+            try { $graphics.DrawImageUnscaled($bitmap, 22 + $i * 80, 12 + $row * 80) }
             finally { $bitmap.Dispose() }
             $labelSize = $graphics.MeasureString($labels[$i], $font)
-            $graphics.DrawString($labels[$i], $font, $brush, (60 + $i * 120 - $labelSize.Width / 2), (65 + $row * 100))
+            $graphics.DrawString($labels[$i], $font, $brush, (38 + $i * 80 - $labelSize.Width / 2), (52 + $row * 80))
         }
     }
     $preview.Save((Join-Path $taskRoot 'docs/design/rusty-toolbar-icons.png'), [System.Drawing.Imaging.ImageFormat]::Png)
 }
 finally { $brush.Dispose(); $font.Dispose(); $graphics.Dispose(); $preview.Dispose() }
-Write-Output 'Generated five original toolbar icons plus disabled variants, each at 24/30/32/36/40/48/64/96 px.'
+Write-Output 'Generated eleven original toolbar icons plus disabled variants, each at 24/30/32/36/40/48/56/64/80/96 px.'

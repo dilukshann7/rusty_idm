@@ -46,7 +46,7 @@ Source formatting/resource/manifest/script checks do not replace compilation or 
 
 ## Queue editor and timed scheduling (unreleased source)
 
-Right-click the Queues heading or a queue and choose **Create new queue**. After the name is saved by the engine, Rusty opens its Scheduler with the new queue selected. **Edit queue** opens Files in the queue; **Schedule** opens the scheduling tab. The Queues main menu provides the same editor access.
+Right-click the Queues heading or a queue and choose **Create new queue**. After the name is saved by the engine, Rusty opens its Scheduler with the new queue selected. **Edit queue** opens Files in the queue; **Schedule** opens the scheduling tab. The **Tasks → Queues** menu provides the same editor access. The toolbar has a **Scheduler** button and separate **Start Queue** / **Stop Queue** buttons; their arrows select a named queue.
 
 The Scheduler has a queue tree, an ordered file list, one/two simultaneous downloads, Up/Down and Remove from queue, and Start now/Stop/Apply/Close. Main is permanent and custom queues can be deleted only when empty. File reordering and membership actions apply immediately. Apply/Discard/Cancel protects unsaved schedule/parallelism edits when changing queues, creating another queue, starting, closing the editor or exiting Rusty. Progress updates preserve your draft; failed saves leave it editable.
 

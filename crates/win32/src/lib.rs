@@ -65,3 +65,6 @@ mod provisional;
 
 #[cfg(windows)]
 mod scanner;
+
+#[cfg(windows)]
+mod toolbar;

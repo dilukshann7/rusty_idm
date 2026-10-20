@@ -79,6 +79,7 @@ pub enum Command {
     SetSpeedLimit(JobId, Option<u64>),
     CancelAll,
     Remove(JobId),
+    RemoveCompleted,
     Retry(JobId),
     Shutdown,
 }
@@ -473,6 +474,12 @@ async fn actor(
                         }
                     },
                     Some(Command::CancelAll) => { for job in jobs.values_mut() { job.restart = false; job.resume_after_pause = false; cancel_job(job, &bus); } },
+                    Some(Command::RemoveCompleted) => {
+                        // Decide on the actor's current states, so a concurrent
+                        // restart cannot turn a toolbar cleanup into cancellation.
+                        let completed:Vec<_>=jobs.iter().filter(|(id,job)|job.snapshot.state==JobState::Completed&&!has_retained_partial(job)&&!bus.terminal_pending(**id)).map(|(id,_)|*id).collect();
+                        for id in completed{jobs.remove(&id);waiting.retain(|queued|*queued!=id);bus.publish(Event::JobRemoved(id));}
+                    },
                     Some(Command::Remove(id)) => {
                         if jobs.get(&id).is_some_and(has_retained_partial) { reject(&bus,"Recovery files must be resolved before removing this entry. Use the required restart action or inspect its recovery paths.");continue; }
                         if jobs.get(&id).is_some_and(|job| job.snapshot.state.is_terminal() && has_retained_partial(job)) && bus.terminal_pending(id) { reject(&bus, "A partial file needs attention. Read its recovery path before removing the entry."); continue; }

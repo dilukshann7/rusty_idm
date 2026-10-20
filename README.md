@@ -42,7 +42,7 @@ with the browser. Preferences use LocalAppData, including portable execution.
 
 The `codex/queues-and-system-icons` source adds named manual queues, category
 hierarchies and Windows-associated file icons. **Download Later** saves to Main
-download queue; the **Queues** menu manages selected queues and their order.
+download queue; **Tasks → Queues** manages selected queues and their order.
 Creating a queue opens a compact Scheduler with Schedule and Files in the queue
 tabs. Its sidebar menu provides Start/Stop/Edit/Schedule/Delete/Create controls.
 Optional startup, one-time or weekday starts and stop times run through the engine.
