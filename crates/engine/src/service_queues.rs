@@ -214,7 +214,7 @@ impl QueueRuntime {
                     snapshot,
                     cancel: TransferControl::new(CancellationToken::new()),
                     remove: false,
-                    sample: (Instant::now(), received),
+                    speed_meter: SpeedMeter::new(Instant::now(), received),
                     started: false,
                     restart: false,
                     resume_after_pause: false,

@@ -28,6 +28,9 @@ use tokio_util::sync::CancellationToken;
 #[path = "service_queues.rs"]
 mod queue_support;
 use queue_support::QueueRuntime;
+#[path = "service_speed.rs"]
+mod speed;
+use speed::SpeedMeter;
 
 pub enum Command {
     CreateQueue(String),
@@ -256,7 +259,7 @@ struct Job {
     snapshot: JobSnapshot,
     cancel: TransferControl,
     remove: bool,
-    sample: (Instant, u64),
+    speed_meter: SpeedMeter,
     started: bool,
     restart: bool,
     resume_after_pause: bool,
@@ -542,12 +545,11 @@ async fn actor(
                         job.snapshot.state = JobState::Paused;
                         if job.resume_after_pause { job.resume_after_pause = false; job.snapshot.state = JobState::Waiting; waiting.push_back(*id); }
                     }
-                    let elapsed = job.sample.0.elapsed().as_secs_f64().max(0.001);
                     job.snapshot.received = update.received; job.snapshot.total = update.total;
                     job.snapshot.resume_capable = update.resume_capable;
-                    job.snapshot.bytes_per_second = if job.snapshot.state == JobState::Running { ((update.received.saturating_sub(job.sample.1)) as f64 / elapsed) as u64 } else { 0 };
+                    job.snapshot.bytes_per_second = if job.snapshot.state == JobState::Running { job.speed_meter.sample(Instant::now(), update.received) } else { 0 };
                     job.snapshot.eta_seconds = update.total.and_then(|t| t.checked_sub(update.received)).and_then(|remaining| remaining.checked_div(job.snapshot.bytes_per_second));
-                    job.sample = (Instant::now(), update.received); bus.publish(Event::JobChanged(job.snapshot.clone()));
+                    bus.publish(Event::JobChanged(job.snapshot.clone()));
                 }
             },
         }
@@ -594,7 +596,7 @@ async fn actor(
             if !job.started {
                 job.snapshot.last_try = Some(SystemTime::now());
             }
-            job.sample = (Instant::now(), job.snapshot.received);
+            job.speed_meter.reset(Instant::now(), job.snapshot.received);
             bus.publish(Event::JobChanged(job.snapshot.clone()));
             if job.started {
                 job.cancel.try_resume();
@@ -644,6 +646,7 @@ fn reset_job(job: &mut Job, replacement: ReplacementPolicy) {
     job.snapshot.resume_capable = false;
     job.snapshot.bytes_per_second = 0;
     job.snapshot.eta_seconds = None;
+    job.speed_meter.reset(Instant::now(), 0);
     job.snapshot.deferred = false;
     job.request.deferred = false;
     job.request.replacement = replacement;
@@ -814,7 +817,7 @@ fn admit(
             restart: false,
             resume_after_pause: false,
             user_held: false,
-            sample: (Instant::now(), 0),
+            speed_meter: SpeedMeter::new(Instant::now(), 0),
         },
     );
     if !deferred {
