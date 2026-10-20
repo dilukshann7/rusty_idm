@@ -124,6 +124,19 @@ impl Pages {
             form.child(CONFIG_SAVE)?,
             form.child(CONFIG_DOWNLOADS)?,
         ];
+        // The tab and page dialogs are siblings. Its background must stay
+        // behind the pages or WS_CLIPSIBLINGS can hide their entire contents.
+        unsafe {
+            SetWindowPos(
+                tabs,
+                Some(HWND_BOTTOM),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            )?;
+        }
         let startup = crate::configuration_system::startup_enabled();
         let pages = Self {
             handles,
@@ -255,12 +268,25 @@ impl Pages {
         for (i, page) in self.handles.iter().enumerate() {
             unsafe {
                 let visible = GetWindowLongW(*page, GWL_STYLE) as u32 & WS_VISIBLE.0 != 0;
-                if visible != (i == n) {
-                    let _ = ShowWindow(*page, if i == n { SW_SHOW } else { SW_HIDE });
+                if i == n {
+                    SetWindowPos(
+                        *page,
+                        Some(HWND_TOP),
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                    )?;
+                } else if visible {
+                    let _ = ShowWindow(*page, SW_HIDE);
                 }
             }
         }
-        send(item(root, CFG_TABS)?, TCM_SETCURSEL, n, 0);
+        let tabs = item(root, CFG_TABS)?;
+        if send(tabs, TCM_GETCURSEL, 0, 0).0 != n as isize {
+            send(tabs, TCM_SETCURSEL, n, 0);
+        }
         Ok(())
     }
     fn dependencies(&self) {
