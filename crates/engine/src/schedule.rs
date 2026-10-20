@@ -176,7 +176,9 @@ impl QueueSchedule {
         match self.start {
             StartRule::Once(at) => (at >= now && last.is_none_or(|last| at > last)).then_some(at),
             StartRule::Weekly { minute, days } => {
-                let mut date = now.date;
+                let mut date = last
+                    .filter(|last| *last > now)
+                    .map_or(now.date, |last| last.date);
                 for _ in 0..8 {
                     let at = LocalStamp { date, minute };
                     if at >= now

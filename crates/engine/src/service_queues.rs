@@ -1,6 +1,8 @@
 use super::*;
 use crate::storage::{Recovery, Store, StoredEntry, StoredQueue};
 use std::collections::BTreeSet;
+#[path = "service_scheduling.rs"]
+mod scheduling;
 pub(super) struct QueueRuntime {
     pub store: Arc<Store>,
     running: BTreeSet<QueueId>,
@@ -8,11 +10,16 @@ pub(super) struct QueueRuntime {
     errors: BTreeMap<QueueId, String>,
     observed_failures: BTreeSet<JobId>,
     last: Vec<QueueSnapshot>,
+    startup_seen: BTreeSet<QueueId>,
+    stops: BTreeMap<QueueId, LocalStamp>,
+    stopped_minute: BTreeMap<QueueId, LocalStamp>,
 }
 pub(super) fn handles(c: &Command) -> bool {
     matches!(
         c,
         Command::CreateQueue(_)
+            | Command::CreateQueueForEditor { .. }
+            | Command::ConfigureQueue { .. }
             | Command::RenameQueue(..)
             | Command::DeleteQueue(_)
             | Command::StartQueue(_)
@@ -34,6 +41,9 @@ impl QueueRuntime {
             errors: BTreeMap::new(),
             observed_failures: BTreeSet::new(),
             last: vec![],
+            startup_seen: BTreeSet::new(),
+            stops: BTreeMap::new(),
+            stopped_minute: BTreeMap::new(),
         }
     }
     pub fn admit(&self, request: &mut DownloadRequest) -> Result<EntryId, String> {
@@ -224,6 +234,7 @@ impl QueueRuntime {
         bus: &EventBus,
     ) {
         self.running.remove(&id);
+        self.stops.remove(&id);
         self.stopping.insert(id);
         for job in jobs
             .values_mut()
@@ -338,7 +349,11 @@ impl QueueRuntime {
                 parallelism: q.parallelism,
                 revision: q.revision,
                 schedule: q.schedule.config.clone(),
-                schedule_status: ScheduleStatus::default(),
+                schedule_status: ScheduleStatus {
+                    next_start: LocalStamp::now()
+                        .and_then(|now| q.schedule.config.next_start(now, q.schedule.last_fired)),
+                    stop_at: self.stops.get(&q.id).copied(),
+                },
                 running: self.running.contains(&q.id),
                 stopping: self.stopping.contains(&q.id),
                 entries: q.entries.clone(),
@@ -372,29 +387,17 @@ impl QueueRuntime {
     ) {
         let result: Result<(), String> = async {
             match c {
-                Command::CreateQueue(name) => {
-                    let name = name.trim();
-                    check_name(name)?;
-                    self.store.update(|s| {
-                        if s.queues.values().any(|q| q.name.eq_ignore_ascii_case(name)) {
-                            return Err("A queue already has that name.".into());
-                        }
-                        let id = QueueId(s.next_queue);
-                        s.next_queue += 1;
-                        s.queues.insert(
-                            id,
-                            StoredQueue {
-                                id,
-                                name: name.into(),
-                                parallelism: 1,
-                                entries: vec![],
-                                revision:0,
-                                schedule:Default::default(),
-                            },
-                        );
-                        Ok(())
-                    })?;
-                }
+                Command::CreateQueue(name) => {self.create_queue(name)?;},
+                Command::CreateQueueForEditor{request,name}=>{
+                    if !bus.queue_reply_available(){return Err("Too many queue commands await acknowledgement.".into());}
+                    let result=self.create_queue(name);bus.publish(Event::QueueCreated{request,result});
+                },
+                Command::ConfigureQueue{request,id,settings}=>{
+                    if !bus.queue_reply_available(){return Err("Too many queue commands await acknowledgement.".into());}
+                    let result=self.configure_queue(id,settings);
+                    if let Err(error)=&result{if error.kind==ErrorKind::Storage{self.hold(id,jobs,waiting,bus);self.errors.insert(id,error.message.clone());}}
+                    bus.publish(Event::QueueConfigured{request,result:result.map_err(|error|error.message)});
+                },
                 Command::RenameQueue(id, name) => {
                     if id == QueueId::MAIN {
                         return Err("The Main download queue is permanent.".into());
@@ -430,32 +433,17 @@ impl QueueRuntime {
                         Ok(())
                     })?;
                     self.running.remove(&id);
+                    self.stops.remove(&id);
+                    self.stopped_minute.remove(&id);
                 }
-                Command::StartQueue(id) => {
-                    if !self.store.snapshot().queues.contains_key(&id) {
-                        return Err("Queue no longer exists.".into());
-                    }
-                    self.store.update(|_| Ok(()))?;
-                    self.errors.remove(&id);
-                    self.stopping.remove(&id);
-                    self.running.insert(id);
-                    for job in jobs
-                        .values_mut()
-                        .filter(|j| j.snapshot.queue_id == Some(id))
-                    {
-                        job.user_held = false;
-                    }
-                }
+                Command::StartQueue(id) => {if let Err(error)=self.start_queue(id,LocalStamp::now(),jobs){self.hold(id,jobs,waiting,bus);self.errors.insert(id,error.clone());return Err(error);}},
                 Command::StopQueue(id) => self.hold(id, jobs, waiting, bus),
                 Command::QueueParallelism(id, n) => {
                     if !(1..=2).contains(&n) {
                         return Err("Parallelism must be one or two.".into());
                     }
                     self.store.update(|s| {
-                        s.queues
-                            .get_mut(&id)
-                            .ok_or("Queue no longer exists.")?
-                            .parallelism = n;
+                        let queue=s.queues.get_mut(&id).ok_or("Queue no longer exists.")?;queue.parallelism=n;queue.revision=queue.revision.saturating_add(1);
                         Ok(())
                     })?;
                 }

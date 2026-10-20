@@ -12,7 +12,17 @@ pub enum Event {
     JobChanged(JobSnapshot),
     JobRemoved(JobId),
     QueuesChanged(Vec<crate::QueueSnapshot>),
-    CommandRejected { message: String },
+    QueueCreated {
+        request: u64,
+        result: Result<crate::QueueId, String>,
+    },
+    QueueConfigured {
+        request: u64,
+        result: Result<(), String>,
+    },
+    CommandRejected {
+        message: String,
+    },
     ShutdownComplete,
 }
 #[derive(Default)]
@@ -27,6 +37,7 @@ struct Queue {
     error: Option<String>,
     shutdown: bool,
     queues: Option<Vec<crate::QueueSnapshot>>,
+    queue_replies: BTreeMap<u64, Event>,
     // Private requests never leave the engine; snapshots expose no credentials.
     known: BTreeMap<JobId, (DownloadRequest, Option<JobSnapshot>)>,
 }
@@ -96,11 +107,23 @@ impl EventBus {
                 Event::CommandRejected { message } => queue.error = Some(message),
                 Event::ShutdownComplete => queue.shutdown = true,
                 Event::QueuesChanged(queues) => queue.queues = Some(queues),
+                event @ (Event::QueueCreated { request, .. }
+                | Event::QueueConfigured { request, .. }) => {
+                    queue.queue_replies.insert(request, event);
+                }
             }
         }
         if !self.pending.swap(true, Ordering::AcqRel) {
             (self.wake)();
         }
+    }
+    pub fn queue_reply_available(&self) -> bool {
+        self.queue
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .queue_replies
+            .len()
+            < 64
     }
     pub fn terminal_pending(&self, id: JobId) -> bool {
         self.queue
@@ -136,6 +159,7 @@ impl EventBus {
         if let Some(queues) = queue.queues.take() {
             result.push(Event::QueuesChanged(queues));
         }
+        result.extend(std::mem::take(&mut queue.queue_replies).into_values());
         if let Some(message) = queue.error.take() {
             result.push(Event::CommandRejected { message });
         }

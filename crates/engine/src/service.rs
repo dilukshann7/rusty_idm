@@ -31,6 +31,15 @@ use queue_support::QueueRuntime;
 
 pub enum Command {
     CreateQueue(String),
+    CreateQueueForEditor {
+        request: u64,
+        name: String,
+    },
+    ConfigureQueue {
+        request: u64,
+        id: QueueId,
+        settings: QueueSettings,
+    },
     RenameQueue(QueueId, String),
     DeleteQueue(QueueId),
     StartQueue(QueueId),
@@ -464,6 +473,7 @@ async fn actor(
             },
         }
         if !shutdown {
+            queues.clock_tick(&mut jobs, &mut waiting, &bus);
             queues.pump(&mut jobs, &mut waiting, &bus);
         }
         queues.reconcile(&jobs, &bus);
