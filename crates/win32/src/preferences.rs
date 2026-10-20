@@ -32,8 +32,18 @@ impl ScannerPreferences {
         if !self.enabled {
             return Ok(());
         }
-        if !self.executable.is_absolute() || !self.executable.is_file() {
+        self.validate_fields()?;
+        if !self.executable.is_file() {
             return Err("Choose an existing absolute scanner executable.".into());
+        }
+        Ok(())
+    }
+    pub fn validate_fields(&self) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if !self.executable.is_absolute() {
+            return Err("Choose an absolute scanner executable.".into());
         }
         let extension = self
             .executable
@@ -118,9 +128,7 @@ impl Default for Configuration {
 }
 impl Configuration {
     pub fn validate(&self) -> Result<(), String> {
-        self.capture.validate()?;
-        rusty_engine::categories::validate_rules(&self.categories)?;
-        self.download_options(true).validate()?;
+        self.validate_fields()?;
         self.scanner.validate()?;
         for rule in &self.categories {
             if rule
@@ -140,6 +148,20 @@ impl Configuration {
             .is_some_and(|p| !p.is_dir())
         {
             return Err("Choose an existing temporary folder.".into());
+        }
+        Ok(())
+    }
+    pub fn validate_fields(&self) -> Result<(), String> {
+        self.capture.validate()?;
+        rusty_engine::categories::validate_rules(&self.categories)?;
+        self.download_options(true).validate()?;
+        self.scanner.validate_fields()?;
+        if self
+            .categories
+            .iter()
+            .any(|r| r.folder.as_ref().is_some_and(|p| !p.is_absolute()))
+        {
+            return Err("Category folders must be absolute.".into());
         }
         Ok(())
     }

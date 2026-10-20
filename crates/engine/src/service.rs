@@ -53,6 +53,23 @@ pub enum Command {
     External(ExternalCommand),
     Submit(DownloadRequest),
     ConfirmInfo(JobId),
+    Inspect(
+        JobId,
+        tokio::sync::oneshot::Sender<Option<(JobSnapshot, bool)>>,
+    ),
+    QueryQueues(tokio::sync::oneshot::Sender<Vec<QueueSnapshot>>),
+    CreateQueueReply(
+        String,
+        tokio::sync::oneshot::Sender<Result<QueueId, String>>,
+    ),
+    RenameCategories(
+        Vec<(String, String)>,
+        tokio::sync::oneshot::Sender<Result<CategoryRenameUndo, String>>,
+    ),
+    RestoreCategories(
+        CategoryRenameUndo,
+        tokio::sync::oneshot::Sender<Result<(), String>>,
+    ),
     Start(JobId),
     Cancel(JobId),
     Pause(JobId),
@@ -121,6 +138,20 @@ pub struct EngineClient {
     closing: Arc<AtomicBool>,
 }
 impl EngineClient {
+    pub fn try_send(&self, command: Command) -> Result<(), CommandError> {
+        if self.closing.load(Ordering::Acquire) {
+            return Err(CommandError::Closed);
+        }
+        let shutdown = matches!(command, Command::Shutdown);
+        self.sender.try_send(command).map_err(|e| match e {
+            mpsc::error::TrySendError::Full(_) => CommandError::QueueFull,
+            mpsc::error::TrySendError::Closed(_) => CommandError::Closed,
+        })?;
+        if shutdown {
+            self.closing.store(true, Ordering::Release);
+        }
+        Ok(())
+    }
     /// Nonblocking session-end signal; also works while GUI modal loops are open.
     pub fn request_shutdown(&self) {
         self.closing.store(true, Ordering::Release);
@@ -154,18 +185,7 @@ impl EngineHandle {
         self.bus.destinations()
     }
     pub fn try_send(&self, command: Command) -> Result<(), CommandError> {
-        if self.closing.load(Ordering::Acquire) {
-            return Err(CommandError::Closed);
-        }
-        let shutdown = matches!(command, Command::Shutdown);
-        self.sender.try_send(command).map_err(|e| match e {
-            mpsc::error::TrySendError::Full(_) => CommandError::QueueFull,
-            mpsc::error::TrySendError::Closed(_) => CommandError::Closed,
-        })?;
-        if shutdown {
-            self.closing.store(true, Ordering::Release);
-        }
-        Ok(())
+        self.client().try_send(command)
     }
     pub fn drain_events(&self) -> Vec<Event> {
         self.bus.drain()
@@ -334,6 +354,11 @@ async fn actor(
                         }
                     },
                     None | Some(Command::Shutdown) => { shutdown = true; closing.store(true, Ordering::Release); receiver.close(); for job in jobs.values_mut() { job.restart = false; job.resume_after_pause = false; shutdown_job(job, &bus); } waiting.clear(); },
+                    Some(Command::Inspect(id,reply))=>{let _=reply.send(jobs.get(&id).map(|j|(j.snapshot.clone(),j.request.options.confirmation_required)));},
+                    Some(Command::QueryQueues(reply))=>{queues.publish(&jobs,&bus);let _=reply.send(queues.snapshots());},
+                    Some(Command::CreateQueueReply(name,reply))=>{let result=queues.create_for_reply(name);queues.publish(&jobs,&bus);let _=reply.send(result);},
+                    Some(Command::RenameCategories(renames,reply))=>{let result=queues.rename_categories(&mut jobs,renames,&bus);let _=reply.send(result);},
+                    Some(Command::RestoreCategories(undo,reply))=>{let result=queues.restore_categories(&mut jobs,undo,&bus);let _=reply.send(result);},
                     Some(command) if queue_support::handles(&command) => {
                         queues.command(command, &mut jobs, &mut waiting, &bus).await;
                     },
@@ -366,6 +391,7 @@ async fn actor(
                     Some(Command::Pause(id)) => {
                         if let Some(job) = jobs.get_mut(&id) {
                             job.user_held = true;
+                            if job.snapshot.state == JobState::Waiting {waiting.retain(|queued|*queued!=id);job.snapshot.deferred=true;job.request.deferred=true;bus.publish(Event::JobChanged(job.snapshot.clone()));}
                             if job.snapshot.state == JobState::Running && job.cancel.try_pause() {
                                 job.snapshot.state = JobState::Pausing;
                                 job.snapshot.bytes_per_second = 0; job.snapshot.eta_seconds = None;
@@ -450,6 +476,7 @@ async fn actor(
                         },
                         Err(error) => { job.snapshot.state = JobState::Failed; if error.kind==ErrorKind::RestartRequired {job.snapshot.readiness=EntryReadiness::RestartRequired;} job.snapshot.error = Some(error); },
                     }
+                    if job.snapshot.state==JobState::Failed && job.request.options.confirmation_required && job.snapshot.readiness==EntryReadiness::Ready {job.snapshot.readiness=EntryReadiness::ConfirmationRequired;}
                     job.snapshot.bytes_per_second = 0; job.snapshot.eta_seconds = None;
                     if job.restart && !shutdown && !closing.load(Ordering::Acquire) && !has_retained_partial(job) {
                         // Restart is serialized after cleanup, including a late
@@ -620,7 +647,15 @@ fn restart_job(job: &mut Job, bus: &EventBus) -> bool {
     }
 }
 fn shutdown_job(job: &mut Job, bus: &EventBus) {
-    if job.snapshot.entry_id.is_some() {
+    let retained = job.request.options.confirmation_required
+        || job.request.recovery.as_ref().is_some_and(|r| {
+            r.store
+                .snapshot()
+                .entries
+                .get(&r.entry)
+                .is_some_and(|e| !e.ephemeral)
+        });
+    if retained {
         if job.started && !job.snapshot.state.is_terminal() {
             job.cancel.preserve_on_exit();
         }
@@ -701,7 +736,9 @@ fn admit(
         entry_id,
         restored: false,
         recovery_paths: vec![],
-        queue_id: request.deferred.then_some(QueueId::MAIN),
+        queue_id: request
+            .deferred
+            .then_some(request.queue.unwrap_or(QueueId::MAIN)),
         readiness: EntryReadiness::Ready,
         filename: request
             .destination

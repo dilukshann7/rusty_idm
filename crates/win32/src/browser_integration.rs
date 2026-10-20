@@ -511,6 +511,19 @@ impl BrowserController {
                 .activate,
         )
     }
+    pub fn subscribe_receipt(&self, id: &RequestId) -> Result<mpsc::Receiver<Reply>, CommandError> {
+        let (tx, rx) = mpsc::sync_channel(1);
+        let mut state = self.router.state.lock().unwrap_or_else(|p| p.into_inner());
+        let entry = state.entries.get_mut(id).ok_or(CommandError::Closed)?;
+        if let Some(status) = &entry.original {
+            let _ = tx.try_send(Reply::new(id.clone(), status.clone()));
+        } else if entry.waiters.len() < 8 {
+            entry.waiters.push(tx);
+        } else {
+            return Err(CommandError::QueueFull);
+        }
+        Ok(rx)
+    }
     pub fn submit(
         &self,
         id: RequestId,

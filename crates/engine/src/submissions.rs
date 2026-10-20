@@ -16,6 +16,8 @@ impl SubmissionAction {
             | (Self::Restart(a), Self::Restart(b)) => a == b,
             (Self::Submit(a), Self::Submit(b)) => {
                 a.same_source(b)
+                    && a.options == b.options
+                    && a.queue == b.queue
                     && a.destination == b.destination
                     && a.deferred == b.deferred
                     && a.category == b.category

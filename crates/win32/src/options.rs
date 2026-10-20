@@ -394,8 +394,8 @@ impl Pages {
             }
         }
         c.download_options(true).validate().map_err(|e| (3, e))?;
-        c.scanner.validate().map_err(|e| (3, e))?;
-        c.validate().map_err(|e| {
+        c.scanner.validate_fields().map_err(|e| (3, e))?;
+        c.validate_fields().map_err(|e| {
             (
                 if e.contains("User-Agent") || e.contains("Scanner") {
                     3
@@ -408,7 +408,11 @@ impl Pages {
         Ok(settings)
     }
 }
-pub fn show(owner: HWND, settings: &Settings) -> Result<Option<Settings>, AppError> {
+pub fn show(
+    owner: HWND,
+    settings: &Settings,
+    engine: rusty_engine::EngineClient,
+) -> Result<Option<Settings>, AppError> {
     let existing = OPEN.with(Cell::get);
     if !existing.is_invalid() {
         platform::bring_to_front(existing);
@@ -428,10 +432,43 @@ pub fn show(owner: HWND, settings: &Settings) -> Result<Option<Settings>, AppErr
     unsafe {
         SetTimer(Some(h), 1, 100, None);
     }
+    let mut pending: Option<std::sync::mpsc::Receiver<Result<Settings, String>>> = None;
     form.show();
     while let Some(actions) = form.next()? {
         icons.drain();
+        if let Some(receiver) = &pending {
+            let result = match receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err(
+                    "The preference worker stopped before acknowledging the save.".into(),
+                )),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            };
+            if let Some(result) = result {
+                pending = None;
+                for page in pages.handles {
+                    unsafe {
+                        let _ =
+                            windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow(page, true);
+                    }
+                }
+                for id in [1, 2, CFG_TABS] {
+                    ui::enabled(h, id, true);
+                }
+                platform::set_text(h, "Rusty Download Manager Configuration");
+                match result {
+                    Ok(settings) => return Ok(Some(settings)),
+                    Err(error) => {
+                        message(Some(h), "Configuration could not be applied", &error, false);
+                    }
+                }
+            }
+        }
         for action in actions {
+            if pending.is_some() {
+                continue;
+            }
+
             match action {
                 Action::Dpi => pages.position(h)?,
                 Action::Timer => {}
@@ -442,7 +479,31 @@ pub fn show(owner: HWND, settings: &Settings) -> Result<Option<Settings>, AppErr
                 Action::Command(page, id, notification) => match id {
                     2 => return Ok(None),
                     1 => match pages.gather(&draft) {
-                        Ok(settings) => return Ok(Some(settings)),
+                        Ok(settings) => match crate::configuration_apply::begin(
+                            settings,
+                            draft.clone(),
+                            engine.clone(),
+                            owner,
+                        ) {
+                            Ok(receiver) => {
+                                pending = Some(receiver);
+                                for page in pages.handles {
+                                    unsafe {
+                                        let _ = windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow(page, false);
+                                    }
+                                }
+                                for id in [1, 2, CFG_TABS] {
+                                    ui::enabled(h, id, false);
+                                }
+                                platform::set_text(
+                                    h,
+                                    "Rusty Download Manager Configuration — Applying…",
+                                );
+                            }
+                            Err(error) => {
+                                message(Some(h), "Configuration", &error, false);
+                            }
+                        },
                         Err((page, e)) => {
                             pages.show(h, page)?;
                             message(Some(h), "Configuration", &e, false);

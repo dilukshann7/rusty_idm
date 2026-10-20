@@ -74,6 +74,7 @@ enum Action {
     TrayMenu,
     RestoreTray,
     EndSession,
+    Clipboard,
 }
 #[derive(Default)]
 struct Signals {
@@ -195,12 +196,14 @@ impl Drop for MainWindow {
 
 struct AppState {
     browser: Option<BrowserController>,
+    clipboard: crate::clipboard::Clipboard,
     engine: Option<EngineHandle>,
     view: ViewModel,
     controls: Controls,
     details: DetailsWindows,
     completions: CompletionWindows,
     scheduler: SchedulerWindow,
+    scanner: crate::scanner::Scanner,
     pending_create: Option<u64>,
     pending_editor: Option<(rusty_engine::QueueId, Tab)>,
     tray: TrayIcon,
@@ -448,7 +451,18 @@ impl AppState {
                     } else {
                         self.details.update(snapshot);
                     }
+                    if snapshot.state != rusty_engine::JobState::Completed {
+                        self.scanner.invalidate(snapshot.id);
+                    }
                     if newly_completed
+                        && self.lifecycle == Lifecycle::Open
+                        && self.settings.configuration.scanner.enabled
+                    {
+                        self.scanner.enqueue(
+                            snapshot.clone(),
+                            self.settings.configuration.scanner.clone(),
+                        );
+                    } else if newly_completed
                         && self.lifecycle == Lifecycle::Open
                         && self.settings.show_completion_dialog
                     {
@@ -525,6 +539,28 @@ impl AppState {
                 self.lifecycle != Lifecycle::Open,
             );
         }
+        for (snapshot, result) in self.scanner.drain() {
+            if self.lifecycle == Lifecycle::Open
+                && self.view.jobs.get(&snapshot.id).is_some_and(|s| {
+                    s.state == rusty_engine::JobState::Completed
+                        && s.destination == snapshot.destination
+                })
+            {
+                if let Err(error) = result {
+                    message(Some(window.hwnd), "Virus check", &error, false);
+                }
+                if self.settings.show_completion_dialog {
+                    if let Err(error) = self.completions.show(window.hwnd, &snapshot) {
+                        message(
+                            Some(window.hwnd),
+                            "Download complete",
+                            &error.to_string(),
+                            false,
+                        );
+                    }
+                }
+            }
+        }
         if self.lifecycle == Lifecycle::Closing {
             self.send_shutdown(window.hwnd);
         }
@@ -555,6 +591,27 @@ impl AppState {
             Action::Engine => {
                 self.events(window);
                 self.browser_events(window)?;
+            }
+            Action::Clipboard if self.lifecycle.accepts_submissions() => {
+                if let Some(address) = self.clipboard.take_url() {
+                    let policy = &self.settings.configuration.capture;
+                    let name = crate::download_form::suggested_filename(&address).ok();
+                    let extension = name
+                        .as_deref()
+                        .and_then(|n| std::path::Path::new(n).extension())
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    if !policy.excluded(&address) && policy.extensions.contains(&extension) {
+                        let client = self.engine.as_ref().expect("running engine").client();
+                        if let Some(download) =
+                            dialogs::from_address(owner, &self.settings, &address, &client)?
+                        {
+                            let intent = self.resolve_download_intent(window, download, None)?;
+                            self.execute_manual_intent(owner, intent)?;
+                        }
+                    }
+                }
             }
             Action::Browser => self.browser_events(window)?,
             Action::Close => {
@@ -712,15 +769,30 @@ impl AppState {
                     }
                     SHOW_MANAGER => platform::bring_to_front(owner),
                     ADD => {
-                        if let Some(download) = dialogs::show_add_download(owner, &self.settings)? {
-                            let intent = self.resolve_download_intent(window, download, None)?;
+                        if let Some(prepared) =
+                            dialogs::prepare_add_download(owner, &self.settings)?
+                        {
+                            let intent = self.prepared_intent(window, prepared, None)?;
                             self.execute_manual_intent(owner, intent)?;
                         }
                     }
+                    ADD_BATCH => self.add_batch(window)?,
                     OPTIONS => {
-                        if let Some(settings) = dialogs::show_options(owner, &self.settings)? {
-                            settings::save(&settings)?;
+                        if let Some(settings) = dialogs::show_options(
+                            owner,
+                            &self.settings,
+                            self.engine.as_ref().expect("running engine").client(),
+                        )? {
+                            if let Some(browser) = &self.browser {
+                                browser.set_policy(settings.configuration.capture.clone());
+                            }
+                            self.details
+                                .set_preferences(settings.configuration.progress.clone());
+                            self.clipboard.adopt(settings.configuration.clipboard);
+                            self.view.categories = settings.configuration.categories.clone();
                             self.settings = settings;
+                            self.controls
+                                .refresh(owner, &self.view, self.category, false);
                             self.completions
                                 .set_show_again(self.settings.show_completion_dialog);
                         }
@@ -777,6 +849,7 @@ impl AppState {
             CREDENTIALS=>{if let Some((login,password))=crate::queue_ui::credentials(owner)?{self.command(owner,Command::SupplyCredentials(id,login,password));}},
             RESTART_REQUIRED=>{if message(Some(owner),"Restart download?",&format!("Restart {} from zero?\n\nSave as: {}\n\nVerified saved bytes will be discarded. Modified partials will be preserved. If a file already exists at this destination, this approves replacing it only after a successful download.",job.filename,job.destination.display()),true){self.command(owner,Command::ConfirmRestart(id));}},
             CATEGORY_EDIT=>{if let Some(category)=crate::queue_ui::name(owner,"Category (Automatic or a category name)",job.category.as_deref().unwrap_or("Automatic"))?{self.command(owner,Command::SetCategory(id,(!category.eq_ignore_ascii_case("Automatic")).then_some(category)));}},
+            START if job.readiness==rusty_engine::EntryReadiness::ConfirmationRequired => {if message(Some(owner),"Confirm saved download",&format!("Continue the unconfirmed download {}?",job.filename),true){self.command(owner,Command::ConfirmInfo(id));self.command(owner,Command::Activate(id));}}
             START if actions.start => {self.command(owner,Command::Activate(id));}
             STOP if actions.stop => {
                 self.command(owner, Command::Cancel(id));
@@ -791,9 +864,11 @@ impl AppState {
                 self.details.show_or_update(owner, job)?;
             }
             OPEN_FILE if actions.open_file => {
+                if !self.scanner.allow_open(owner,&job.destination){return Ok(());}
                 completion::open_completed(owner, &job.destination, completion::OpenAction::Open)?;
             }
             OPEN_WITH if actions.open_file => {
+                if !self.scanner.allow_open(owner,&job.destination){return Ok(());}
                 completion::open_completed(
                     owner,
                     &job.destination,
@@ -882,12 +957,14 @@ pub fn run() -> Result<(), AppError> {
     };
     let mut app = AppState {
         browser: Some(browser),
+        clipboard: crate::clipboard::Clipboard::new(window.hwnd),
         engine: Some(engine),
         view: ViewModel::default(),
         controls,
         details: DetailsWindows::default(),
         completions: CompletionWindows::default(),
         scheduler: SchedulerWindow::default(),
+        scanner: crate::scanner::Scanner::default(),
         pending_create: None,
         pending_editor: None,
         tray: TrayIcon::new(window.hwnd),
@@ -898,6 +975,16 @@ pub fn run() -> Result<(), AppError> {
         recovery_reported: false,
         session_ending: false,
     };
+    if let Err(error) = app
+        .clipboard
+        .configure(app.settings.configuration.clipboard)
+    {
+        message(Some(window.hwnd), "Clipboard", &error, false);
+        app.settings.configuration.clipboard = false;
+    }
+    app.view.categories = app.settings.configuration.categories.clone();
+    app.details
+        .set_preferences(app.settings.configuration.progress.clone());
     app.controls.layout(window.hwnd);
     app.controls
         .refresh(window.hwnd, &app.view, app.category, false);
@@ -1108,6 +1195,7 @@ unsafe fn window_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                     signals.push(Action::AssociationsChanged);
                     return LRESULT(0);
                 }
+                WM_CLIPBOARDUPDATE => signals.push(Action::Clipboard),
                 WM_SETTINGCHANGE => signals.push(Action::AssociationsChanged),
                 bridge::BROWSER_WAKE => signals.push(Action::Browser),
                 bridge::ENGINE_WAKE | WM_TIMER => {
@@ -1146,6 +1234,114 @@ impl AppState {
             }
         }
     }
+    fn add_batch(&mut self, window: &MainWindow) -> Result<(), AppError> {
+        let Some(text) = crate::options_editors::text(
+            window.hwnd,
+            "Add batch URLs",
+            "One HTTP(S) URL per line. Accepted files are held in a queue.",
+            "",
+            65535,
+        )?
+        else {
+            return Ok(());
+        };
+        let lines: Vec<_> = text
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if lines.len() > 128 {
+            message(
+                Some(window.hwnd),
+                "Batch URLs",
+                "Enter at most 128 URLs per batch.",
+                false,
+            );
+            return Ok(());
+        }
+        let client = self.engine.as_ref().expect("running engine").client();
+        let queue = if self.settings.configuration.choose_queue_batch {
+            let Some(queue) = crate::queue_picker::choose(window.hwnd, &client)? else {
+                return Ok(());
+            };
+            queue
+        } else {
+            rusty_engine::QueueId::MAIN
+        };
+        let mut results = vec![];
+        for (n, address) in lines.into_iter().enumerate() {
+            let filename = match crate::download_form::suggested_filename(address) {
+                Ok(name) => name,
+                Err(_) => {
+                    results.push(format!("{}: invalid HTTP(S) URL", n + 1));
+                    continue;
+                }
+            };
+            let path = crate::download_form::suggested_path(&self.settings, &filename, "Automatic");
+            let mut request = match rusty_engine::validate_request(
+                address,
+                path,
+                rusty_engine::ReplacementPolicy::Deny,
+            ) {
+                Ok(request) => request,
+                Err(_) => {
+                    results.push(format!("{}: invalid address or filename", n + 1));
+                    continue;
+                }
+            };
+            request.options = self.settings.configuration.download_options(true);
+            request.deferred = true;
+            request.queue = Some(queue);
+            let download = dialogs::AddedDownload {
+                request,
+                remember_path: false,
+            };
+            let intent = self.resolve_download_intent(window, download, None)?;
+            let result = match intent {
+                DownloadIntent::New(download) => {
+                    let (lease, admission) = crate::provisional::manual(&client, &download)?;
+                    match crate::provisional::wait_admission(window.hwnd, &lease, admission) {
+                        Ok(Some(_)) => "held in queue",
+                        Ok(None) => "cancelled",
+                        Err(_) => "admission failed",
+                    }
+                }
+                DownloadIntent::Existing { .. } => "duplicate kept; no batch transfer started",
+                DownloadIntent::Cancelled => "cancelled",
+            };
+            results.push(format!("{}: {} — {}", n + 1, filename, result));
+        }
+        message(
+            Some(window.hwnd),
+            "Batch results",
+            &results.join("\n"),
+            false,
+        );
+        Ok(())
+    }
+    fn prepared_intent(
+        &mut self,
+        window: &MainWindow,
+        prepared: dialogs::PreparedDownload,
+        lease: Option<&CaptureLease>,
+    ) -> Result<DownloadIntent, AppError> {
+        let client = self.engine.as_ref().expect("running engine").client();
+        let immediate = self.settings.configuration.show_start_dialog
+            && self.settings.configuration.immediate_info
+            && !self.settings.configuration.queue_only;
+        let download = if immediate {
+            prepared.initial(window.hwnd, &self.settings, lease, &client)?
+        } else {
+            prepared.edit(window.hwnd, &self.settings, lease, &client)?
+        };
+        let Some(mut download) = download else {
+            return Ok(DownloadIntent::Cancelled);
+        };
+        if immediate {
+            download.request.options.confirmation_required = true;
+        }
+        self.resolve_download_intent(window, download, lease)
+    }
     fn execute_manual_intent(
         &mut self,
         owner: HWND,
@@ -1153,7 +1349,19 @@ impl AppState {
     ) -> Result<(), AppError> {
         match intent {
             DownloadIntent::New(download) => {
-                if self.command(owner, Command::Submit(download.request.clone())) {
+                if download.request.options.confirmation_required {
+                    let client = self.engine.as_ref().expect("running engine").client();
+                    let (lease, admission) = crate::provisional::manual(&client, &download)?;
+                    crate::provisional::show(
+                        owner,
+                        &client,
+                        &download,
+                        &lease,
+                        admission,
+                        self.settings.configuration.choose_queue_later,
+                    )?;
+                    self.remember_download(owner, &download);
+                } else if self.command(owner, Command::Submit(download.request.clone())) {
                     self.remember_download(owner, &download);
                 }
             }
@@ -1191,7 +1399,9 @@ impl AppState {
             if self.lifecycle.accepts_submissions() {
                 for id in presentations {
                     if let Some(snapshot) = self.view.jobs.get(&id) {
-                        self.details.show_or_update(window.hwnd, snapshot)?;
+                        if self.settings.configuration.progress.show {
+                            self.details.observe(window.hwnd, snapshot)?;
+                        }
                     }
                 }
             }
@@ -1201,14 +1411,14 @@ impl AppState {
             let intent = if self.lifecycle.accepts_submissions()
                 && incoming.lease.state() == LeaseState::Pending
             {
-                match dialogs::show_browser_download(
+                match dialogs::prepare_browser_download(
                     window.hwnd,
                     &self.settings,
                     &incoming.capture,
                     &incoming.lease,
                 ) {
-                    Ok(Some(download)) => {
-                        self.resolve_download_intent(window, download, Some(&incoming.lease))
+                    Ok(Some(prepared)) => {
+                        self.prepared_intent(window, prepared, Some(&incoming.lease))
                     }
                     Ok(None) => Ok(DownloadIntent::Cancelled),
                     Err(e) => Err(e),
@@ -1229,12 +1439,29 @@ impl AppState {
             if let DownloadIntent::New(download) = &intent {
                 self.remember_download(window.hwnd, download);
             }
+            let provisional = match &intent {
+                DownloadIntent::New(download) if download.request.options.confirmation_required => {
+                    Some(download.clone())
+                }
+                _ => None,
+            };
             if let Some(action) = intent.into_submission() {
                 if incoming.lease.state() == LeaseState::Pending {
+                    let receipt = if provisional.is_some() {
+                        Some(
+                            self.browser
+                                .as_ref()
+                                .expect("controller")
+                                .subscribe_receipt(&id)
+                                .map_err(|e| AppError(e.to_string()))?,
+                        )
+                    } else {
+                        None
+                    };
                     if let Err(e) = self.browser.as_ref().expect("controller").submit(
                         id.clone(),
                         action,
-                        incoming.lease,
+                        incoming.lease.clone(),
                         incoming.reply,
                     ) {
                         self.browser.as_ref().expect("controller").decline(
@@ -1245,6 +1472,23 @@ impl AppState {
                                 DeclineCode::AppClosing
                             },
                         );
+                    } else if let (Some(download), Some(receipt)) = (provisional, receipt) {
+                        let client = self.engine.as_ref().expect("running engine").client();
+                        if let Err(error) = crate::provisional::show(
+                            window.hwnd,
+                            &client,
+                            &download,
+                            &incoming.lease,
+                            crate::provisional::Admission::Browser(id.clone(), receipt),
+                            self.settings.configuration.choose_queue_later,
+                        ) {
+                            message(
+                                Some(window.hwnd),
+                                "Download File Info",
+                                &error.to_string(),
+                                false,
+                            );
+                        }
                     }
                 }
             } else {
@@ -1268,6 +1512,11 @@ impl AppState {
                     path,
                     action,
                 } => {
+                    if !matches!(action, completion::OpenAction::OpenFolder)
+                        && !self.scanner.allow_open(owner, &path)
+                    {
+                        continue;
+                    }
                     if let Err(error) = completion::open_completed(owner, &path, action) {
                         message(
                             Some(owner),

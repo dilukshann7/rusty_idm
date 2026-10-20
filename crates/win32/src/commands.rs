@@ -230,3 +230,11 @@ pub const CFG_FLAG_4: i32 = 3214;
 pub const CFG_FLAG_5: i32 = 3215;
 pub const CFG_FLAG_6: i32 = 3216;
 pub const CFG_FLAG_7: i32 = 3217;
+
+pub const QUEUE_PICKER: u16 = 223;
+pub const QUEUE_CHOICE: i32 = 3260;
+pub const QUEUE_CREATE: i32 = 3261;
+pub const ADD_BATCH: u16 = 4050;
+
+pub const ADMISSION_DIALOG: u16 = 224;
+pub const ADMISSION_TEXT: i32 = 3270;

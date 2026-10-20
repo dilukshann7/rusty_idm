@@ -281,7 +281,7 @@ pub fn scanner(
                                 .map(str::to_owned)
                                 .collect(),
                         };
-                        match options.validate() {
+                        match options.validate_fields() {
                             Ok(()) => return Ok(Some(options)),
                             Err(e) => {
                                 message(Some(h), "Virus checking", &e, false);

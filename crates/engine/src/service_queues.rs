@@ -55,7 +55,7 @@ impl QueueRuntime {
             s.entries.insert(id, stored(id, request));
             if request.deferred {
                 s.queues
-                    .get_mut(&QueueId::MAIN)
+                    .get_mut(&request.queue.unwrap_or(QueueId::MAIN))
                     .ok_or("Main queue is unavailable.")?
                     .entries
                     .push(id);
@@ -140,6 +140,7 @@ impl QueueRuntime {
                 .values()
                 .find(|q| q.entries.contains(&entry.id))
                 .map(|q| q.id);
+            request.queue = queue_id;
             let received = entry
                 .completed_bytes
                 .unwrap_or_else(|| entry.checkpoint.as_ref().map_or(0, |c| c.durable));
@@ -533,6 +534,7 @@ impl QueueRuntime {
                     waiting.retain(|i| *i != id);
                     job.snapshot.entry_id = Some(entry);
                     job.snapshot.queue_id = target;
+                    job.request.queue = target;
                     job.snapshot.recovery_paths=self.store.snapshot().entries.get(&entry).map(|e|e.retained_files.clone()).unwrap_or_default();
                     job.snapshot.deferred = true;
                     job.request.deferred = true;
@@ -597,6 +599,8 @@ impl QueueRuntime {
                         .is_some_and(|c| c.durable > 0 && (c.etag.is_none() || c.total.is_none()))
                     {
                         EntryReadiness::RestartRequired
+                    } else if job.request.options.confirmation_required {
+                        EntryReadiness::ConfirmationRequired
                     } else {
                         EntryReadiness::Ready
                     };
@@ -678,5 +682,103 @@ fn stored(id: EntryId, r: &DownloadRequest) -> StoredEntry {
         retained_files: vec![],
         checkpoint: None,
         journal: None,
+    }
+}
+
+impl QueueRuntime {
+    pub fn snapshots(&self) -> Vec<QueueSnapshot> {
+        self.last.clone()
+    }
+    pub fn create_for_reply(&self, name: String) -> Result<QueueId, String> {
+        self.create_queue(name)
+    }
+    pub fn rename_categories(
+        &self,
+        jobs: &mut BTreeMap<JobId, Job>,
+        renames: Vec<(String, String)>,
+        bus: &EventBus,
+    ) -> Result<CategoryRenameUndo, String> {
+        if renames.len() > 128
+            || renames.iter().any(|(from, to)| {
+                from.trim().is_empty()
+                    || to.trim().is_empty()
+                    || from.chars().chain(to.chars()).any(char::is_control)
+                    || to.chars().count() > 80
+                    || std::iter::once("General")
+                        .chain(crate::categories::BUILTIN)
+                        .any(|s| s.eq_ignore_ascii_case(from) || s.eq_ignore_ascii_case(to))
+            })
+        {
+            return Err("Invalid custom category rename.".into());
+        }
+        let replacement = |category: &Option<String>| {
+            category
+                .as_ref()
+                .and_then(|c| {
+                    renames
+                        .iter()
+                        .find(|(from, _)| c.eq_ignore_ascii_case(from))
+                })
+                .map(|(_, to)| Some(to.clone()))
+        };
+        let mut undo = CategoryRenameUndo::default();
+        self.store.update(|s| {
+            for e in s.entries.values_mut() {
+                if let Some(after) = replacement(&e.category) {
+                    undo.entries.push((e.id, e.category.clone(), after.clone()));
+                    e.category = after;
+                }
+            }
+            Ok(())
+        })?;
+        for (id, job) in jobs {
+            if let Some(after) = replacement(&job.snapshot.category) {
+                undo.jobs
+                    .push((*id, job.snapshot.category.clone(), after.clone()));
+                job.request.category = after.clone();
+                job.snapshot.category = after;
+                bus.publish(Event::JobChanged(job.snapshot.clone()));
+            }
+        }
+        Ok(undo)
+    }
+    pub fn restore_categories(
+        &self,
+        jobs: &mut BTreeMap<JobId, Job>,
+        undo: CategoryRenameUndo,
+        bus: &EventBus,
+    ) -> Result<(), String> {
+        for (id, _, after) in &undo.jobs {
+            if jobs
+                .get(id)
+                .is_some_and(|job| &job.snapshot.category != after)
+            {
+                return Err("A runtime category changed during compensation.".into());
+            }
+        }
+        self.store.update(|s| {
+            for (id, before, after) in &undo.entries {
+                if let Some(e) = s.entries.get_mut(id) {
+                    if &e.category != after {
+                        return Err(
+                            "A category changed during compensation; recovery is required.".into(),
+                        );
+                    }
+                    e.category = before.clone();
+                }
+            }
+            Ok(())
+        })?;
+        for (id, before, after) in undo.jobs {
+            if let Some(job) = jobs.get_mut(&id) {
+                if job.snapshot.category != after {
+                    return Err("A runtime category changed during compensation.".into());
+                }
+                job.request.category = before.clone();
+                job.snapshot.category = before;
+                bus.publish(Event::JobChanged(job.snapshot.clone()));
+            }
+        }
+        Ok(())
     }
 }

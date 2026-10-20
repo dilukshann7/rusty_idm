@@ -49,19 +49,60 @@ pub fn suggested_filename(address: &str) -> Result<String, JobError> {
     Ok(name.to_owned())
 }
 pub fn folder_for<'a>(settings: &'a Settings, category: &str) -> &'a Path {
+    let name = if category.eq_ignore_ascii_case("Automatic") {
+        "General"
+    } else {
+        category.trim()
+    };
     settings
-        .category_destinations
-        .get(&category.trim().to_lowercase())
+        .configuration
+        .categories
+        .iter()
+        .find(|r| r.name.eq_ignore_ascii_case(name))
+        .and_then(|r| r.folder.as_deref())
         .or_else(|| {
-            category
-                .eq_ignore_ascii_case("Automatic")
-                .then(|| settings.category_destinations.get("general"))
-                .flatten()
+            settings
+                .category_destinations
+                .get(&name.to_lowercase())
+                .map(PathBuf::as_path)
         })
-        .map(PathBuf::as_path)
         .unwrap_or(&settings.default_destination)
 }
+pub fn category_for<'a>(settings: &'a Settings, filename: &Path) -> &'a str {
+    rusty_engine::categories::classify(filename, &settings.configuration.categories)
+        .map(|r| r.name.as_str())
+        .unwrap_or("General")
+}
+pub fn suggested_path(settings: &Settings, filename: &str, category: &str) -> PathBuf {
+    let name = if category.eq_ignore_ascii_case("Automatic") {
+        category_for(settings, Path::new(filename))
+    } else {
+        category
+    };
+    folder_for(settings, name).join(filename)
+}
 pub fn remember_folder(settings: &mut Settings, category: &str, destination: &Path) {
+    let category = if category.eq_ignore_ascii_case("Automatic") {
+        category_for(settings, destination).to_owned()
+    } else {
+        category.to_owned()
+    };
+    if let Some(rule) = settings
+        .configuration
+        .categories
+        .iter_mut()
+        .find(|r| r.name.eq_ignore_ascii_case(&category))
+    {
+        if !rule.remember {
+            return;
+        }
+        if let Some(parent) = destination.parent() {
+            rule.folder = Some(parent.to_owned());
+            if rule.name == "General" {
+                settings.default_destination = parent.to_owned();
+            }
+        }
+    }
     if let Some(parent) = destination.parent() {
         settings
             .category_destinations

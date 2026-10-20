@@ -136,3 +136,56 @@ pub fn executable_kind(path: &std::path::Path) -> Option<BrowserKind> {
         _ => None,
     }
 }
+
+/// Used only by the explicit configuration apply/compensation worker.
+pub(crate) fn write_value(key: &str, name: &str, value: Option<&str>) -> Result<(), String> {
+    let key = crate::platform::wide(key);
+    let name = crate::platform::wide(name);
+    let mut handle = HKEY::default();
+    let status = unsafe {
+        if value.is_some() {
+            RegCreateKeyExW(
+                HKEY_CURRENT_USER,
+                PCWSTR(key.as_ptr()),
+                None,
+                PCWSTR::null(),
+                REG_OPTION_NON_VOLATILE,
+                KEY_SET_VALUE,
+                None,
+                &mut handle,
+                None,
+            )
+        } else {
+            RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                PCWSTR(key.as_ptr()),
+                None,
+                KEY_SET_VALUE,
+                &mut handle,
+            )
+        }
+    };
+    if status == ERROR_FILE_NOT_FOUND && value.is_none() {
+        return Ok(());
+    }
+    if status.0 != 0 {
+        return Err("Cannot update the owned Windows setting.".into());
+    }
+    let status = unsafe {
+        if let Some(value) = value {
+            let value = crate::platform::wide(value);
+            let bytes = std::slice::from_raw_parts(value.as_ptr().cast::<u8>(), value.len() * 2);
+            RegSetValueExW(handle, PCWSTR(name.as_ptr()), None, REG_SZ, Some(bytes))
+        } else {
+            RegDeleteValueW(handle, PCWSTR(name.as_ptr()))
+        }
+    };
+    unsafe {
+        let _ = RegCloseKey(handle);
+    }
+    if status.0 == 0 || status == ERROR_FILE_NOT_FOUND {
+        Ok(())
+    } else {
+        Err("Windows rejected the owned setting change.".into())
+    }
+}

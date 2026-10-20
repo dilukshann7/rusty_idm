@@ -538,11 +538,13 @@ impl Controls {
                     .jobs
                     .values()
                     .filter_map(|j| j.category.as_deref())
+                    .chain(view.categories.iter().map(|r| r.name.as_str()))
                     .filter(|c| {
                         !rusty_engine::categories::BUILTIN
                             .iter()
                             .any(|b| b.eq_ignore_ascii_case(c))
                             && !c.eq_ignore_ascii_case("Automatic")
+                            && !c.eq_ignore_ascii_case("General")
                     })
                     .collect();
                 for name in custom {

@@ -87,6 +87,7 @@ impl DownloadOptions {
 #[derive(Clone)]
 pub struct DownloadRequest {
     pub options: DownloadOptions,
+    pub queue: Option<crate::QueueId>,
     pub(crate) url: Url,
     pub destination: PathBuf,
     pub replacement: ReplacementPolicy,
@@ -350,6 +351,7 @@ pub fn validate_request(
     }
     Ok(DownloadRequest {
         options: Default::default(),
+        queue: None,
         url,
         destination,
         replacement,
@@ -365,3 +367,9 @@ pub fn validate_request(
 #[cfg(test)]
 #[path = "model_tests.rs"]
 mod model_tests;
+
+#[derive(Clone, Debug, Default)]
+pub struct CategoryRenameUndo {
+    pub jobs: Vec<(JobId, Option<String>, Option<String>)>,
+    pub entries: Vec<(crate::EntryId, Option<String>, Option<String>)>,
+}

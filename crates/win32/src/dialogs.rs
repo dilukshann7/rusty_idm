@@ -57,15 +57,43 @@ struct Context {
     result: RefCell<Option<Draft>>,
     lease: Option<CaptureLease>,
 }
+pub struct PreparedDownload {
+    draft: Draft,
+}
+impl PreparedDownload {
+    pub fn initial(
+        &self,
+        owner: HWND,
+        settings: &Settings,
+        lease: Option<&CaptureLease>,
+        engine: &rusty_engine::EngineClient,
+    ) -> Result<Option<AddedDownload>, AppError> {
+        let mut quiet = settings.clone();
+        quiet.configuration.show_start_dialog = false;
+        quiet.configuration.queue_only = false;
+        quiet.configuration.choose_queue_later = false;
+        finish_download(owner, &quiet, self.draft.clone(), lease, engine)
+    }
+    pub fn edit(
+        self,
+        owner: HWND,
+        settings: &Settings,
+        lease: Option<&CaptureLease>,
+        engine: &rusty_engine::EngineClient,
+    ) -> Result<Option<AddedDownload>, AppError> {
+        finish_download(owner, settings, self.draft, lease, engine)
+    }
+}
+#[derive(Clone)]
 pub struct AddedDownload {
     pub request: DownloadRequest,
     pub remember_path: bool,
 }
 
-pub fn show_add_download(
+pub fn prepare_add_download(
     owner: HWND,
     settings: &Settings,
-) -> Result<Option<AddedDownload>, AppError> {
+) -> Result<Option<PreparedDownload>, AppError> {
     let mut draft = Draft {
         category: "Automatic".into(),
         remember: true,
@@ -78,8 +106,7 @@ pub fn show_add_download(
         draft = address;
         match download_form::suggested_filename(&draft.url) {
             Ok(filename) => {
-                draft.path = download_form::folder_for(settings, &draft.category)
-                    .join(filename)
+                draft.path = download_form::suggested_path(settings, &filename, &draft.category)
                     .to_string_lossy()
                     .into_owned();
                 break;
@@ -89,7 +116,7 @@ pub fn show_add_download(
             }
         }
     }
-    finish_download(owner, settings, draft, None)
+    Ok(Some(PreparedDownload { draft }))
 }
 
 fn finish_download(
@@ -97,12 +124,17 @@ fn finish_download(
     settings: &Settings,
     mut draft: Draft,
     lease: Option<&CaptureLease>,
+    engine: &rusty_engine::EngineClient,
 ) -> Result<Option<AddedDownload>, AppError> {
     loop {
-        let Some(info) = show(owner, Mode::Info, &draft, settings, lease)? else {
-            return Ok(None);
-        };
-        draft = info;
+        if settings.configuration.show_start_dialog {
+            let Some(info) = show(owner, Mode::Info, &draft, settings, lease)? else {
+                return Ok(None);
+            };
+            draft = info;
+        } else {
+            draft.deferred = settings.configuration.queue_only;
+        }
         if lease.is_some_and(|l| l.state() != LeaseState::Pending) {
             return Ok(None);
         }
@@ -144,12 +176,23 @@ fn finish_download(
             );
             continue;
         }
-        request.deferred = draft.deferred;
+        request.options = settings.configuration.download_options(lease.is_none());
+        request.deferred = draft.deferred || settings.configuration.queue_only;
+        if request.deferred && settings.configuration.choose_queue_later {
+            let Some(queue) = crate::queue_picker::choose(owner, engine)? else {
+                if settings.configuration.show_start_dialog {
+                    continue;
+                } else {
+                    return Ok(None);
+                }
+            };
+            request.queue = Some(queue);
+        }
         request.category = (!draft.category.eq_ignore_ascii_case("Automatic"))
             .then(|| draft.category.trim().to_owned());
-        request.description = draft.description;
+        request.description = draft.description.clone();
         if draft.authorization {
-            request = request.with_authorization(draft.login, draft.password);
+            request = request.with_authorization(draft.login.clone(), draft.password.clone());
         }
         return Ok(Some(AddedDownload {
             request,
@@ -158,8 +201,12 @@ fn finish_download(
     }
 }
 
-pub fn show_options(owner: HWND, settings: &Settings) -> Result<Option<Settings>, AppError> {
-    crate::options::show(owner, settings)
+pub fn show_options(
+    owner: HWND,
+    settings: &Settings,
+    engine: rusty_engine::EngineClient,
+) -> Result<Option<Settings>, AppError> {
+    crate::options::show(owner, settings, engine)
 }
 pub(crate) fn choose_folder(owner: HWND, current: &Path) -> Result<Option<PathBuf>, AppError> {
     pick(owner, Mode::Options, current)
@@ -355,7 +402,13 @@ unsafe fn dialog_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                     for category in CATEGORIES {
                         add_choice(hwnd, CATEGORY_COMBO, category);
                     }
-                    for category in context.settings.category_destinations.keys() {
+                    for category in context
+                        .settings
+                        .configuration
+                        .categories
+                        .iter()
+                        .map(|r| &r.name)
+                    {
                         if !CATEGORIES
                             .iter()
                             .any(|built_in| built_in.eq_ignore_ascii_case(category))
@@ -746,12 +799,12 @@ fn redact_url(address: &str) -> String {
         Err(_) => "Invalid address".into(),
     }
 }
-pub fn show_browser_download(
+pub fn prepare_browser_download(
     owner: HWND,
     settings: &Settings,
     capture: &CaptureRequest,
     lease: &CaptureLease,
-) -> Result<Option<AddedDownload>, AppError> {
+) -> Result<Option<PreparedDownload>, AppError> {
     if lease.state() != LeaseState::Pending {
         return Ok(None);
     }
@@ -760,13 +813,31 @@ pub fn show_browser_download(
             .map_err(|_| AppError("Invalid browser download.".into()))?;
     let draft = Draft {
         url: capture.url.clone(),
-        path: download_form::folder_for(settings, "Automatic")
-            .join(filename)
+        path: download_form::suggested_path(settings, &filename, "Automatic")
             .to_string_lossy()
             .into_owned(),
         category: "Automatic".into(),
         remember: true,
         ..Default::default()
     };
-    finish_download(owner, settings, draft, Some(lease))
+    Ok(Some(PreparedDownload { draft }))
+}
+
+pub fn from_address(
+    owner: HWND,
+    settings: &Settings,
+    address: &str,
+    engine: &rusty_engine::EngineClient,
+) -> Result<Option<AddedDownload>, AppError> {
+    let filename = download_form::suggested_filename(address).map_err(|e| AppError(e.message))?;
+    let draft = Draft {
+        url: address.into(),
+        path: download_form::suggested_path(settings, &filename, "Automatic")
+            .to_string_lossy()
+            .into_owned(),
+        category: "Automatic".into(),
+        remember: true,
+        ..Default::default()
+    };
+    finish_download(owner, settings, draft, None, engine)
 }

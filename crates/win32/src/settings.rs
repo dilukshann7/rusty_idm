@@ -40,7 +40,7 @@ impl std::fmt::Display for SettingsError {
     }
 }
 impl std::error::Error for SettingsError {}
-fn path() -> Result<PathBuf, SettingsError> {
+pub(crate) fn path() -> Result<PathBuf, SettingsError> {
     std::env::var_os("LOCALAPPDATA")
         .map(|p| PathBuf::from(p).join("RustyIDM/settings.json"))
         .ok_or_else(|| SettingsError("Windows local application data is unavailable.".into()))
@@ -81,6 +81,16 @@ pub fn load_from(path: &Path) -> Result<Settings, SettingsError> {
                 .find(|r| r.name.eq_ignore_ascii_case(name))
             {
                 rule.folder = Some(folder.clone());
+            } else if !name.eq_ignore_ascii_case("Automatic") && !name.trim().is_empty() {
+                settings
+                    .configuration
+                    .categories
+                    .push(rusty_engine::categories::CategoryRule {
+                        name: name.clone(),
+                        extensions: vec![],
+                        folder: Some(folder.clone()),
+                        remember: true,
+                    });
             }
         }
         settings.schema_version = 2;
@@ -113,7 +123,7 @@ pub fn save_to(path: &Path, settings: &Settings) -> Result<(), SettingsError> {
     let data = serde_json::to_vec_pretty(&saved)
         .map_err(|_| SettingsError("Cannot serialize settings.".into()))?;
     if data.len() > 64 * 1024 {
-        return Err(SettingsError("There are too many remembered category folders to save. The previous settings were preserved.".into()));
+        return Err(SettingsError("The settings are too large to save. Reduce the category or exclusion lists; the previous settings were preserved.".into()));
     }
     static NEXT: AtomicU64 = AtomicU64::new(1);
     let mut reserved = None;
@@ -156,7 +166,7 @@ pub fn save_to(path: &Path, settings: &Settings) -> Result<(), SettingsError> {
     })
 }
 #[cfg(windows)]
-fn atomic_replace(source: &Path, target: &Path) -> std::io::Result<()> {
+pub(crate) fn atomic_replace(source: &Path, target: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows::{
         core::PCWSTR,
@@ -176,7 +186,7 @@ fn atomic_replace(source: &Path, target: &Path) -> std::io::Result<()> {
     .map_err(std::io::Error::from)
 }
 #[cfg(not(windows))]
-fn atomic_replace(source: &Path, target: &Path) -> std::io::Result<()> {
+pub(crate) fn atomic_replace(source: &Path, target: &Path) -> std::io::Result<()> {
     std::fs::rename(source, target)
 }
 #[cfg(windows)]

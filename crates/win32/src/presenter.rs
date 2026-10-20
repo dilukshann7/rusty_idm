@@ -44,9 +44,19 @@ impl Category {
             Self::Custom(_) => "Custom category",
         }
     }
-    fn matches(self, job: &JobSnapshot) -> bool {
-        let category =
-            rusty_engine::categories::effective(&job.destination, job.category.as_deref());
+    fn matches(self, job: &JobSnapshot, rules: &[rusty_engine::categories::CategoryRule]) -> bool {
+        let category = job
+            .category
+            .as_deref()
+            .filter(|c| !c.eq_ignore_ascii_case("Automatic"))
+            .or_else(|| {
+                if rules.is_empty() {
+                    rusty_engine::categories::infer(&job.destination)
+                } else {
+                    rusty_engine::categories::classify(&job.destination, rules)
+                        .map(|r| r.name.as_str())
+                }
+            });
         match self {
             Self::All => true,
             Self::Finished => job.state == JobState::Completed,
@@ -67,6 +77,7 @@ impl Category {
 #[derive(Default)]
 pub struct ViewModel {
     pub jobs: BTreeMap<JobId, JobSnapshot>,
+    pub categories: Vec<rusty_engine::categories::CategoryRule>,
     pub queues: BTreeMap<rusty_engine::QueueId, rusty_engine::QueueSnapshot>,
 }
 #[derive(Default)]
@@ -99,7 +110,7 @@ impl ViewModel {
         let mut jobs: Vec<_> = self
             .jobs
             .values()
-            .filter(|s| category.matches(s))
+            .filter(|s| category.matches(s, &self.categories))
             .map(|s| s.id)
             .collect();
         if let Category::Queue(id) = category {
@@ -118,7 +129,8 @@ impl ViewModel {
         let job = selected.and_then(|id| self.jobs.get(&id));
         ActionAvailability {
             start: job.is_some_and(|s| {
-                (s.state == JobState::Waiting && s.deferred)
+                s.readiness == rusty_engine::EntryReadiness::ConfirmationRequired
+                    || (s.state == JobState::Waiting && s.deferred)
                     || s.state == JobState::Paused
                     || (s.state == JobState::Failed
                         && s.entry_id.is_some()

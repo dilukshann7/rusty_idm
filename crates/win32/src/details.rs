@@ -52,24 +52,49 @@ struct Detail {
 pub struct DetailsWindows {
     windows: BTreeMap<JobId, Box<Detail>>,
     attempts: AutoOpenTracker,
+    preferences: crate::preferences::ProgressPreferences,
 }
 impl DetailsWindows {
+    pub fn set_preferences(&mut self, preferences: crate::preferences::ProgressPreferences) {
+        self.preferences = preferences;
+    }
+
     pub fn observe(&mut self, owner: HWND, snapshot: &JobSnapshot) -> Result<(), AppError> {
         // Record even an attempt that finished before its first GUI update,
         // without briefly opening a progress window for that completed result.
-        if self.attempts.should_open(snapshot) && snapshot.state != JobState::Completed {
-            self.show_or_update(owner, snapshot)?;
+        if self.attempts.should_open(snapshot)
+            && snapshot.state != JobState::Completed
+            && self.preferences.show
+        {
+            self.open(owner, snapshot, false)?;
         } else {
             self.update(snapshot);
         }
         Ok(())
     }
     pub fn show_or_update(&mut self, owner: HWND, snapshot: &JobSnapshot) -> Result<(), AppError> {
+        self.open(owner, snapshot, true)
+    }
+    fn open(
+        &mut self,
+        owner: HWND,
+        snapshot: &JobSnapshot,
+        explicit: bool,
+    ) -> Result<(), AppError> {
         self.prune();
         if let Some(detail) = self.windows.get(&snapshot.id) {
             unsafe {
-                let _ = ShowWindow(detail.hwnd.get(), SW_SHOW);
-                let _ = SetForegroundWindow(detail.hwnd.get());
+                let _ = ShowWindow(
+                    detail.hwnd.get(),
+                    if explicit || self.preferences.foreground {
+                        SW_SHOW
+                    } else {
+                        SW_SHOWNOACTIVATE
+                    },
+                );
+                if explicit || self.preferences.foreground {
+                    let _ = SetForegroundWindow(detail.hwnd.get());
+                }
             }
         } else {
             let detail = Box::new(Detail {
@@ -82,7 +107,7 @@ impl DetailsWindows {
                 state: Cell::new(snapshot.state),
                 limit_initialized: Cell::new(false),
                 cancellable: Cell::new(false),
-                expanded: Cell::new(false),
+                expanded: Cell::new(self.preferences.details),
                 marquee: Cell::new(false),
             });
             unsafe {
@@ -93,6 +118,22 @@ impl DetailsWindows {
                     Some(detail_proc),
                     LPARAM((&*detail as *const Detail) as isize),
                 )?;
+            }
+            if self.preferences.details {
+                expand(detail.hwnd.get(), true)?;
+            }
+            unsafe {
+                let _ = ShowWindow(
+                    detail.hwnd.get(),
+                    if explicit || self.preferences.foreground {
+                        SW_SHOW
+                    } else {
+                        SW_SHOWNOACTIVATE
+                    },
+                );
+            }
+            if explicit || self.preferences.foreground {
+                platform::bring_to_front(detail.hwnd.get());
             }
             self.windows.insert(snapshot.id, detail);
         }
@@ -108,7 +149,10 @@ impl DetailsWindows {
             return;
         }
         let previous = detail.state.replace(snapshot.state);
-        if snapshot.state == JobState::Completed && previous != JobState::Completed {
+        if snapshot.state == JobState::Completed
+            && previous != JobState::Completed
+            && self.preferences.close_when_finished
+        {
             destroy(hwnd);
             return;
         }
@@ -419,7 +463,6 @@ unsafe fn detail_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             if let Ok(icon) = platform::app_icon() {
                 send(hwnd, WM_SETICON, ICON_SMALL as usize, icon.0 as isize);
             }
-            let _ = ShowWindow(hwnd, SW_SHOW);
             return 1;
         }
         let pointer = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Detail;

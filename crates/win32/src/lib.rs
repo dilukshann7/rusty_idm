@@ -51,3 +51,17 @@ mod options_editors;
 
 #[cfg(windows)]
 mod configuration_system;
+
+#[cfg(windows)]
+mod configuration_apply;
+
+#[cfg(windows)]
+mod clipboard;
+#[cfg(windows)]
+mod queue_picker;
+
+#[cfg(windows)]
+mod provisional;
+
+#[cfg(windows)]
+mod scanner;
