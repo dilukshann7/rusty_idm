@@ -807,7 +807,6 @@ fn redact_url(address: &str) -> String {
     }
 }
 pub fn prepare_browser_download(
-    owner: HWND,
     settings: &Settings,
     capture: &CaptureRequest,
     lease: &CaptureLease,

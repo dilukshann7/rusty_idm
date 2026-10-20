@@ -778,7 +778,7 @@ pub(crate) fn recover_finalization(
     Ok(false)
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 fn backup_original(original: &std::fs::File, destination: &Path) -> std::io::Result<PathBuf> {
     backup_original_journaled(original, destination, None)
 }

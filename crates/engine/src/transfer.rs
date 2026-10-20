@@ -379,7 +379,6 @@ async fn stream(
             "Restart required: no safe continuation validator is available.",
         ));
     }
-    let mut checkpoint_at = tokio::time::Instant::now();
     'connect: loop {
         if output.adopt_recovery(control.recovery()) {
             output.checkpoint().await?;
@@ -491,7 +490,7 @@ async fn stream(
             validator.clone(),
         );
         output.checkpoint().await?;
-        checkpoint_at = tokio::time::Instant::now();
+        let mut checkpoint_at = tokio::time::Instant::now();
         progress(TransferProgress {
             received,
             total,

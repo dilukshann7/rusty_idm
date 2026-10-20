@@ -10,7 +10,7 @@ use windows::{
         Foundation::{HWND, LPARAM, WPARAM},
         UI::{
             Controls::*,
-            Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled},
+            Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled, SetActiveWindow},
             WindowsAndMessaging::*,
         },
     },

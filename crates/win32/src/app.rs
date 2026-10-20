@@ -1456,7 +1456,6 @@ impl AppState {
                 && incoming.lease.state() == LeaseState::Pending
             {
                 match dialogs::prepare_browser_download(
-                    window.hwnd,
                     &self.settings,
                     &incoming.capture,
                     &incoming.lease,

@@ -10,10 +10,7 @@ use crate::{
 use rusty_browser_bridge::policy::{self, BrowserKind};
 use rusty_engine::categories::CategoryRule;
 use std::path::PathBuf;
-use windows::Win32::{
-    Foundation::HWND,
-    UI::{Controls::*, WindowsAndMessaging::*},
-};
+use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::*};
 pub fn text(
     owner: HWND,
     title: &str,
