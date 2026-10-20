@@ -13,6 +13,10 @@ pub(crate) struct StoredQueue {
     pub name: String,
     pub parallelism: u8,
     pub entries: Vec<EntryId>,
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub schedule: crate::schedule::ScheduleRecord,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Checkpoint {
@@ -58,7 +62,7 @@ pub(crate) struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             next_entry: 1,
             next_queue: 2,
             queues: [(
@@ -68,6 +72,8 @@ impl Default for State {
                     name: "Main download queue".into(),
                     parallelism: 1,
                     entries: vec![],
+                    revision: 0,
+                    schedule: Default::default(),
                 },
             )]
             .into(),
@@ -105,11 +111,12 @@ impl Store {
                         return Err("Queue storage exceeds the supported size.".into());
                     }
                     let plain = crypt(&bytes, false)?;
-                    let state: State = serde_json::from_slice(&plain).map_err(|_| {
+                    let mut state: State = serde_json::from_slice(&plain).map_err(|_| {
                         "Queue storage is corrupt or incompatible. The original was preserved."
                             .to_string()
                     })?;
                     validate(&state)?;
+                    state.version = 2;
                     Ok(state)
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(State::default()),
@@ -238,7 +245,7 @@ pub(crate) fn storage_error(message: String) -> JobError {
     )
 }
 fn validate(s: &State) -> Result<(), String> {
-    if s.version != 1
+    if !matches!(s.version, 1 | 2)
         || !s.queues.contains_key(&QueueId::MAIN)
         || s.entries.len() > 1000
         || s.queues.len() > 100
@@ -249,6 +256,10 @@ fn validate(s: &State) -> Result<(), String> {
     }
     let mut members = std::collections::BTreeSet::new();
     for (id, q) in &s.queues {
+        q.schedule.config.validate()?;
+        if q.schedule.last_fired.is_some_and(|at| !at.valid()) {
+            return Err("Invalid scheduled occurrence; storage was preserved.".into());
+        }
         if *id != q.id
             || !(1..=2).contains(&q.parallelism)
             || q.name.trim().is_empty()

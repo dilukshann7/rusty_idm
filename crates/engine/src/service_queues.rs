@@ -336,6 +336,9 @@ impl QueueRuntime {
                 id: q.id,
                 name: q.name.clone(),
                 parallelism: q.parallelism,
+                revision: q.revision,
+                schedule: q.schedule.config.clone(),
+                schedule_status: ScheduleStatus::default(),
                 running: self.running.contains(&q.id),
                 stopping: self.stopping.contains(&q.id),
                 entries: q.entries.clone(),
@@ -385,6 +388,8 @@ impl QueueRuntime {
                                 name: name.into(),
                                 parallelism: 1,
                                 entries: vec![],
+                                revision:0,
+                                schedule:Default::default(),
                             },
                         );
                         Ok(())
