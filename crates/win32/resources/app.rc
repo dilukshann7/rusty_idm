@@ -300,3 +300,64 @@ BEGIN
     DEFPUSHBUTTON "OK", IDOK, 132, 64, 50, 14
     PUSHBUTTON "Cancel", IDCANCEL, 188, 64, 50, 14
 END
+
+212 MENU
+BEGIN
+    POPUP "Queue"
+    BEGIN
+        MENUITEM "&Start now", 1029
+        MENUITEM "S&top", 1030
+        MENUITEM SEPARATOR
+        MENUITEM "&Edit queue...", 1036
+        MENUITEM "S&chedule...", 1037
+        MENUITEM SEPARATOR
+        MENUITEM "&Delete", 1028
+        MENUITEM SEPARATOR
+        MENUITEM "Create &new queue...", 1026
+    END
+END
+
+211 DIALOGEX 0, 0, 536, 358
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+EXSTYLE WS_EX_CONTROLPARENT
+CAPTION "Rusty Download Scheduler"
+FONT 8, "Tahoma"
+BEGIN
+    LTEXT "Queues", -1, 8, 16, 126, 10
+    CONTROL "", 2701, "SysTreeView32", TVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP, 8, 33, 126, 285
+    CONTROL "", -1, "Static", SS_ETCHEDVERT, 140, 8, 1, 340
+    LTEXT "", 2703, 150, 10, 372, 12
+    CONTROL "", 2702, "SysTabControl32", WS_TABSTOP, 146, 28, 382, 282
+    CONTROL "Start queue when Rusty starts", 2710, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 158, 53, 350, 12
+    CONTROL "Start queue at", 2711, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 158, 80, 116, 12
+    CONTROL "", 2712, "SysDateTimePick32", DTS_TIMEFORMAT | WS_TABSTOP, 286, 77, 84, 15
+    CONTROL "Once on", 2713, "Button", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 168, 108, 100, 12
+    CONTROL "", 2714, "SysDateTimePick32", DTS_SHORTDATEFORMAT | WS_TABSTOP, 286, 104, 184, 17
+    CONTROL "Weekly on", 2715, "Button", BS_AUTORADIOBUTTON | WS_TABSTOP, 168, 134, 110, 12
+    CONTROL "Sunday", 2720, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 178, 156, 80, 12
+    CONTROL "Monday", 2721, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 178, 174, 80, 12
+    CONTROL "Tuesday", 2722, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 178, 192, 80, 12
+    CONTROL "Wednesday", 2723, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 284, 156, 90, 12
+    CONTROL "Thursday", 2724, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 284, 174, 90, 12
+    CONTROL "Friday", 2725, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 284, 192, 90, 12
+    CONTROL "Saturday", 2726, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 398, 156, 92, 12
+    CONTROL "Stop queue at", 2730, "Button", BS_AUTOCHECKBOX | WS_GROUP | WS_TABSTOP, 158, 224, 116, 12
+    CONTROL "", 2731, "SysDateTimePick32", DTS_TIMEFORMAT | WS_TABSTOP, 286, 221, 84, 15
+    LTEXT "Times use Windows local time (24-hour). Rusty must be running and Windows awake. Missed starts are skipped; all seven days means daily.", 2732, 158, 249, 352, 26
+    LTEXT "", 2733, 158, 285, 352, 14
+    LTEXT "Download", 2707, 158, 53, 78, 11
+    EDITTEXT 2705, 236, 50, 34, 15, ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP
+    CONTROL "", 2706, "msctls_updown32", UDS_ALIGNRIGHT | UDS_SETBUDDYINT | UDS_AUTOBUDDY | UDS_ARROWKEYS, 260, 50, 10, 15
+    LTEXT "files at the same time (maximum 2)", 2708, 282, 53, 230, 11
+    CONTROL "", 2704, "SysListView32", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP, 158, 76, 356, 200
+    PUSHBUTTON "Up", 2746, 158, 283, 26, 16
+    PUSHBUTTON "Down", 2747, 190, 283, 34, 16
+    PUSHBUTTON "Remove from queue", 2748, 230, 283, 100, 16
+    LTEXT "", 2749, 146, 316, 382, 12
+    PUSHBUTTON "New queue", 2740, 8, 335, 70, 15
+    PUSHBUTTON "Delete", 2741, 84, 335, 50, 15
+    PUSHBUTTON "Start now", 2742, 146, 335, 54, 15
+    PUSHBUTTON "Stop", 2743, 206, 335, 50, 15
+    PUSHBUTTON "Apply", 2744, 416, 335, 50, 15
+    PUSHBUTTON "Close", 2745, 478, 335, 50, 15
+END
