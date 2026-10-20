@@ -400,8 +400,8 @@ impl Form {
                 self.file_rows.push((*id, Default::default()));
                 if Some(*id) == saved_selection {
                     let item = LVITEMW {
-                        state: LVIS_SELECTED | LVIS_FOCUSED,
-                        stateMask: LVIS_SELECTED | LVIS_FOCUSED,
+                        state: LIST_VIEW_ITEM_STATE_FLAGS(LVIS_SELECTED.0 | LVIS_FOCUSED.0),
+                        stateMask: LIST_VIEW_ITEM_STATE_FLAGS(LVIS_SELECTED.0 | LVIS_FOCUSED.0),
                         ..Default::default()
                     };
                     send(list, LVM_SETITEMSTATE, row, &item as *const _ as isize);
