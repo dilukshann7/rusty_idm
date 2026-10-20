@@ -1,7 +1,7 @@
 # Compact configuration pages
 
 Date: 2026-10-20
-Status: Builder check completed (GPT-6.1 Sol: nothing important left); awaiting user approval.
+Status: Approved by the user on 2026-10-20; implementation in progress.
 
 ## Intent and accepted requirements
 
