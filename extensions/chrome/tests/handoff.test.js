@@ -57,3 +57,21 @@ test('capture_uuid_is_only_in_the_envelope_and_not_the_payload', async () => {
   f.native.send = async message => { if (message.op === 'capture') { assert.equal(message.id, request.id); assert.equal(Object.hasOwn(message.payload, 'id'), false); } return send(message); };
   assert.equal(await handoff(1, request, f.browser, f.native, f.ledger, () => 0), 'accepted');
 });
+test('protected_headers_reach_native_without_entering_the_session_ledger', async () => {
+  const f = fixture();
+  const context = [{ url: request.url, headers: [{ name: 'Cookie', value: 'private-session-value' }] }];
+  const save = f.ledger.put;
+  f.ledger.put = async record => {
+    assert.equal(JSON.stringify(record).includes('private-session-value'), false);
+    assert.equal(Object.hasOwn(record, 'request_context'), false);
+    return save(record);
+  };
+  f.native.send = async message => {
+    assert.equal(message.op, 'capture');
+    assert.deepEqual(message.payload.request_context, context);
+    return { status: 'pending' };
+  };
+  assert.equal(await handoff(1, { ...request, request_context: context }, f.browser, f.native, f.ledger, () => 0), 'needs_attention');
+  assert.equal(f.records.size, 1);
+  assert.equal(JSON.stringify([...f.records.values()]).includes('private-session-value'), false);
+});

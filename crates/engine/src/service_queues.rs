@@ -110,10 +110,42 @@ impl QueueRuntime {
             request.category = entry.category.clone();
             request.description = entry.description.clone();
             request.source_page = entry.source_page.clone();
+            request.media = entry.media.clone();
             request.recovery = Some(Recovery {
                 store: self.store.clone(),
                 entry: entry.id,
             });
+            let mut retained_files = entry.retained_files.clone();
+            if request.media.is_some() {
+                if let Ok(stage) = crate::media::stage_directory(&request) {
+                    let occupied = std::fs::symlink_metadata(&stage).ok().is_some_and(|info| {
+                        info.is_dir()
+                            && !info.file_type().is_symlink()
+                            && std::fs::read_dir(&stage)
+                                .ok()
+                                .is_some_and(|mut files| files.next().is_some())
+                    });
+                    if occupied && !retained_files.contains(&stage) {
+                        retained_files.push(stage.clone());
+                        if self
+                            .store
+                            .update(|saved| {
+                                let record = saved
+                                    .entries
+                                    .get_mut(&entry.id)
+                                    .ok_or("Media recovery entry is missing.")?;
+                                if !record.retained_files.contains(&stage) {
+                                    record.retained_files.push(stage);
+                                }
+                                Ok(())
+                            })
+                            .is_err()
+                        {
+                            reject(bus, "The interrupted media staging path could not be saved for recovery.");
+                        }
+                    }
+                }
+            }
             let mut readiness = if entry.authenticated {
                 EntryReadiness::CredentialsRequired
             } else {
@@ -150,6 +182,7 @@ impl QueueRuntime {
                 }
             }
             if !completed
+                && entry.media.is_none()
                 && entry.checkpoint.as_ref().is_some_and(|c| {
                     c.received() > 0
                         && ((c.etag.is_none() && c.last_modified.is_none())
@@ -160,7 +193,10 @@ impl QueueRuntime {
             {
                 readiness = EntryReadiness::RestartRequired;
             }
-            if !completed && entry.refresh_needs_capture && readiness == EntryReadiness::Ready {
+            if !completed
+                && entry.refresh_needs_capture
+                && readiness != EntryReadiness::RecoveryRequired
+            {
                 readiness = EntryReadiness::RestartRequired;
                 error = Some(JobError::new(ErrorKind::RestartRequired,
                     "This protected download needs a fresh browser capture after restart. Use Refresh download address to keep the saved bytes."));
@@ -180,7 +216,7 @@ impl QueueRuntime {
                 id,
                 entry_id: Some(entry.id),
                 restored: true,
-                recovery_paths: entry.retained_files.clone(),
+                recovery_paths: retained_files,
                 queue_id,
                 readiness,
                 filename: entry
@@ -203,13 +239,15 @@ impl QueueRuntime {
                 } else {
                     entry.checkpoint.as_ref().and_then(|c| c.total)
                 },
-                resume_capable: entry
-                    .checkpoint
-                    .as_ref()
-                    .is_some_and(|c| c.etag.is_some() || c.last_modified.is_some()),
-                refreshable: entry.checkpoint.as_ref().is_some_and(|c| {
-                    c.received() > 0 && c.total.is_some_and(|total| c.received() < total)
-                }),
+                resume_capable: entry.media.is_some()
+                    || entry
+                        .checkpoint
+                        .as_ref()
+                        .is_some_and(|c| c.etag.is_some() || c.last_modified.is_some()),
+                refreshable: entry.media.is_none()
+                    && entry.checkpoint.as_ref().is_some_and(|c| {
+                        c.received() > 0 && c.total.is_some_and(|total| c.received() < total)
+                    }),
                 speed_limit: None,
                 bytes_per_second: 0,
                 eta_seconds: None,
@@ -651,6 +689,10 @@ impl QueueRuntime {
                         return Err("A restart is not required for this download.".into());
                     }
                     if let Some(recovery) = &job.request.recovery {
+                        if job.request.request_context.is_empty()
+                            && recovery.store.snapshot().entries.get(&recovery.entry).is_some_and(|entry| entry.refresh_needs_capture) {
+                            return Err("This protected download requires a fresh browser capture. Use Refresh download address or capture it as a new download.".into());
+                        }
                         crate::output::discard_checkpoint(recovery).map_err(|e| e.message)?;
                     }
                     job.request.replacement = inspect_destination(&job.request.destination)
@@ -706,6 +748,7 @@ fn check_name(name: &str) -> Result<(), String> {
 }
 fn stored(id: EntryId, r: &DownloadRequest) -> StoredEntry {
     StoredEntry {
+        media: r.media.clone(),
         source_page: r.source_page.clone(),
         options: r.options.clone(),
         ephemeral: !r.deferred,
@@ -717,7 +760,7 @@ fn stored(id: EntryId, r: &DownloadRequest) -> StoredEntry {
         category: r.category.clone(),
         description: r.description.clone(),
         authenticated: r.authorization.is_some(),
-        refresh_needs_capture: false,
+        refresh_needs_capture: !r.request_context.is_empty(),
         completed: false,
         completed_bytes: None,
         retained_files: vec![],

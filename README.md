@@ -4,7 +4,7 @@
 
 **Pre-alpha · Windows 10/11 x64 · Rust + native Win32**
 
-Rusty Download Manager is an early Windows download manager built with Rust and native Windows controls. It can download HTTP/HTTPS files, manage transfers from the notification area, and hand off eligible public downloads from a browser extension.
+Rusty Download Manager is an early Windows download manager built with Rust and native Windows controls. It can download HTTP/HTTPS files, manage transfers from the notification area, and hand off eligible browser downloads. The current source also adds opt-in public video format selection.
 
 The current source targets v0.2.1. Check [Releases](https://github.com/dilukshann7/rusty_idm/releases) for packaged builds. The v0.1.0 installer is an older snapshot without the features listed below; installer upgrades and live browser handoff still need acceptance testing.
 
@@ -19,7 +19,7 @@ The current source targets v0.2.1. Check [Releases](https://github.com/dilukshan
 | Browser capture | A Chrome extension, native-messaging host and local bridge for eligible downloads. The source also includes browser-specific profiles for Brave, Edge and Firefox. |
 | Address refresh | A paused, failed or restored download with saved bytes can use a pasted URL or a new browser capture. Rusty checks the local checkpoint, total size and three bounded byte samples before continuing the existing job. |
 
-These are source-level capabilities, not a claim that every path has passed live acceptance testing. Ordinary automatic browser capture remains limited to eligible HTTP/HTTPS GET downloads without observed credentials. When the user explicitly arms address refresh, the extension can pass short-lived headers from the matching browser GET. Private browsing, uploads and streaming media remain outside automatic handoff.
+These are source-level capabilities, not a claim that every path has passed live acceptance testing. Automatic capture can offer an eligible protected HTTP/HTTPS GET only when every redirect hop and its headers were uniquely observed; File Info then requires a separate unchecked approval. Opt-in media panels can inspect public HLS, DASH and individual YouTube videos. Private browsing, uploads, live streams, playlists, DRM and account-required video remain unsupported. See [browser video and protected capture](docs/browser-media-support.md).
 
 ## Refresh an expired link
 

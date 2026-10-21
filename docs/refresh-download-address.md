@@ -12,7 +12,7 @@ An ignored range, changed total, different sample, altered local partial, expire
 
 ## Browser context
 
-Ordinary automatic capture keeps its credential restrictions. Only while a user has armed refresh may the extension attach `Cookie`, `Authorization`, `Referer` and `User-Agent` headers observed on the matching GET. Values are kept briefly in extension memory, scoped to each observed redirect URL and never written to browser storage or the durable queue. Rusty rejects malformed headers and will not replay those headers on an unobserved redirect. The capture wire format remains version 1; older captures can omit the new fields.
+Automatic capture can offer a uniquely observed protected GET when every redirect hop has fresh headers. File Info requires a separate, unchecked approval for each protected download; arming address refresh is not required. An explicitly armed refresh can also attach `Cookie`, `Authorization`, `Referer` and `User-Agent` headers observed on the matching GET. Values stay in extension and Rusty memory, scoped to each exact observed redirect URL and never written to browser storage or the durable queue. Rusty rejects malformed headers and will not replay them on an unobserved redirect. The file capture wire format remains version 1; older captures can omit the new fields.
 
 ## Verification status
 

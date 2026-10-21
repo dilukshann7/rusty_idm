@@ -7,4 +7,6 @@
 # Rust workspace outputs
 /target/
 /dist/
+/assets/media-tools-cache/
+/assets/media-tools/
 *.pdb

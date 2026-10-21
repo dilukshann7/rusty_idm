@@ -61,19 +61,27 @@ pub fn run_host<R: Read + Send, W: Write + Send>(
                     break;
                 }
             };
+            let media_version = matches!(
+                operation,
+                Operation::MediaInspect { .. } | Operation::MediaSubmit { .. }
+            );
             // Attribute requests to this allowlisted host configuration, never a page label.
             match &mut operation {
                 Operation::Capture(c) => c.browser = config.browser,
+                Operation::MediaInspect { request, .. } => request.browser = config.browser,
+                Operation::MediaSubmit { request, .. } => request.browser = config.browser,
                 Operation::Policy(b) => *b = config.browser,
                 _ => {}
             }
             if active.load(Ordering::Acquire) >= 64 {
-                let _ = tx.send(Reply::new(
-                    id,
-                    ReplyStatus::Declined {
-                        code: DeclineCode::Busy,
-                    },
-                ));
+                let result = ReplyStatus::Declined {
+                    code: DeclineCode::Busy,
+                };
+                let _ = tx.send(if media_version {
+                    Reply::media(id, result)
+                } else {
+                    Reply::new(id, result)
+                });
                 continue;
             }
             active.fetch_add(1, Ordering::AcqRel);
@@ -112,7 +120,12 @@ pub fn run_host<R: Read + Send, W: Write + Send>(
                                     .map_err(|_| std::io::Error::other("Output closed"))?;
                                 return Ok(());
                             }
-                            if !matches!(operation, Operation::Capture(_)) {
+                            if !matches!(
+                                operation,
+                                Operation::Capture(_)
+                                    | Operation::MediaInspect { .. }
+                                    | Operation::MediaSubmit { .. }
+                            ) {
                                 return Err(e);
                             }
                             {
@@ -156,12 +169,14 @@ pub fn run_host<R: Read + Send, W: Write + Send>(
                     Ok(())
                 })();
                 if result.is_err() {
-                    let _ = tx.send(Reply::new(
-                        id,
-                        ReplyStatus::Declined {
-                            code: DeclineCode::EngineUnavailable,
-                        },
-                    ));
+                    let result = ReplyStatus::Declined {
+                        code: DeclineCode::EngineUnavailable,
+                    };
+                    let _ = tx.send(if media_version {
+                        Reply::media(id, result)
+                    } else {
+                        Reply::new(id, result)
+                    });
                 }
                 active.fetch_sub(1, Ordering::AcqRel);
             }));

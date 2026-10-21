@@ -2,12 +2,14 @@ import { api as chrome, BROWSER } from "./browser-api.js";
 import { allowed, excluded } from "./capture-rules.js";
 import {
   classifyDownload,
+  completeContext,
   Observations,
   supportedUrl,
   fingerprintReferrer,
 } from "./capture-policy.js";
 import { NativeClient } from "./native-client.js";
 import { handoff } from "./handoff.js";
+import { MediaObservations, MediaRequestEvidence, canSubmitPreview } from "./media-discovery.js";
 
 import { SessionLedger, recoverPending } from "./recovery.js";
 
@@ -16,6 +18,9 @@ const ledger = new SessionLedger(chrome.storage.session, () =>
 );
 const activeIds = new Set();
 const observations = new Observations(chrome.storage.session);
+const mediaObservations = new MediaObservations();
+const mediaRequestEvidence = new MediaRequestEvidence();
+const previewOwnership = new Map();
 const browser = {
   get: async (id) => (await chrome.downloads.search({ id }))[0],
   pause: (id) => chrome.downloads.pause(id),
@@ -89,11 +94,15 @@ chrome.webNavigation.onCommitted.addListener((details) => {
   if (details.frameId === 0) {
     documents.delete(details.tabId);
     intents.delete(details.tabId);
+    mediaObservations.clear(details.tabId);
+    for (const [id, owner] of previewOwnership) if (owner.tabId === details.tabId) previewOwnership.delete(id);
   }
 });
 chrome.tabs.onRemoved.addListener((id) => {
   documents.delete(id);
   intents.delete(id);
+  mediaObservations.clear(id);
+  for (const [previewId, owner] of previewOwnership) if (owner.tabId === id) previewOwnership.delete(previewId);
 });
 async function syncScripts() {
   const permitted = await chrome.permissions.contains({ origins });
@@ -204,6 +213,7 @@ chrome.webRequest.onBeforeRequest.addListener((details) => {
 }, filter);
 chrome.webRequest.onBeforeSendHeaders.addListener(
   (details) => {
+    mediaRequestEvidence.observe(details);
     if (preferences.captureEnabled && preferences.hostAccess)
       void observations
         .update(documentDetails(details), "headers")
@@ -214,6 +224,14 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     ? ["requestHeaders"]
     : ["requestHeaders", "extraHeaders"],
 );
+chrome.webRequest.onHeadersReceived.addListener((details) => {
+  if (details.statusCode >= 300 && details.statusCode < 400) return;
+  const publicRequest = mediaRequestEvidence.takePublic(details.requestId);
+  const document = documents.get(details.tabId);
+  const pageUrl = details.initiator || details.documentUrl || document?.url || "";
+  if (preferences.hostAccess && policy?.panels.enabled && document && pageUrl && !excluded(policy, pageUrl) && !excluded(policy, details.url))
+    mediaObservations.add(details, document, !publicRequest);
+}, filter, ["responseHeaders"]);
 chrome.downloads.onCreated.addListener((item) => {
   void (async () => {
     await loadPreferences();
@@ -235,6 +253,11 @@ chrome.downloads.onCreated.addListener((item) => {
     if (intent.prevented || !allowed(policy, BROWSER, item, intent.forced))
       return;
     const context = observations.takeContext(result.observationId);
+    const protectedRequest = result.request.protected;
+    if (protectedRequest && !completeContext(
+      evidence.find((o) => o.requestId === result.observationId), context,
+    )) return;
+    delete result.request.protected;
     Object.assign(result.request, {
       forced: intent.forced,
       original_url: item.url,
@@ -242,7 +265,7 @@ chrome.downloads.onCreated.addListener((item) => {
       browser: BROWSER,
     });
     if (supportedUrl(item.referrer)) result.request.source_page = item.referrer;
-    if (policy.refresh_armed && context.length)
+    if ((protectedRequest || policy.refresh_armed) && context.length)
       result.request.request_context = context;
     await observations.consume(result.observationId);
     const id = crypto.randomUUID();
@@ -331,7 +354,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         const key = sender.documentId || message.documentKey;
         const current = documents.get(sender.tab.id);
         if (!current || current.key !== key) {
-          documents.set(sender.tab.id, { key, at: Date.now() });
+          documents.set(sender.tab.id, { key, url: sender.url, at: Date.now() });
           intents.delete(sender.tab.id);
         }
         const p = await desktopPolicy();
@@ -360,6 +383,32 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
           intents.set(sender.tab.id, history.slice(-16));
         }
         return {};
+      }
+      if (message.type === "media-candidates" && policy?.panels.enabled && !excluded(policy, sender.url)) {
+        const document = documents.get(sender.tab.id);
+        if (!document || document.key !== (sender.documentId || message.documentKey)) return { candidates: [] };
+        return { candidates: mediaObservations.list(sender.tab.id, document, sender.url) };
+      }
+      if (message.type === "media-inspect" && policy?.panels.enabled && !excluded(policy, sender.url)) {
+        const document = documents.get(sender.tab.id);
+        const candidate = document?.key === (sender.documentId || message.documentKey)
+          ? mediaObservations.list(sender.tab.id, document, sender.url).find((item) => item.url === message.url && item.kind === message.kind)
+          : null;
+        if (!candidate) return { status: "declined", code: "unsupported" };
+        const reply = await native.send({ op: "media_inspect", payload: { url: candidate.url, kind: candidate.kind, browser: BROWSER } });
+        if (reply.status === "media_preview") {
+          for (const [id, owner] of previewOwnership) if (owner.expires <= Date.now()) previewOwnership.delete(id);
+          if (previewOwnership.size >= 64) previewOwnership.delete(previewOwnership.keys().next().value);
+          previewOwnership.set(reply.preview_id, { tabId: sender.tab.id, key: document.key, expires: reply.expires_at_ms, variants: new Set(reply.variants.map((v) => v.id)) });
+        }
+        return reply;
+      }
+      if (message.type === "media-submit" && policy?.panels.enabled && !excluded(policy, sender.url)) {
+        const document = documents.get(sender.tab.id);
+        const owner = previewOwnership.get(message.previewId);
+        if (!document || !canSubmitPreview(owner, sender.tab.id, sender.documentId || message.documentKey, message.variantId))
+          return { status: "declined", code: "expired" };
+        return native.send({ id: message.submitId, op: "media_submit", payload: { preview_id: message.previewId, variant_id: message.variantId, browser: BROWSER } });
       }
       if (
         message.type === "panel-download" &&

@@ -43,6 +43,19 @@ impl RefreshCandidate {
         if self.request_context.len() > 16 {
             return Err(invalid("Too many browser redirect hops."));
         }
+        if !self.request_context.is_empty()
+            && (self
+                .request_context
+                .last()
+                .is_none_or(|hop| hop.url != self.url)
+                || self.request_context.iter().enumerate().any(|(index, hop)| {
+                    self.request_context[..index]
+                        .iter()
+                        .any(|earlier| earlier.url == hop.url)
+                }))
+        {
+            return Err(invalid("Ambiguous browser redirect context."));
+        }
         let mut size = 0usize;
         for hop in &self.request_context {
             let hop_url =
@@ -162,25 +175,48 @@ pub(crate) async fn fetch_range(
     end: Option<u64>,
     if_range: Option<&str>,
 ) -> Result<Response, JobError> {
-    let mut current = url.clone();
-    for _ in 0..=10 {
+    fetch_scoped(client, url, context, Some((start, end, if_range))).await
+}
+
+pub(crate) async fn fetch_get(
+    client: &Client,
+    url: &Url,
+    context: &[RequestHop],
+) -> Result<Response, JobError> {
+    fetch_scoped(client, url, context, None).await
+}
+
+async fn fetch_scoped(
+    client: &Client,
+    url: &Url,
+    context: &[RequestHop],
+    range: Option<(u64, Option<u64>, Option<&str>)>,
+) -> Result<Response, JobError> {
+    let mut current = context
+        .first()
+        .map(|hop| Url::parse(&hop.url).map_err(|_| invalid("Invalid browser request address.")))
+        .transpose()?
+        .unwrap_or_else(|| url.clone());
+    for hop_index in 0..=16 {
         let mut builder = client
             .get(current.clone())
-            .header(ACCEPT_ENCODING, "identity")
-            .header(
+            .header(ACCEPT_ENCODING, "identity");
+        if let Some((start, end, if_range)) = range {
+            builder = builder.header(
                 RANGE,
                 match end {
                     Some(end) => format!("bytes={start}-{end}"),
                     None => format!("bytes={start}-"),
                 },
             );
-        if let Some(value) = if_range {
-            builder = builder.header(IF_RANGE, value);
+            if let Some(value) = if_range {
+                builder = builder.header(IF_RANGE, value);
+            }
         }
         if !context.is_empty() {
             let hop = context
-                .iter()
-                .find(|h| h.url == current.as_str())
+                .get(hop_index)
+                .filter(|h| h.url == current.as_str())
                 .ok_or_else(|| {
                     mismatch("The server redirected to an address not observed in the browser.")
                 })?;
@@ -211,8 +247,20 @@ pub(crate) async fn fetch_range(
             if !safe_url(&next) {
                 return Err(mismatch("The server redirected to an unsafe address."));
             }
+            if !context.is_empty()
+                && context
+                    .get(hop_index + 1)
+                    .is_none_or(|hop| hop.url != next.as_str())
+            {
+                return Err(mismatch(
+                    "The server redirect chain differs from the browser capture.",
+                ));
+            }
             current = next;
             continue;
+        }
+        if !context.is_empty() && (current != *url || hop_index + 1 != context.len()) {
+            return Err(mismatch("The browser download no longer reaches its observed final address. Capture it again."));
         }
         return Ok(response);
     }
@@ -443,6 +491,23 @@ mod tests {
             let _ = stream.write_all(b"HTTP/1.1 302 Found\r\nLocation: /ok\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
             return;
         }
+        if path == "/redirect-auth" {
+            let _ = stream.write_all(b"HTTP/1.1 302 Found\r\nLocation: /no-cookie\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            return;
+        }
+        if path == "/no-cookie" {
+            let has_cookie = request
+                .lines()
+                .any(|line| line.to_ascii_lowercase().starts_with("cookie:"));
+            let response = if has_cookie {
+                b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    .as_slice()
+            } else {
+                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK".as_slice()
+            };
+            let _ = stream.write_all(response);
+            return;
+        }
         if path == "/auth"
             && !request
                 .lines()
@@ -598,5 +663,72 @@ mod tests {
         .is_ok());
         protected.request_context[0].headers[0].value = "bad\r\nHost: evil".into();
         assert!(protected.validate().is_err());
+    }
+
+    #[tokio::test]
+    async fn initial_get_uses_only_the_exact_observed_hop_headers() {
+        let server = RangeServer::start();
+        let client = client().unwrap();
+        let first = server.url("/redirect-auth");
+        let second = server.url("/no-cookie");
+        let context = vec![
+            RequestHop {
+                url: first.clone(),
+                headers: vec![RequestHeader {
+                    name: "Cookie".into(),
+                    value: "session=valid".into(),
+                }],
+            },
+            RequestHop {
+                url: second.clone(),
+                headers: vec![],
+            },
+        ];
+        let result = fetch_get(&client, &Url::parse(&second).unwrap(), &context)
+            .await
+            .unwrap();
+        assert_eq!(result.status(), StatusCode::OK);
+        assert_eq!(result.url().as_str(), second);
+        let missing = fetch_get(&client, &Url::parse(&second).unwrap(), &context[..1]).await;
+        assert!(missing.is_err());
+    }
+
+    #[tokio::test]
+    async fn protected_chain_cannot_end_early_or_skip_an_observed_hop() {
+        let server = RangeServer::start();
+        let client = client().unwrap();
+        let final_url = server.url("/no-cookie");
+        let early = vec![
+            RequestHop {
+                url: server.url("/ignored"),
+                headers: vec![],
+            },
+            RequestHop {
+                url: final_url.clone(),
+                headers: vec![],
+            },
+        ];
+        assert!(fetch_get(&client, &Url::parse(&final_url).unwrap(), &early)
+            .await
+            .is_err());
+        let skipped = vec![
+            RequestHop {
+                url: server.url("/redirect-auth"),
+                headers: vec![],
+            },
+            RequestHop {
+                url: server.url("/ignored"),
+                headers: vec![],
+            },
+            RequestHop {
+                url: final_url.clone(),
+                headers: vec![],
+            },
+        ];
+        assert!(
+            fetch_get(&client, &Url::parse(&final_url).unwrap(), &skipped)
+                .await
+                .is_err()
+        );
     }
 }

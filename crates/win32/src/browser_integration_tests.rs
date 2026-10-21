@@ -1,5 +1,74 @@
 use super::*;
 use rusty_browser_bridge::protocol::CaptureSource;
+
+fn media_request() -> MediaSubmitRequest {
+    MediaSubmitRequest {
+        browser: BrowserKind::Chrome,
+        preview_id: target_id(),
+        variant_id: "720".into(),
+    }
+}
+
+#[test]
+fn media_receipts_do_not_consume_pending_capacity_and_replay_is_idempotent() {
+    let mut state = State::default();
+    for n in 1..=MAX_PENDING + 1 {
+        let id = RequestId::parse(&format!("00000000-0000-4000-8000-{n:012x}")).unwrap();
+        state.media_entries.insert(
+            id,
+            MediaEntry {
+                request: media_request(),
+                lease: CaptureLease::new(Instant::now() + Duration::from_secs(300)),
+                result: Some(ReplyStatus::Accepted {
+                    job_id: n as u64,
+                    created_new: true,
+                }),
+                waiters: vec![],
+                at: Instant::now(),
+            },
+        );
+    }
+    assert!(state.media_capacity());
+    let id = state.media_entries.keys().next().unwrap().clone();
+    let expected = state.media_entries[&id].result.clone().unwrap();
+    let (work, _work_rx) = mpsc::sync_channel(4);
+    let router = Router {
+        state: Arc::new(Mutex::new(state)),
+        work,
+        wake: Arc::new(|| {}),
+    };
+    let (tx, rx) = mpsc::sync_channel(4);
+    router.media_submit(id.clone(), media_request(), tx);
+    assert_eq!(rx.recv().unwrap().result, expected);
+    let mut conflict = media_request();
+    conflict.variant_id = "1080".into();
+    let (tx, rx) = mpsc::sync_channel(4);
+    router.media_submit(id, conflict, tx);
+    assert_eq!(
+        rx.recv().unwrap().result,
+        ReplyStatus::Declined {
+            code: DeclineCode::InvalidRequest
+        }
+    );
+}
+
+#[test]
+fn stale_media_preview_is_rejected_before_inspection() {
+    let (work, _work_rx) = mpsc::sync_channel(4);
+    let router = Router {
+        state: Arc::new(Mutex::new(State::default())),
+        work,
+        wake: Arc::new(|| {}),
+    };
+    let (tx, rx) = mpsc::sync_channel(4);
+    router.media_submit(target_id(), media_request(), tx);
+    assert_eq!(
+        rx.recv().unwrap().result,
+        ReplyStatus::Declined {
+            code: DeclineCode::Expired
+        }
+    );
+}
 fn capture() -> CaptureRequest {
     CaptureRequest {
         browser: Default::default(),

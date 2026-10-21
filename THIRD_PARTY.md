@@ -10,6 +10,15 @@ Workspace source is covered by the included MIT LICENSE.
 Inno Setup creates the installer. Its installer-engine notices are retained in
 the generated setup executable. Inno Setup is not needed to run the app.
 Windows, Chrome and their bundled system components retain their own licenses.
+The installer and portable archive also include pinned yt-dlp, Deno, FFmpeg and
+ffprobe executables. Their exact release URLs and archive checksums are in
+`tools/media_tools_lock.json`; extracted tool hashes are in the packaged
+`tools/manifest.json` (generated from `assets/media-tools/windows-x64/manifest.json`).
+Their upstream license and build notices are under `licenses/media-tools/`.
+The official Windows yt-dlp executable includes components covered by its
+`yt-dlp-THIRD_PARTY_LICENSES.txt`; its combined work and the selected FFmpeg build
+are GPL-enabled. Source and redistribution terms are described in those upstream
+notices and the pinned upstream release repositories.
 The application and extension branding is original artwork from this project.
 
 Rebuild and source: Cargo manifests/lock and the scripts in this repository are

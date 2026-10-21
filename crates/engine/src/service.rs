@@ -555,6 +555,7 @@ async fn actor(
                         let conflict = jobs.get(&id).is_some_and(|job| jobs.iter().any(|(other_id, other)| *other_id != id && other.snapshot.state.is_active() && same_destination(&job.request.destination, &other.request.destination)));
                         if conflict { reject(&bus, "Another active download uses that filename. Stop it or choose a numbered copy."); continue; }
                         if let Some(job) = jobs.get_mut(&id) {
+                            if let Err(error) = prune_missing_recovery(job) { reject(&bus, &error.message); continue; }
                             if has_retained_partial(job) { reject(&bus, "This entry has recovery files. Copy its recovery paths before restarting."); continue; }
                             if job.snapshot.state.is_terminal() {
                                 if bus.terminal_pending(id) { job.restart = true; continue; }
@@ -587,6 +588,9 @@ async fn actor(
                         for id in completed{jobs.remove(&id);waiting.retain(|queued|*queued!=id);bus.publish(Event::JobRemoved(id));}
                     },
                     Some(Command::Remove(id)) => {
+                        if let Some(job) = jobs.get_mut(&id) {
+                            if let Err(error) = prune_missing_recovery(job) { reject(&bus, &error.message); continue; }
+                        }
                         if jobs.get(&id).is_some_and(has_retained_partial) { reject(&bus,"Recovery files must be resolved before removing this entry. Use the required restart action or inspect its recovery paths.");continue; }
                         if jobs.get(&id).is_some_and(|job| job.snapshot.state.is_terminal() && has_retained_partial(job)) && bus.terminal_pending(id) { reject(&bus, "A partial file needs attention. Read its recovery path before removing the entry."); continue; }
                         if let Some(job) = jobs.get_mut(&id).filter(|job| job.snapshot.state.is_terminal()) {
@@ -610,9 +614,10 @@ async fn actor(
                         if jobs.get(&id).is_some_and(|j|j.snapshot.readiness!=EntryReadiness::Ready){reject(&bus,"Supply credentials or confirm the required restart before retrying.");continue;}
                         if let Some(job) = jobs.get_mut(&id) {
                             if !job.snapshot.state.can_retry() { reject(&bus, "Only failed or cancelled entries can be retried."); continue; }
-                            if has_retained_partial(job) { reject(&bus, "A recovery file needs attention. Inspect its path before retrying."); continue; }
+                            if let Err(error) = prune_missing_recovery(job) { reject(&bus, &error.message); continue; }
+                            if has_unmanaged_recovery(job) { reject(&bus, "A recovery file needs attention. Inspect its path before retrying."); continue; }
                             if bus.terminal_pending(id) { reject(&bus, "Wait for the previous result to appear before retrying."); continue; }
-                            if restart_job(job, &bus) { waiting.push_back(id); }
+                            if restart_job_inner(job, &bus, true) { waiting.push_back(id); }
                         }
                     },
                     Some(_) => reject(&bus, "Unsupported queue command."),
@@ -642,8 +647,14 @@ async fn actor(
                         },
                         Err(error) => { job.snapshot.state = JobState::Failed; if error.kind==ErrorKind::RestartRequired {job.snapshot.readiness=EntryReadiness::RestartRequired;} job.snapshot.error = Some(error); },
                     }
+                    if job.request.media.is_some() {
+                        if let Some(recovery) = &job.request.recovery {
+                            job.snapshot.recovery_paths = recovery.store.snapshot().entries.get(&recovery.entry)
+                                .map(|entry| entry.retained_files.clone()).unwrap_or_default();
+                        }
+                    }
                     if job.snapshot.state==JobState::Failed && job.request.options.confirmation_required && job.snapshot.readiness==EntryReadiness::Ready {job.snapshot.readiness=EntryReadiness::ConfirmationRequired;}
-                    job.snapshot.refreshable = job.request.recovery.as_ref().and_then(|r| r.checkpoint()).is_some_and(|c| c.received() > 0 && c.total.is_some_and(|total| c.received() < total));
+                    job.snapshot.refreshable = job.request.media.is_none() && job.request.recovery.as_ref().and_then(|r| r.checkpoint()).is_some_and(|c| c.received() > 0 && c.total.is_some_and(|total| c.received() < total));
                     if let Some(reply) = prepare_replies.remove(&id) {
                         let result = refresh_support::checkpoint(job).map(|_| job.request.source_page.clone());
                         let _ = reply.send(result);
@@ -810,6 +821,68 @@ fn has_retained_partial(job: &Job) -> bool {
             })
     })
 }
+fn has_unmanaged_recovery(job: &Job) -> bool {
+    let stage = job
+        .request
+        .media
+        .as_ref()
+        .and_then(|_| crate::media::stage_directory(&job.request).ok());
+    if job
+        .snapshot
+        .recovery_paths
+        .iter()
+        .any(|path| Some(path) != stage.as_ref())
+    {
+        return true;
+    }
+    job.snapshot.error.as_ref().is_some_and(|error| {
+        error.retained_original.is_some()
+            || error.retained_partial.as_ref().is_some_and(|path| {
+                Some(path) != stage.as_ref()
+                    && job
+                        .request
+                        .recovery
+                        .as_ref()
+                        .and_then(|recovery| recovery.checkpoint())
+                        .is_none_or(|checkpoint| checkpoint.partial != *path)
+            })
+    })
+}
+fn prune_missing_recovery(job: &mut Job) -> Result<(), JobError> {
+    let missing = |path: &std::path::Path| {
+        std::fs::symlink_metadata(path)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    };
+    if let Some(recovery) = &job.request.recovery {
+        recovery
+            .store
+            .update(|state| {
+                if let Some(entry) = state.entries.get_mut(&recovery.entry) {
+                    entry.retained_files.retain(|path| !missing(path));
+                }
+                Ok(())
+            })
+            .map_err(crate::storage::storage_error)?;
+    }
+    job.snapshot.recovery_paths.retain(|path| !missing(path));
+    if let Some(error) = &mut job.snapshot.error {
+        if error
+            .retained_partial
+            .as_ref()
+            .is_some_and(|path| missing(path))
+        {
+            error.retained_partial = None;
+        }
+        if error
+            .retained_original
+            .as_ref()
+            .is_some_and(|path| missing(path))
+        {
+            error.retained_original = None;
+        }
+    }
+    Ok(())
+}
 fn same_destination(a: &std::path::Path, b: &std::path::Path) -> bool {
     a.to_string_lossy().replace('/', "\\").to_lowercase()
         == b.to_string_lossy().replace('/', "\\").to_lowercase()
@@ -837,6 +910,9 @@ fn reset_job(job: &mut Job, replacement: ReplacementPolicy) {
     job.user_held = false;
 }
 fn restart_job(job: &mut Job, bus: &EventBus) -> bool {
+    restart_job_inner(job, bus, false)
+}
+fn restart_job_inner(job: &mut Job, bus: &EventBus, keep_media_stage: bool) -> bool {
     job.restart = false;
     if let Some(recovery) = &job.request.recovery {
         if let Err(error) = crate::output::discard_checkpoint(recovery) {
@@ -852,7 +928,11 @@ fn restart_job(job: &mut Job, bus: &EventBus) -> bool {
             .get(&recovery.entry)
             .map(|entry| entry.retained_files.clone())
             .unwrap_or_default();
-        if !job.snapshot.recovery_paths.is_empty() {
+        if if keep_media_stage {
+            has_unmanaged_recovery(job)
+        } else {
+            !job.snapshot.recovery_paths.is_empty()
+        } {
             job.snapshot.state = JobState::Failed;
             job.snapshot.error = Some(JobError::new(ErrorKind::Cleanup,
                 "The old partial changed and was preserved. Inspect its recovery path before restarting."));
@@ -951,6 +1031,13 @@ fn admit(
         .options
         .validate()
         .map_err(|_| SubmissionError::InvalidAction)?;
+    if request
+        .media
+        .as_ref()
+        .is_some_and(|selection| selection.validate().is_err())
+    {
+        return Err(SubmissionError::InvalidAction);
+    }
     // Every transfer needs a durable checkpoint so ordinary failures can
     // retain their owned partial for address refresh. Ephemeral entries are
     // removed after successful completion or explicit cancellation.
@@ -1061,6 +1148,174 @@ fn activate_external(
     }
     bus.publish(Event::JobChanged(job.snapshot.clone()));
     Ok(())
+}
+
+#[cfg(test)]
+mod media_recovery_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn restored_protected_entry_cannot_skip_capture_by_confirming_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let url = "https://example.com/file";
+        let mut request = validate_request(
+            url,
+            directory.path().join("file.bin"),
+            ReplacementPolicy::Deny,
+        )
+        .unwrap()
+        .with_browser_context(vec![rusty_browser_bridge::protocol::RequestHop {
+            url: url.into(),
+            headers: vec![rusty_browser_bridge::protocol::RequestHeader {
+                name: "Cookie".into(),
+                value: "session=private".into(),
+            }],
+        }])
+        .unwrap();
+        request.options.confirmation_required = true;
+        request = request.with_authorization("login".into(), "private-password".into());
+        let mut queues = QueueRuntime::new(false);
+        let entry = queues.admit(&mut request, false).unwrap();
+        let bus = EventBus::new(Arc::new(|| {}));
+        let mut jobs = BTreeMap::new();
+        queues.restore(&mut jobs, &mut 1, &bus);
+        let id = *jobs.keys().next().unwrap();
+        assert!(jobs[&id].request.request_context.is_empty());
+        assert_eq!(
+            jobs[&id].snapshot.readiness,
+            EntryReadiness::RestartRequired
+        );
+        let mut waiting = VecDeque::new();
+        queues
+            .command(Command::ConfirmRestart(id), &mut jobs, &mut waiting, &bus)
+            .await;
+        assert_eq!(
+            jobs[&id].snapshot.readiness,
+            EntryReadiness::RestartRequired
+        );
+        assert!(waiting.is_empty());
+        assert!(queues.store.snapshot().entries[&entry].refresh_needs_capture);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn failed_and_cancelled_media_can_retry_owned_stage_but_still_guard_destination() {
+        for state in [JobState::Failed, JobState::Cancelled] {
+            let directory = tempfile::tempdir().unwrap();
+            let destination = directory.path().join("video.mp4");
+            let mut request = validate_request(
+                "https://example.com/master.m3u8",
+                destination.clone(),
+                ReplacementPolicy::Deny,
+            )
+            .unwrap();
+            request.media = Some(crate::media::MediaSelection {
+                identity: "Generic:public".into(),
+                format_id: "720".into(),
+                container: "mp4".into(),
+                quality: "720p".into(),
+                audio: "aac".into(),
+                kind: rusty_browser_bridge::protocol::MediaKind::Hls,
+            });
+            let queues = QueueRuntime::new(false);
+            let bus = EventBus::new(Arc::new(|| {}));
+            let mut jobs = BTreeMap::new();
+            let id = admit(
+                request,
+                &mut jobs,
+                &mut VecDeque::new(),
+                &mut 1,
+                &bus,
+                &queues,
+                false,
+            )
+            .unwrap();
+            let job = jobs.get_mut(&id).unwrap();
+            let stage = crate::media::stage_directory(&job.request).unwrap();
+            let recovery = job.request.recovery.as_ref().unwrap().clone();
+            recovery
+                .store
+                .update(|saved| {
+                    saved
+                        .entries
+                        .get_mut(&recovery.entry)
+                        .unwrap()
+                        .retained_files
+                        .push(stage.clone());
+                    Ok(())
+                })
+                .unwrap();
+            job.snapshot.state = state;
+            job.snapshot.recovery_paths.push(stage.clone());
+            job.snapshot.error =
+                Some(JobError::new(ErrorKind::Io, "Interrupted media").retained(stage.clone()));
+            assert!(has_retained_partial(job));
+            assert!(!has_unmanaged_recovery(job));
+            std::fs::write(&destination, b"existing destination").unwrap();
+            assert!(!restart_job_inner(job, &bus, true));
+            assert_eq!(
+                std::fs::read(&destination).unwrap(),
+                b"existing destination"
+            );
+            std::fs::remove_file(&destination).unwrap();
+            assert!(restart_job_inner(job, &bus, true));
+            assert!(recovery.store.snapshot().entries[&recovery.entry]
+                .retained_files
+                .contains(&stage));
+        }
+    }
+
+    #[test]
+    fn removed_recovery_paths_can_be_acknowledged_without_deleting_existing_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let retained = directory.path().join("retained.bin");
+        std::fs::write(&retained, b"keep").unwrap();
+        let request = validate_request(
+            "https://example.com/file",
+            directory.path().join("output.bin"),
+            ReplacementPolicy::Deny,
+        )
+        .unwrap();
+        let queues = QueueRuntime::new(false);
+        let bus = EventBus::new(Arc::new(|| {}));
+        let mut jobs = BTreeMap::new();
+        let id = admit(
+            request,
+            &mut jobs,
+            &mut VecDeque::new(),
+            &mut 1,
+            &bus,
+            &queues,
+            false,
+        )
+        .unwrap();
+        let job = jobs.get_mut(&id).unwrap();
+        let recovery = job.request.recovery.as_ref().unwrap().clone();
+        recovery
+            .store
+            .update(|saved| {
+                saved
+                    .entries
+                    .get_mut(&recovery.entry)
+                    .unwrap()
+                    .retained_files
+                    .push(retained.clone());
+                Ok(())
+            })
+            .unwrap();
+        job.snapshot.recovery_paths.push(retained.clone());
+        job.snapshot.error =
+            Some(JobError::new(ErrorKind::Cleanup, "Retained").retained(retained.clone()));
+        prune_missing_recovery(job).unwrap();
+        assert!(has_retained_partial(job));
+        assert_eq!(std::fs::read(&retained).unwrap(), b"keep");
+        std::fs::remove_file(&retained).unwrap();
+        prune_missing_recovery(job).unwrap();
+        assert!(!has_retained_partial(job));
+        assert!(recovery.store.snapshot().entries[&recovery.entry]
+            .retained_files
+            .is_empty());
+    }
 }
 
 #[cfg(test)]

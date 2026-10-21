@@ -43,6 +43,10 @@ struct Draft {
     login: String,
     password: String,
     authorization: bool,
+    protected_browser: bool,
+    browser_approved: bool,
+    force_dialog: bool,
+    approval_only: bool,
     category: String,
     description: String,
     remember: bool,
@@ -61,6 +65,12 @@ pub struct PreparedDownload {
     draft: Draft,
 }
 impl PreparedDownload {
+    pub fn is_protected(&self) -> bool {
+        self.draft.protected_browser
+    }
+    pub fn requires_dialog(&self) -> bool {
+        self.draft.protected_browser || self.draft.force_dialog
+    }
     pub fn initial(
         &self,
         owner: HWND,
@@ -126,7 +136,8 @@ fn finish_download(
     lease: Option<&CaptureLease>,
     engine: &rusty_engine::EngineClient,
 ) -> Result<Option<AddedDownload>, AppError> {
-    let mut editable = settings.configuration.show_start_dialog;
+    let mut editable =
+        settings.configuration.show_start_dialog || draft.force_dialog || draft.protected_browser;
     loop {
         if editable {
             let Some(info) = show(owner, Mode::Info, &draft, settings, lease)? else {
@@ -137,6 +148,9 @@ fn finish_download(
             draft.deferred = settings.configuration.queue_only;
         }
         if lease.is_some_and(|l| l.state() != LeaseState::Pending) {
+            return Ok(None);
+        }
+        if draft.protected_browser && (!draft.browser_approved || draft.deferred) {
             return Ok(None);
         }
         if draft.category.trim().is_empty() || draft.category.chars().any(char::is_control) {
@@ -182,8 +196,10 @@ fn finish_download(
             continue;
         }
         request.options = settings.configuration.download_options(lease.is_none());
-        request.deferred = draft.deferred
-            || (!settings.configuration.show_start_dialog && settings.configuration.queue_only);
+        request.deferred = !draft.protected_browser
+            && (draft.deferred
+                || (!settings.configuration.show_start_dialog
+                    && settings.configuration.queue_only));
         if request.deferred && settings.configuration.choose_queue_later {
             let Some(queue) = crate::queue_picker::choose(owner, engine)? else {
                 if editable {
@@ -395,6 +411,22 @@ unsafe fn dialog_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                     enable_authorization(hwnd);
                 }
                 Mode::Info => {
+                    if let Ok(control) = item(hwnd, BROWSER_CREDENTIAL_APPROVAL) {
+                        let _ = ShowWindow(
+                            control,
+                            if draft.protected_browser {
+                                SW_SHOW
+                            } else {
+                                SW_HIDE
+                            },
+                        );
+                        set_checked(hwnd, BROWSER_CREDENTIAL_APPROVAL, false);
+                    }
+                    if draft.protected_browser {
+                        if let Ok(control) = item(hwnd, DOWNLOAD_LATER) {
+                            let _ = EnableWindow(control, false);
+                        }
+                    }
                     if let (Ok(icon), Ok(control)) =
                         (LoadIconW(None, IDI_APPLICATION), item(hwnd, FILE_TYPE_ICON))
                     {
@@ -436,6 +468,21 @@ unsafe fn dialog_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                     set_value(hwnd, DESCRIPTION_EDIT, &draft.description);
                     set_checked(hwnd, REMEMBER_PATH, draft.remember);
                     update_path_hint(hwnd);
+                    if draft.approval_only {
+                        for id in [
+                            CATEGORY_COMBO,
+                            CATEGORY_ADD,
+                            PATH_EDIT,
+                            BROWSE,
+                            REMEMBER_PATH,
+                            DESCRIPTION_EDIT,
+                        ] {
+                            if let Ok(control) = item(hwnd, id) {
+                                let _ = EnableWindow(control, false);
+                            }
+                        }
+                        set_value(hwnd, IDOK.0, "Continue");
+                    }
                 }
                 Mode::Options => {
                     set_value(hwnd, PATH_EDIT, &draft.path);
@@ -495,6 +542,16 @@ unsafe fn dialog_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                                 result.password = value(hwnd, PASSWORD_EDIT);
                             }
                             Mode::Info => {
+                                if context.draft.protected_browser {
+                                    if id == DOWNLOAD_LATER {
+                                        return 1;
+                                    }
+                                    if !checked(hwnd, BROWSER_CREDENTIAL_APPROVAL) {
+                                        message(Some(hwnd), "Browser session approval", "Check the one-time browser session approval, or Cancel to continue in the browser.", false);
+                                        return 1;
+                                    }
+                                    result.browser_approved = true;
+                                }
                                 result.path = value(hwnd, PATH_EDIT);
                                 result.category = value(hwnd, CATEGORY_COMBO);
                                 result.description = value(hwnd, DESCRIPTION_EDIT);
@@ -824,9 +881,74 @@ pub fn prepare_browser_download(
             .into_owned(),
         category: "Automatic".into(),
         remember: true,
+        protected_browser: capture.has_credentials(),
         ..Default::default()
     };
     Ok(Some(PreparedDownload { draft }))
+}
+
+pub fn approve_protected_refresh(
+    owner: HWND,
+    settings: &Settings,
+    capture: &CaptureRequest,
+    job: &rusty_engine::JobSnapshot,
+    lease: &CaptureLease,
+) -> Result<bool, AppError> {
+    let draft = Draft {
+        url: capture.url.clone(),
+        path: job.destination.to_string_lossy().into_owned(),
+        category: job.category.clone().unwrap_or_else(|| "Automatic".into()),
+        description: job.description.clone(),
+        protected_browser: true,
+        approval_only: true,
+        ..Default::default()
+    };
+    Ok(show(owner, Mode::Info, &draft, settings, Some(lease))?
+        .is_some_and(|result| result.browser_approved && lease.state() == LeaseState::Pending))
+}
+
+pub fn prepare_media_download(
+    settings: &Settings,
+    preview: &rusty_engine::media::MediaPreview,
+    container: &str,
+) -> PreparedDownload {
+    let mut title: String = preview
+        .title
+        .chars()
+        .filter(|c| !c.is_control() && !"<>:\"/\\|?*".contains(*c))
+        .take(100)
+        .collect();
+    title = title.trim().trim_end_matches('.').to_owned();
+    if title.is_empty()
+        || matches!(
+            title.to_ascii_uppercase().as_str(),
+            "CON" | "PRN" | "AUX" | "NUL"
+        )
+    {
+        title = "Video".into();
+    }
+    let mut filename = format!("{title}.{container}");
+    if rusty_engine::validate_request(
+        &preview.url,
+        std::path::PathBuf::from(&filename),
+        rusty_engine::ReplacementPolicy::Deny,
+    )
+    .is_err()
+    {
+        filename = format!("Video.{container}");
+    }
+    PreparedDownload {
+        draft: Draft {
+            url: preview.url.clone(),
+            path: download_form::suggested_path(settings, &filename, "Automatic")
+                .to_string_lossy()
+                .into_owned(),
+            category: "Automatic".into(),
+            remember: true,
+            force_dialog: true,
+            ..Default::default()
+        },
+    }
 }
 
 pub fn from_address(

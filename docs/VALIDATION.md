@@ -1,5 +1,36 @@
 # Validation
 
+## Broader browser capture and video source checks (2026-10-21)
+
+- `node --test extensions/chrome/tests/*.test.js`: 42 extension tests passed,
+  including protected context, redirect, fallback, media discovery and version 2
+  native reply cases, picker races/choices and direct file panel actions.
+- `python tools/test_media_package.py`: 3 package source checks passed for
+  executable hashes, paths, PE architecture, runtime hash consistency and notices.
+- `python -m unittest discover -s tools/tests -p test_browser_packages.py`: the
+  four browser profiles staged valid archives containing the media observation
+  and panel sources.
+- `cargo metadata --locked --offline --no-deps --format-version 1`: workspace
+  metadata resolved without building.
+- `scripts/verify-source.ps1`: Rust formatting and source checks passed for 94
+  Rust files, workspace manifests/lock, resources, browser assets and scripts.
+- The pinned yt-dlp executable accepted the restricted runtime flags and
+  reported version 2026.08.19.
+
+No Rust build, Rust tests, installer/portable package generation, dev server or
+live browser/media acceptance was run for this source change. In particular,
+protected file handoff in each browser, HLS/DASH quality selection, YouTube
+video/audio merging, restart and tool-failure paths remain unverified on the
+running app.
+
+Rust regression sources cover protected redirect progression, media format
+rechecks, unknown-codec manifests, completed stream validation, retained media
+retry/removal, destination collisions, process-tree shutdown, stale previews,
+idempotent receipts and capacity after completed submissions. These new Rust
+tests have not been compiled or executed.
+The protected restart regression also checks that restart confirmation cannot
+bypass the requirement for a new browser capture.
+
 ## v0.2.1 multi-connection verification (2026-10-21)
 
 The engine now has a schema-6 range map, per-range owned files, exact range

@@ -123,6 +123,8 @@ pub struct DownloadRequest {
     pub source_page: Option<String>,
     /// Short-lived browser request headers; never serialized in queue state.
     pub(crate) request_context: Vec<RequestHop>,
+    /// Public on-demand media selection; contains no browser credentials.
+    pub media: Option<crate::media::MediaSelection>,
     pub(crate) authorization: Option<Authorization>,
     /// Set only after the caller explicitly chooses an additional copy.
     pub allow_duplicate: bool,
@@ -139,7 +141,10 @@ impl DownloadRequest {
         let mut b = other.url.clone();
         a.set_fragment(None);
         b.set_fragment(None);
-        a == b && self.authorization == other.authorization
+        a == b
+            && self.authorization == other.authorization
+            && self.request_context == other.request_context
+            && self.media == other.media
     }
     pub fn source_host(&self) -> &str {
         self.url.host_str().unwrap_or("")
@@ -155,6 +160,22 @@ impl DownloadRequest {
     pub fn with_authorization(mut self, login: String, password: String) -> Self {
         self.authorization = Some(Authorization { login, password });
         self
+    }
+    pub fn with_browser_context(
+        mut self,
+        context: Vec<RequestHop>,
+    ) -> Result<Self, crate::JobError> {
+        crate::refresh::RefreshCandidate {
+            url: self.url.as_str().to_owned(),
+            source_page: self.source_page.clone(),
+            request_context: context.clone(),
+        }
+        .validate()?;
+        self.request_context = context;
+        Ok(self)
+    }
+    pub fn browser_context_is_empty(&self) -> bool {
+        self.request_context.is_empty()
     }
 }
 impl fmt::Debug for DownloadRequest {
@@ -391,6 +412,7 @@ pub fn validate_request(
         description: String::new(),
         source_page: None,
         request_context: Vec::new(),
+        media: None,
         authorization: None,
         allow_duplicate: false,
         recovery: None,
