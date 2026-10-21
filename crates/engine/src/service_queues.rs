@@ -151,8 +151,10 @@ impl QueueRuntime {
             }
             if !completed
                 && entry.checkpoint.as_ref().is_some_and(|c| {
-                    c.durable > 0
-                        && (c.etag.is_none() || c.total.is_none() || c.response_url.is_none())
+                    c.received() > 0
+                        && ((c.etag.is_none() && c.last_modified.is_none())
+                            || c.total.is_none()
+                            || c.response_url.is_none())
                 })
                 && readiness == EntryReadiness::Ready
             {
@@ -173,7 +175,7 @@ impl QueueRuntime {
             request.queue = queue_id;
             let received = entry
                 .completed_bytes
-                .unwrap_or_else(|| entry.checkpoint.as_ref().map_or(0, |c| c.durable));
+                .unwrap_or_else(|| entry.checkpoint.as_ref().map_or(0, |c| c.received()));
             let snapshot = JobSnapshot {
                 id,
                 entry_id: Some(entry.id),
@@ -201,9 +203,12 @@ impl QueueRuntime {
                 } else {
                     entry.checkpoint.as_ref().and_then(|c| c.total)
                 },
-                resume_capable: entry.checkpoint.as_ref().is_some_and(|c| c.etag.is_some()),
+                resume_capable: entry
+                    .checkpoint
+                    .as_ref()
+                    .is_some_and(|c| c.etag.is_some() || c.last_modified.is_some()),
                 refreshable: entry.checkpoint.as_ref().is_some_and(|c| {
-                    c.durable > 0 && c.total.is_some_and(|total| c.durable < total)
+                    c.received() > 0 && c.total.is_some_and(|total| c.received() < total)
                 }),
                 speed_limit: None,
                 bytes_per_second: 0,
@@ -629,7 +634,7 @@ impl QueueRuntime {
                         .recovery
                         .as_ref()
                         .and_then(Recovery::checkpoint)
-                        .is_some_and(|c| c.durable > 0 && (c.etag.is_none() || c.total.is_none()))
+                        .is_some_and(|c| c.received() > 0 && (c.etag.is_none() && c.last_modified.is_none() || c.total.is_none()))
                     {
                         EntryReadiness::RestartRequired
                     } else if job.request.options.confirmation_required {

@@ -1,4 +1,4 @@
-//! Compact four-page Options window. Native callbacks never borrow application state.
+//! Compact Options window. Native callbacks never borrow application state.
 use crate::{
     commands::*,
     native_form::{self as ui, Action, Form},
@@ -30,7 +30,13 @@ impl Drop for OpenGuard {
         OPEN.with(|v| v.set(HWND::default()));
     }
 }
-const TITLES: [&str; 4] = ["General", "File types", "Save to", "Downloads"];
+const TITLES: [&str; 5] = [
+    "General",
+    "File types",
+    "Save to",
+    "Downloads",
+    "Connection",
+];
 struct OwnedIcon(usize);
 impl Drop for OwnedIcon {
     fn drop(&mut self) {
@@ -42,10 +48,10 @@ impl Drop for OwnedIcon {
 struct HeaderIcons {
     pending: Arc<Mutex<Vec<(usize, OwnedIcon)>>>,
     attached: Vec<OwnedIcon>,
-    pages: [HWND; 4],
+    pages: [HWND; 5],
 }
 impl HeaderIcons {
-    fn new(pages: [HWND; 4]) -> Self {
+    fn new(pages: [HWND; 5]) -> Self {
         let pending = Arc::new(Mutex::new(vec![]));
         let result = pending.clone();
         let _ = std::thread::Builder::new()
@@ -54,9 +60,15 @@ impl HeaderIcons {
                 if unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_err() {
                     return;
                 }
-                for (n, kind) in [SIID_DESKTOPPC, SIID_DOCASSOC, SIID_FOLDEROPEN, SIID_WORLD]
-                    .into_iter()
-                    .enumerate()
+                for (n, kind) in [
+                    SIID_DESKTOPPC,
+                    SIID_DOCASSOC,
+                    SIID_FOLDEROPEN,
+                    SIID_WORLD,
+                    SIID_NETWORKCONNECT,
+                ]
+                .into_iter()
+                .enumerate()
                 {
                     let mut info = SHSTOCKICONINFO {
                         cbSize: std::mem::size_of::<SHSTOCKICONINFO>() as u32,
@@ -102,7 +114,7 @@ impl Drop for HeaderIcons {
     }
 }
 struct Pages {
-    handles: [HWND; 4],
+    handles: [HWND; 5],
     selected: Cell<Option<usize>>,
     category: usize,
     startup_readable: bool,
@@ -125,6 +137,7 @@ impl Pages {
             form.child(CONFIG_TYPES)?,
             form.child(CONFIG_SAVE)?,
             form.child(CONFIG_DOWNLOADS)?,
+            form.child(CONFIG_CONNECTION)?,
         ];
         // The tab and page dialogs are siblings. Its background must stay
         // behind the pages or WS_CLIPSIBLINGS can hide their entire contents.
@@ -147,7 +160,7 @@ impl Pages {
             startup_readable: startup.is_ok(),
         };
         pages.position(h)?;
-        let [general, types, save, downloads] = handles;
+        let [general, types, save, downloads, connection] = handles;
         let c = &settings.configuration;
         ui::check(general, CFG_STARTUP, startup.unwrap_or(false));
         ui::enabled(general, CFG_STARTUP, pages.startup_readable);
@@ -240,6 +253,14 @@ impl Pages {
         );
         ui::put(downloads, CFG_UA, &c.user_agent);
         ui::limit(downloads, CFG_UA, 1024);
+        let counts: Vec<String> = (1..=16).map(|n| n.to_string()).collect();
+        let labels: Vec<&str> = counts.iter().map(String::as_str).collect();
+        ui::choices(
+            connection,
+            CFG_CONNECTION_COUNT,
+            &labels,
+            usize::from(c.max_connections.saturating_sub(1)),
+        );
         pages.dependencies();
         pages.show(h, 0)?;
         Ok(pages)
@@ -388,7 +409,7 @@ impl Pages {
         let mut settings = draft.clone();
         self.read_category(&mut settings);
         let c = &mut settings.configuration;
-        let [general, types, save, downloads] = self.handles;
+        let [general, types, save, downloads, connection] = self.handles;
         if self.startup_readable {
             c.startup = Some(ui::checked(general, CFG_STARTUP));
         }
@@ -419,6 +440,9 @@ impl Pages {
         c.choose_queue_batch = ui::checked(downloads, CFG_QUEUE_BATCH);
         c.ignore_modified_time = ui::checked(downloads, CFG_MTIME);
         c.user_agent = ui::value(downloads, CFG_UA);
+        c.max_connections = ui::selection(connection, CFG_CONNECTION_COUNT)
+            .and_then(|n| u8::try_from(n + 1).ok())
+            .unwrap_or(0);
         settings.show_completion_dialog = ui::checked(downloads, CFG_COMPLETE);
         settings.duplicate_choice = match ui::selection(downloads, CFG_DUPLICATES) {
             Some(1) => Some(crate::duplicates::DuplicateChoice::Numbered),
@@ -431,7 +455,16 @@ impl Pages {
                 settings.default_destination = path.clone();
             }
         }
-        c.download_options(true).validate().map_err(|e| (3, e))?;
+        c.download_options(true).validate().map_err(|e| {
+            (
+                if e.contains("Connections per file") {
+                    4
+                } else {
+                    3
+                },
+                e,
+            )
+        })?;
         c.scanner.validate_fields().map_err(|e| (3, e))?;
         c.validate_fields().map_err(|e| {
             (
@@ -524,7 +557,7 @@ pub fn show(
                 Action::Timer => {}
                 Action::Tab => {
                     let n = send(item(h, CFG_TABS)?, TCM_GETCURSEL, 0, 0).0.max(0) as usize;
-                    pages.show(h, n.min(3))?;
+                    pages.show(h, n.min(4))?;
                 }
                 Action::Command(page, id, notification) => match id {
                     2 => return Ok(None),
@@ -561,7 +594,7 @@ pub fn show(
                     },
                     9 => {
                         let n = send(item(h, CFG_TABS)?, TCM_GETCURSEL, 0, 0).0.max(0) as usize;
-                        message(Some(h), TITLES[n.min(3)], HELP[n.min(3)], false);
+                        message(Some(h), TITLES[n.min(4)], HELP[n.min(4)], false);
                     }
                     CFG_START_DIALOG => pages.dependencies(),
                     CFG_EXT_DEFAULT => {
@@ -763,9 +796,10 @@ pub fn show(
     }
     Ok(None)
 }
-const HELP:[&str;4]=[
+const HELP:[&str;5]=[
     "Each browser needs its Rusty extension and one-time website-access approval. A browser checkbox permits automatic capture; it does not grant that approval. Add browser stages its exact extension ID until OK. Clipboard monitoring starts with the next copied public HTTP(S) URL. Keys affect automatic capture; unsafe/credential-bearing requests remain in the browser.",
     "File types are extensions separated by spaces. Excluded sites are exact hosts or *.subdomain patterns. Excluded addresses are exact public HTTP(S) URLs, optionally ending with * for a prefix. These filters affect automatic capture and clipboard URLs; explicit Add URL/context-menu actions remain available.",
     "General catches otherwise unmatched types. Category folders affect future suggestions; manually edited paths are preserved. Remember folder updates only enabled categories. Changing the temporary directory leaves existing recovery files in their recorded locations. Copies into another final directory are journaled and verified before replacement.",
-    "Turning off the start dialog uses the category folder and duplicate preference, but required overwrite/credential/recovery decisions still prompt. Immediate File Info downloads receive into a provisional partial until confirmed. Download Later holds in the selected queue. Ignoring modification time never bypasses identity, byte hashes or strict server resume validators. Virus checking runs only the configured executable with a standalone {file} argument."
+    "Turning off the start dialog uses the category folder and duplicate preference, but required overwrite/credential/recovery decisions still prompt. Immediate File Info downloads receive into a provisional partial until confirmed. Download Later holds in the selected queue. Ignoring modification time never bypasses identity, byte hashes or strict server resume validators. Virus checking runs only the configured executable with a standalone {file} argument.",
+    "Connections per file can be set from 1 to 16. The default is 8. Servers must support exact byte ranges and a stable validator; otherwise Rusty uses a single connection. The choice applies to downloads added after saving Options."
 ];

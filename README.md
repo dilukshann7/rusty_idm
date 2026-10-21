@@ -6,13 +6,13 @@
 
 Rusty Download Manager is an early Windows download manager built with Rust and native Windows controls. It can download HTTP/HTTPS files, manage transfers from the notification area, and hand off eligible public downloads from a browser extension.
 
-The current source is being prepared as v0.2.0. The last published installer is v0.1.0, which does not contain the features listed below. v0.2.0 has source, automated test and limited desktop smoke coverage; installer upgrades and live browser handoff still need acceptance testing.
+The current source targets v0.2.1. Check [Releases](https://github.com/dilukshann7/rusty_idm/releases) for packaged builds. The v0.1.0 installer is an older snapshot without the features listed below; installer upgrades and live browser handoff still need acceptance testing.
 
 ## What is in the project
 
 | Area | Current source |
 | --- | --- |
-| Downloads | HTTP/HTTPS transfers, up to two active jobs, progress, pause/resume, cancellation, per-download speed limits and saved partials for unfinished jobs. |
+| Downloads | HTTP/HTTPS transfers, up to two active jobs, 1–16 connections per eligible file, progress, pause/resume, cancellation, per-download speed limits and saved partials for unfinished jobs. |
 | Windows app | Native File Info, progress and completion dialogs; download list and categories; notification-area controls and optional sign-in startup. |
 | Files | Duplicate-download choices, numbered copies, guarded replacement and partial-file recovery paths. |
 | Organization | Manual queues, queue ordering and optional schedules. Unfinished jobs use encrypted current-user storage and are held for review after a restart. |
@@ -39,7 +39,7 @@ Rusty checks the owned partial and requests exact byte ranges from the replaceme
 
 The [v0.1.0 Windows installer](https://github.com/dilukshann7/rusty_idm/releases/download/v0.1.0/RustyDownloadManager-0.1.0-windows-x64-setup.exe) is an **older experimental snapshot**, not a build of all the features listed above. The release also provides a portable archive and checksums. It is unsigned.
 
-The v0.1.0 build supports basic transfers, tray operation and optional Chrome capture. It does **not** include named queues, restart recovery, the newer Options pages or the additional browser profiles. Read the historical [v0.1.0 user guide](docs/v0.1.0-user-guide.md) and [release notes](docs/v0.1.0-release-notes.md) for that build. The current [v0.2.0 guide](docs/USER_GUIDE.md) and [release notes](docs/RELEASE_NOTES.md) describe the release candidate.
+The v0.1.0 build supports basic transfers, tray operation and optional Chrome capture. It does **not** include named queues, restart recovery, the newer Options pages or the additional browser profiles. Read the historical [v0.1.0 user guide](docs/v0.1.0-user-guide.md) and [release notes](docs/v0.1.0-release-notes.md) for that build. The current [v0.2.1 guide](docs/USER_GUIDE.md) and [release notes](docs/RELEASE_NOTES.md) describe the new source.
 
 ## Work with the source
 

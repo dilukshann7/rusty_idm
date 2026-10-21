@@ -48,6 +48,7 @@ pub enum ReplacementPolicy {
 #[serde(default, deny_unknown_fields)]
 pub struct DownloadOptions {
     pub user_agent: String,
+    pub max_connections: u8,
     pub temporary_directory: Option<PathBuf>,
     pub server_creation_time: bool,
     pub ignore_modified_time: bool,
@@ -56,7 +57,8 @@ pub struct DownloadOptions {
 impl Default for DownloadOptions {
     fn default() -> Self {
         Self {
-            user_agent: "RustyDownloadManager/0.2.0".into(),
+            user_agent: "RustyDownloadManager/0.2.1".into(),
+            max_connections: 8,
             temporary_directory: None,
             server_creation_time: false,
             ignore_modified_time: false,
@@ -66,6 +68,9 @@ impl Default for DownloadOptions {
 }
 impl DownloadOptions {
     pub fn validate(&self) -> Result<(), String> {
+        if !(1..=16).contains(&self.max_connections) {
+            return Err("Connections per file must be between 1 and 16.".into());
+        }
         if self.user_agent.is_empty()
             || self.user_agent.len() > 1024
             || self
@@ -83,6 +88,25 @@ impl DownloadOptions {
             return Err("Choose an absolute temporary directory.".into());
         }
         Ok(())
+    }
+}
+#[cfg(test)]
+mod connection_tests {
+    use super::DownloadOptions;
+    #[test]
+    fn connection_bounds_and_legacy_default() {
+        let mut options = DownloadOptions::default();
+        assert_eq!(options.max_connections, 8);
+        options.max_connections = 0;
+        assert!(options.validate().is_err());
+        options.max_connections = 16;
+        assert!(options.validate().is_ok());
+        options.max_connections = 17;
+        assert!(options.validate().is_err());
+        let mut legacy = serde_json::to_value(DownloadOptions::default()).unwrap();
+        legacy.as_object_mut().unwrap().remove("max_connections");
+        let restored: DownloadOptions = serde_json::from_value(legacy).unwrap();
+        assert_eq!(restored.max_connections, 8);
     }
 }
 #[derive(Clone)]

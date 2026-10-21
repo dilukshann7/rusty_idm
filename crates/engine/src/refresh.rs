@@ -3,7 +3,7 @@ use crate::{output, storage::Checkpoint, ErrorKind, JobError};
 use reqwest::{
     header::{
         HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_RANGE, ETAG,
-        IF_RANGE, LOCATION, RANGE,
+        IF_RANGE, LAST_MODIFIED, LOCATION, RANGE,
     },
     Client, Response, StatusCode,
 };
@@ -79,6 +79,7 @@ impl RefreshCandidate {
 pub(crate) struct VerifiedRefresh {
     pub final_url: String,
     pub etag: Option<String>,
+    pub last_modified: Option<String>,
     pub total: u64,
 }
 
@@ -96,7 +97,7 @@ fn safe_url(url: &Url) -> bool {
 }
 pub(crate) fn client() -> Result<Client, JobError> {
     Client::builder()
-        .user_agent("RustyDownloadManager/0.2.0")
+        .user_agent("RustyDownloadManager/0.2.1")
         .redirect(reqwest::redirect::Policy::none())
         .no_gzip()
         .no_brotli()
@@ -230,6 +231,7 @@ pub(crate) async fn verify_remote_samples(
     }
     let mut final_url: Option<String> = None;
     let mut validator: Option<Option<String>> = None;
+    let mut modified: Option<Option<String>> = None;
     for (start, expected) in samples {
         let end = start + expected.len() as u64 - 1;
         let mut response = fetch_range(
@@ -265,12 +267,20 @@ pub(crate) async fn verify_remote_samples(
         }
         let response_url = response.url().as_str().to_owned();
         let response_etag = strong_etag(response.headers());
+        let response_modified = response
+            .headers()
+            .get(LAST_MODIFIED)
+            .and_then(|h| h.to_str().ok())
+            .map(str::to_owned);
         if final_url
             .as_ref()
             .is_some_and(|value| value != &response_url)
             || validator
                 .as_ref()
                 .is_some_and(|value| value != &response_etag)
+            || modified
+                .as_ref()
+                .is_some_and(|value| value != &response_modified)
         {
             return Err(mismatch(
                 "The refreshed file changed between verification ranges.",
@@ -279,6 +289,9 @@ pub(crate) async fn verify_remote_samples(
         final_url = Some(response_url);
         if validator.is_none() {
             validator = Some(response_etag);
+        }
+        if modified.is_none() {
+            modified = Some(response_modified);
         }
         let mut actual = Vec::with_capacity(expected.len());
         while let Some(chunk) = response
@@ -300,6 +313,7 @@ pub(crate) async fn verify_remote_samples(
     Ok(VerifiedRefresh {
         final_url: final_url.expect("nonempty samples"),
         etag: validator.flatten(),
+        last_modified: modified.flatten(),
         total,
     })
 }
@@ -309,10 +323,11 @@ pub(crate) async fn verify_checkpoint(
     ignore_modified: bool,
     candidate: RefreshCandidate,
 ) -> Result<VerifiedRefresh, JobError> {
+    let segmented = checkpoint.segmented();
     let total = checkpoint
         .total
         .ok_or_else(|| mismatch("The saved download has no known total size."))?;
-    if checkpoint.durable == 0 || checkpoint.durable >= total {
+    if checkpoint.received() == 0 || checkpoint.received() >= total {
         return Err(mismatch(
             "The saved download has no unfinished bytes to resume.",
         ));
@@ -320,7 +335,7 @@ pub(crate) async fn verify_checkpoint(
     let samples = tokio::task::spawn_blocking(move || -> Result<Vec<(u64, Vec<u8>)>, JobError> {
         let mut file = output::inspect_checkpoint(&checkpoint, ignore_modified)
             .map_err(|_| mismatch("The saved partial changed or cannot be opened."))?;
-        sample_ranges(checkpoint.durable)
+        let mut samples: Vec<(u64, Vec<u8>)> = sample_ranges(checkpoint.durable)
             .into_iter()
             .map(|(start, end)| {
                 file.seek(SeekFrom::Start(start))
@@ -330,12 +345,31 @@ pub(crate) async fn verify_checkpoint(
                     .map_err(|_| mismatch("Cannot inspect saved bytes."))?;
                 Ok((start, bytes))
             })
-            .collect()
+            .collect::<Result<_, JobError>>()?;
+        for segment in &checkpoint.segments {
+            let mut file = output::verify_segment(segment, ignore_modified)
+                .map_err(|_| mismatch("A saved range changed or cannot be opened."))?;
+            for (start, end) in sample_ranges(segment.saved) {
+                file.seek(SeekFrom::Start(start))
+                    .map_err(|_| mismatch("Cannot inspect saved range bytes."))?;
+                let mut bytes = vec![0; (end - start + 1) as usize];
+                file.read_exact(&mut bytes)
+                    .map_err(|_| mismatch("Cannot inspect saved range bytes."))?;
+                samples.push((segment.start + start, bytes));
+            }
+        }
+        Ok(samples)
     })
     .await
     .map_err(|_| JobError::new(ErrorKind::Io, "Refresh verification worker stopped."))??;
     let client = client()?;
-    verify_remote_samples(&client, &candidate, total, &samples).await
+    let verified = verify_remote_samples(&client, &candidate, total, &samples).await?;
+    if segmented && verified.etag.is_none() && verified.last_modified.is_none() {
+        return Err(mismatch(
+            "The refreshed server has no validator for saved ranges.",
+        ));
+    }
+    Ok(verified)
 }
 
 #[cfg(test)]

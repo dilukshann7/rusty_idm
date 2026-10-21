@@ -152,7 +152,7 @@ impl MainWindow {
             let hwnd = CreateWindowExW(
                 WS_EX_CONTROLPARENT,
                 class.lpszClassName,
-                w!("Rusty Download Manager 0.2.0"),
+                w!("Rusty Download Manager 0.2.1"),
                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,

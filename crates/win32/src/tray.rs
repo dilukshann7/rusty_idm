@@ -35,7 +35,7 @@ impl TrayIcon {
         for (slot, character) in data
             .szTip
             .iter_mut()
-            .zip("Rusty Download Manager 0.2.0".encode_utf16())
+            .zip("Rusty Download Manager 0.2.1".encode_utf16())
         {
             *slot = character;
         }

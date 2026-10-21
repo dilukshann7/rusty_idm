@@ -10,6 +10,8 @@ use std::{
 };
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
+#[path = "transfer_segmented.rs"]
+mod segmented;
 
 #[derive(Clone, Copy, Debug)]
 pub struct TransferProgress {
@@ -285,7 +287,11 @@ pub async fn controlled_transfer(
         return Ok(TransferOutcome::Cancelled);
     }
     let mut output = OutputFile::durable_prepare(&request).await?;
-    let result = stream(&request, &control, progress.clone(), &mut output).await;
+    let result = match segmented::run(&request, &control, progress.clone(), &mut output).await {
+        Ok(Some(outcome)) => Ok(outcome),
+        Ok(None) => stream(&request, &control, progress.clone(), &mut output).await,
+        Err(error) => Err(error),
+    };
     output.adopt_recovery(control.recovery());
     if control.recovery().is_some() && (control.preserving() || result.is_err()) {
         output.checkpoint().await?;

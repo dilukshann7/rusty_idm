@@ -3,7 +3,7 @@ members = ["crates/engine", "crates/win32", "crates/browser-bridge", "crates/nat
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 license = "MIT"
 
