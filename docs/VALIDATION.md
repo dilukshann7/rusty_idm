@@ -1,9 +1,22 @@
 # Validation
 
-The v0.1.0 release uses Windows x64 optimized binaries and an unsigned current-user
-Inno Setup installer. Source verification, native resource/version inspection,
-static-CRT dependency inspection, archive integrity and SHA-256 checks establish
-build/package results. They do not establish live desktop/browser behavior.
+## v0.2.0 preparation (2026-10-21)
+
+- `cargo test --workspace --locked --offline --quiet`: 111 Rust tests passed. The
+  local HTTP fixture now uses blocking accepted sockets, and browser-controller
+  tests use an in-memory engine rather than the user's saved queue.
+- `node --test extensions/chrome/tests/*.test.js`: 31 extension tests passed.
+- `python -m unittest discover -s tools/tests -p test_browser_packages.py`:
+  browser archive staging passed for Chrome, Brave, Edge and Firefox.
+- `scripts/verify-source.ps1` and `git diff --check` passed after formatting.
+- Debug Win32 app and native host built with the v0.2.0 version resources. The
+  desktop app launched, showed the main window, Options pages, Scheduler and
+  Add URL dialog, and exited through its menu. No live transfer was started.
+
+The optimized release binaries and installer have not been built or packaged
+for v0.2.0. Installer upgrade/uninstall, live browser handoff, authenticated
+address refresh and transfer behavior in the desktop UI still need Windows
+acceptance. This is release candidate validation, not publication.
 
 ## Manual acceptance still required
 
@@ -18,6 +31,14 @@ build/package results. They do not establish live desktop/browser behavior.
 | Completion | Progress closes on success, compact dialog actions, saved opt-out and explicit Properties |
 | Context menu | Right-click row targeting, keyboard menu, state-dependent actions and double-click preference |
 | Layout | 100/125/150/200 percent DPI, monitor changes, compact controls and keyboard access |
+
+## Earlier validation records
+
+The v0.1.0 release uses Windows x64 optimized binaries and an unsigned current-user
+Inno Setup installer. Source verification, native resource/version inspection,
+static-CRT dependency inspection, archive integrity and SHA-256 checks establish
+build/package results. They do not establish live desktop/browser behavior. The
+source-only notes below describe earlier checkpoints before the v0.2.0 test pass.
 
 ## Unreleased address refresh source (2026-10-21)
 

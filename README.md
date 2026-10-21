@@ -6,7 +6,7 @@
 
 Rusty Download Manager is an early Windows download manager built with Rust and native Windows controls. It can download HTTP/HTTPS files, manage transfers from the notification area, and hand off eligible public downloads from a browser extension.
 
-This project is under active development. The current source contains features that are newer than the published v0.1.0 installer, and several of those changes have only had source checks. Expect rough edges and changes to saved data or behavior.
+The current source is being prepared as v0.2.0. The last published installer is v0.1.0, which does not contain the features listed below. v0.2.0 has source, automated test and limited desktop smoke coverage; installer upgrades and live browser handoff still need acceptance testing.
 
 ## What is in the project
 
@@ -31,7 +31,7 @@ Rusty checks the owned partial and requests exact byte ranges from the replaceme
 
 - Unfinished jobs are held after restart, but this is recovery state rather than a permanent download history. Completed and explicitly cancelled ordinary jobs are cleaned from that state.
 - Continuing saved bytes requires exact HTTP ranges and a known total. A changed file, missing range support or expired authorization can stop the download while retaining its partial.
-- Address refresh is limited to HTTP/HTTPS GET. It has source and JavaScript test coverage, but this change has not been compiled or exercised in a live Windows/browser session yet.
+- Address refresh is limited to HTTP/HTTPS GET. Rust and JavaScript tests cover its key checks; a live Windows/browser handoff still needs acceptance testing.
 - The browser profiles beyond Chrome and the newer queue/configuration UI still need live desktop/browser acceptance checks. Firefox distribution also needs its separate signing step.
 - There is no automatic updater or code-signing certificate. Rusty needs an awake Windows session to run.
 
@@ -39,7 +39,7 @@ Rusty checks the owned partial and requests exact byte ranges from the replaceme
 
 The [v0.1.0 Windows installer](https://github.com/dilukshann7/rusty_idm/releases/download/v0.1.0/RustyDownloadManager-0.1.0-windows-x64-setup.exe) is an **older experimental snapshot**, not a build of all the features listed above. The release also provides a portable archive and checksums. It is unsigned.
 
-The v0.1.0 build supports basic transfers, tray operation and optional Chrome capture. It does **not** include named queues, restart recovery, the newer Options pages or the additional browser profiles. Read the [v0.1.0 user guide](docs/USER_GUIDE.md) and [release notes](docs/RELEASE_NOTES.md) for instructions and limits that apply to that build.
+The v0.1.0 build supports basic transfers, tray operation and optional Chrome capture. It does **not** include named queues, restart recovery, the newer Options pages or the additional browser profiles. Read the historical [v0.1.0 user guide](docs/v0.1.0-user-guide.md) and [release notes](docs/v0.1.0-release-notes.md) for that build. The current [v0.2.0 guide](docs/USER_GUIDE.md) and [release notes](docs/RELEASE_NOTES.md) describe the release candidate.
 
 ## Work with the source
 

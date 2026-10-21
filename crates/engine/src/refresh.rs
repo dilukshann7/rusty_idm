@@ -96,7 +96,7 @@ fn safe_url(url: &Url) -> bool {
 }
 pub(crate) fn client() -> Result<Client, JobError> {
     Client::builder()
-        .user_agent("RustyDownloadManager/0.1.0")
+        .user_agent("RustyDownloadManager/0.2.0")
         .redirect(reqwest::redirect::Policy::none())
         .no_gzip()
         .no_brotli()
@@ -343,7 +343,7 @@ mod tests {
     use super::*;
     use rusty_browser_bridge::protocol::RequestHeader;
     use std::{
-        io::{Read as _, Write as _},
+        io::Write as _,
         net::{TcpListener, TcpStream},
         sync::{
             atomic::{AtomicBool, Ordering},

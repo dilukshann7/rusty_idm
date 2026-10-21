@@ -1,13 +1,13 @@
-# Rusty Download Manager 0.1.0
+# Rusty Download Manager 0.2.0
 
 ## Install
 
-Run `RustyDownloadManager-0.1.0-windows-x64-setup.exe`. Setup installs for the
+Run `RustyDownloadManager-0.2.0-windows-x64-setup.exe`. Setup installs for the
 current Windows user and offers **Start Rusty in the background when I sign in**
 (selected by default), an optional desktop shortcut, and Chrome setup.
 This release is unsigned; Windows may show an unknown publisher prompt.
 
-## Connect Chrome once
+## Connect a browser
 
 Open **Connect Chrome** from the Start menu or the end of setup.
 
@@ -22,10 +22,17 @@ capture setting is preserved. Reload the existing extension in Chrome after an
 upgrade if Chrome has not yet picked up the changed files. Setup does not edit
 Chrome profiles or install extensions without approval.
 
-After that, supported public HTTP/HTTPS GET downloads open Rusty's File Info
+Chrome, Brave, Edge and Firefox each need their own extension package and native
+host registration. The installer offers a Chrome helper. For another browser,
+open **Options > General > Add browser** and follow its extension setup steps.
+Firefox distribution requires signing before normal installation.
+
+After setup, supported public HTTP/HTTPS GET downloads open Rusty's File Info
 prompt, even while the main manager is hidden. Unsupported downloads and failed
-handoffs stay with Chrome. Signed-in/cookie-protected pages, streaming/blob URLs,
-DRM, upload requests and private downloads are outside this release's capture scope.
+handoffs stay with the browser. Signed-in/cookie-protected pages, streaming/blob
+URLs, DRM, upload requests and private downloads are outside automatic capture.
+An explicitly armed address refresh can use short-lived headers from the matching
+browser GET; see [address refresh](refresh-download-address.md).
 
 ## Background use
 
@@ -48,10 +55,20 @@ is saved; re-enable notifications in Options > Downloads. Failure/cancellation
 status stays available. Right-click a list row for file/transfer actions and
 Properties; Properties can be opened again after completion.
 
-The download list and matching history last for the current process session.
-Pause/resume is available within that session; there is no restart-resume or
-persistent job history. Some servers require resuming from zero. Named queues,
-Move/Rename and address refresh are not implemented; their menu entries are disabled.
+Unfinished jobs are held for review after restart. Select a held job to resume
+it if its saved bytes and server response can be verified. A changed response,
+missing range support or altered partial may require a fresh download address
+or an explicit restart from zero. Completed downloads are not permanent history.
+
+Use the sidebar and Scheduler to create named queues, change their order and
+set optional start/stop times. Rusty must be running and Windows awake for a
+schedule to fire. A missed start is skipped.
+
+For a paused, failed or restored job with saved bytes, right-click and choose
+**Refresh download address**. Paste a fresh HTTP/HTTPS URL or wait for a new
+browser download. Rusty checks the saved partial and up to three exact server
+ranges before continuing. Protected browser headers are kept only in memory
+and must be captured again after Rusty restarts. See [address refresh](refresh-download-address.md).
 
 ## Upgrade or uninstall
 
@@ -72,9 +89,10 @@ Rusty, so this is portable execution, not isolated portable data storage.
 ## Verification
 
 Use SHA256SUMS.txt to check downloaded artifacts with PowerShell Get-FileHash.
-See RELEASE_NOTES.md for the actual release checks and live behavior limitations.
+See [release notes](RELEASE_NOTES.md) and [validation](VALIDATION.md) for the
+current checks and remaining live acceptance cases.
 
-## Unreleased toolbar source
+## Toolbar
 
 The native command row follows the reference order: Add URL, Resume, Stop,
 Stop All, Delete, Delete Completed, Options, Scheduler, Start Queue, Stop Queue,
@@ -87,4 +105,4 @@ removing downloaded files; active transfers and entries with recovery files
 are excluded. Scheduler opens the existing queue editor. Tell a Friend opens
 a compact link dialog with an explicit Copy link action; it sends no message.
 The menu row is Tasks, File, Downloads, View, Help. Queue management is under
-Tasks → Queues. This is source-only work, not a rebuilt published installer.
+Tasks → Queues.

@@ -14,6 +14,19 @@ try {
     $expectedPackages = @('rusty-engine', 'rusty-win32', 'rusty-browser-bridge', 'rusty-native-host') | Sort-Object
     $actualPackages = @($metadata.packages | Where-Object { $_.id -in $metadata.workspace_members } | ForEach-Object { $_.name }) | Sort-Object
     if (Compare-Object $expectedPackages $actualPackages) { throw 'Unexpected workspace package set.' }
+    $versions = @($metadata.packages | Where-Object { $_.id -in $metadata.workspace_members } | ForEach-Object { $_.version } | Select-Object -Unique)
+    if ($versions.Count -ne 1) { throw 'Workspace package versions differ.' }
+    $releaseVersion = $versions[0]
+    foreach ($browser in @('chrome', 'brave', 'edge', 'firefox')) {
+        $manifestFile = if ($browser -eq 'chrome') { 'extensions/chrome/manifest.json' } else { "extensions/profiles/$browser/manifest.json" }
+        $extensionVersion = (Get-Content -Raw -LiteralPath (Join-Path $taskRoot $manifestFile) | ConvertFrom-Json).version
+        if ($extensionVersion -ne $releaseVersion) { throw "Extension version differs from Cargo: $manifestFile" }
+    }
+    $releaseSource = Get-Content -Raw -LiteralPath (Join-Path $taskRoot 'tools/package_release.py')
+    $installerSource = Get-Content -Raw -LiteralPath (Join-Path $taskRoot 'installer/windows.iss')
+    if (-not $releaseSource.Contains('VERSION = "' + $releaseVersion + '"') -or -not $installerSource.Contains('#define AppVersion "' + $releaseVersion + '"')) {
+        throw 'Release packager or installer version differs from Cargo.'
+    }
 
     $rustSources = (Get-ChildItem -LiteralPath (Join-Path $taskRoot 'crates') -Recurse -Filter '*.rs').FullName
     & $formatTool --check --edition 2021 @rustSources

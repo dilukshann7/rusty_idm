@@ -1,6 +1,6 @@
+use rusty_browser_bridge::protocol::RequestHop;
 use std::{fmt, path::PathBuf, time::SystemTime};
 use url::Url;
-use rusty_browser_bridge::protocol::RequestHop;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct JobId(pub u64);
@@ -56,7 +56,7 @@ pub struct DownloadOptions {
 impl Default for DownloadOptions {
     fn default() -> Self {
         Self {
-            user_agent: "RustyDownloadManager/0.1.0".into(),
+            user_agent: "RustyDownloadManager/0.2.0".into(),
             temporary_directory: None,
             server_creation_time: false,
             ignore_modified_time: false,

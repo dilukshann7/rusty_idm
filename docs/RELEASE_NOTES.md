@@ -1,28 +1,19 @@
-# Rusty Download Manager v0.1.0
+# Rusty Download Manager v0.2.0 (release candidate)
 
-- Native Windows download manager with original Rusty branding and application icon.
-- HTTP/HTTPS downloads, two simultaneous transfers, pause/resume, speed limits,
-  guarded replacement, compact progress and completion dialogs.
-- Native right-click menu with supported file actions, Redownload, transfer
-  commands, Properties and a saved double-click preference.
-- Notification-area controls, Close/minimize to tray, hidden sign-in startup,
-  single-instance background launches and Explorer-restart icon recovery.
-- Per-user Windows installer, portable archive, Chrome extension package,
-  integration helper, license inventory and artifact SHA-256 checksums.
+## Changes since v0.1.0
 
-## Limits
+- Named download queues, categories, Windows file icons, queue ordering, and optional startup, one-time or weekly schedules.
+- Encrypted checkpoints for unfinished downloads. On restart, Rusty holds those jobs for review before continuing.
+- Pause and resume with stricter HTTP range checks, per-download speed limits, and a smoother speed display.
+- **Refresh download address** for a paused, failed or restored job with saved bytes. A pasted link or an explicitly selected browser capture is checked against the saved partial before continuation.
+- Compact native Options pages for browser capture, file types, folders and download behavior.
+- Browser extension profiles for Chrome, Brave, Edge and Firefox. Each browser requires its own extension and native-host setup; Firefox distribution requires signing.
+- Updated native toolbar, scheduler, File Info and transfer dialogs.
 
-Windows 10/11 x64 only. The PC must be awake and the user signed in. Chrome needs
-one-time extension/website approval. Capture covers supported public GET
-downloads; authenticated/private/streaming downloads remain with the browser.
-History is session-only and there is no resume after process exit, named queues,
-address refresh, Move/Rename, automatic updates or code-signing certificate.
+## Scope and limits
 
-## Release evidence
+Windows 10/11 x64. Rusty must run in a signed-in, awake Windows session. Ordinary automatic browser capture covers eligible public HTTP/HTTPS GET downloads. Protected captures are used only when the user explicitly arms address refresh. Streaming, private browsing and uploads are outside automatic handoff. Saved-byte verification samples up to three ranges, so it does not prove equality of unseen bytes. Completed downloads are not permanent history. This release is unsigned and has no automatic updater.
 
-The release build and artifact verification results are recorded in
-`release-manifest.json` beside the installer. No test suite or development server
-is run as part of this release request. Installer installation/uninstallation,
-Windows sign-in, Explorer restart, tray interactions and live Chrome capture
-must be distinguished from source checks and compilation; unexercised scenarios
-are not claimed as runtime-verified.
+## Verification status
+
+The v0.2.0 source, extension tests, Rust tests and a debug desktop smoke check have been exercised; see [validation](VALIDATION.md) for exact results and remaining acceptance cases. Optimized release binaries, installer upgrade/uninstall and live browser handoff have not yet been verified. This is preparation for v0.2.0, not a published release.

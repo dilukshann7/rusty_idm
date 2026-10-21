@@ -120,7 +120,7 @@ impl Default for Configuration {
             choose_queue_later: false,
             choose_queue_batch: true,
             ignore_modified_time: false,
-            user_agent: "RustyDownloadManager/0.1.0".into(),
+            user_agent: "RustyDownloadManager/0.2.0".into(),
             progress: Default::default(),
             scanner: Default::default(),
         }
@@ -175,7 +175,7 @@ impl Configuration {
             user_agent: if manual {
                 self.user_agent.clone()
             } else {
-                "RustyDownloadManager/0.1.0".into()
+                "RustyDownloadManager/0.2.0".into()
             },
             temporary_directory: self.temporary_folder(),
             server_creation_time: self.server_creation_time,

@@ -23,8 +23,8 @@ use rusty_browser_bridge::{
     protocol::DeclineCode,
     windows::{PipeServer, UserSession},
 };
-use rusty_engine::{spawn_engine, Command, CommandError, EngineHandle, Event};
 use rusty_engine::refresh::RefreshCandidate;
+use rusty_engine::{spawn_engine, Command, CommandError, EngineHandle, Event};
 use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
@@ -152,7 +152,7 @@ impl MainWindow {
             let hwnd = CreateWindowExW(
                 WS_EX_CONTROLPARENT,
                 class.lpszClassName,
-                w!("Rusty Download Manager 0.1.0"),
+                w!("Rusty Download Manager 0.2.0"),
                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
@@ -465,10 +465,17 @@ impl AppState {
             match &event {
                 Event::JobChanged(snapshot) => {
                     if self.refresh_target == Some(snapshot.id)
-                        && matches!(snapshot.state, rusty_engine::JobState::Running | rusty_engine::JobState::Completed | rusty_engine::JobState::Waiting)
+                        && matches!(
+                            snapshot.state,
+                            rusty_engine::JobState::Running
+                                | rusty_engine::JobState::Completed
+                                | rusty_engine::JobState::Waiting
+                        )
                     {
                         self.refresh_target = None;
-                        if let Some(browser) = &self.browser { browser.set_refresh_armed(false); }
+                        if let Some(browser) = &self.browser {
+                            browser.set_refresh_armed(false);
+                        }
                     }
                     let newly_completed = !snapshot.restored
                         && snapshot.state == rusty_engine::JobState::Completed
@@ -538,7 +545,9 @@ impl AppState {
                 Event::JobRemoved(id) => {
                     if self.refresh_target == Some(*id) {
                         self.refresh_target = None;
-                        if let Some(browser) = &self.browser { browser.set_refresh_armed(false); }
+                        if let Some(browser) = &self.browser {
+                            browser.set_refresh_armed(false);
+                        }
                     }
                     self.details.remove(*id);
                     self.scanner.removed(*id);
@@ -887,18 +896,40 @@ impl AppState {
         let owner = window.hwnd;
         if self.refresh_target == Some(id) {
             self.refresh_target = None;
-            if let Some(browser) = &self.browser { browser.set_refresh_armed(false); }
-            message(Some(owner), "Refresh cancelled", "Browser capture is no longer waiting for this download.", false);
+            if let Some(browser) = &self.browser {
+                browser.set_refresh_armed(false);
+            }
+            message(
+                Some(owner),
+                "Refresh cancelled",
+                "Browser capture is no longer waiting for this download.",
+                false,
+            );
             return Ok(());
         }
         self.refresh_target = None;
-        if let Some(browser) = &self.browser { browser.set_refresh_armed(false); }
+        if let Some(browser) = &self.browser {
+            browser.set_refresh_armed(false);
+        }
         let (reply, result) = std::sync::mpsc::sync_channel(1);
-        if !self.command(owner, Command::PrepareRefresh(id, reply)) { return Ok(()); }
+        if !self.command(owner, Command::PrepareRefresh(id, reply)) {
+            return Ok(());
+        }
         let source_page = match result.recv_timeout(std::time::Duration::from_secs(15)) {
             Ok(Ok(page)) => page,
-            Ok(Err(error)) => { message(Some(owner), "Cannot refresh address", &error, false); return Ok(()); }
-            Err(_) => { message(Some(owner), "Cannot refresh address", "Timed out while saving the partial. Try again after the download is paused.", false); return Ok(()); }
+            Ok(Err(error)) => {
+                message(Some(owner), "Cannot refresh address", &error, false);
+                return Ok(());
+            }
+            Err(_) => {
+                message(
+                    Some(owner),
+                    "Cannot refresh address",
+                    "Timed out while saving the partial. Try again after the download is paused.",
+                    false,
+                );
+                return Ok(());
+            }
         };
         self.events(window);
         match crate::refresh_ui::choose(owner, source_page.clone())? {
@@ -914,11 +945,18 @@ impl AppState {
             }
             crate::refresh_ui::RefreshChoice::Paste(url) => {
                 let (reply, _) = tokio::sync::oneshot::channel();
-                self.command(owner, Command::RefreshAddress {
-                    job_id: id,
-                    candidate: RefreshCandidate { url, source_page, request_context: Vec::new() },
-                    reply,
-                });
+                self.command(
+                    owner,
+                    Command::RefreshAddress {
+                        job_id: id,
+                        candidate: RefreshCandidate {
+                            url,
+                            source_page,
+                            request_context: Vec::new(),
+                        },
+                        reply,
+                    },
+                );
             }
         }
         Ok(())
@@ -949,7 +987,9 @@ impl AppState {
             return Ok(());
         };
         if command == REFRESH_ADDRESS {
-            if job.refreshable { self.begin_refresh(window, id)?; }
+            if job.refreshable {
+                self.begin_refresh(window, id)?;
+            }
             return Ok(());
         }
         let actions = self.view.actions(Some(id));
@@ -1565,17 +1605,34 @@ impl AppState {
             if let Some(target) = self.refresh_target {
                 let eligible = self.lifecycle.accepts_submissions()
                     && incoming.lease.state() == LeaseState::Pending
-                    && self.view.jobs.get(&target).is_some_and(|job| job.refreshable && (matches!(job.state, rusty_engine::JobState::Paused | rusty_engine::JobState::Failed) || job.state == rusty_engine::JobState::Waiting && job.deferred));
+                    && self.view.jobs.get(&target).is_some_and(|job| {
+                        job.refreshable
+                            && (matches!(
+                                job.state,
+                                rusty_engine::JobState::Paused | rusty_engine::JobState::Failed
+                            ) || job.state == rusty_engine::JobState::Waiting && job.deferred)
+                    });
                 if !eligible {
-                    self.browser.as_ref().expect("controller").decline(&id, DeclineCode::BrowserFallback);
+                    self.browser
+                        .as_ref()
+                        .expect("controller")
+                        .decline(&id, DeclineCode::BrowserFallback);
                     self.refresh_target = None;
-                    self.browser.as_ref().expect("controller").set_refresh_armed(false);
+                    self.browser
+                        .as_ref()
+                        .expect("controller")
+                        .set_refresh_armed(false);
                     continue;
                 }
                 let job = self.view.jobs.get(&target).expect("checked");
-                let display = url::Url::parse(&incoming.capture.url).ok().map(|mut url| {
-                    url.set_query(None); url.set_fragment(None); url.into_string()
-                }).unwrap_or_else(|| "the new address".into());
+                let display = url::Url::parse(&incoming.capture.url)
+                    .ok()
+                    .map(|mut url| {
+                        url.set_query(None);
+                        url.set_fragment(None);
+                        String::from(url)
+                    })
+                    .unwrap_or_else(|| "the new address".into());
                 if !message(Some(window.hwnd), "Use new download link?",
                     &format!("Continue {} using this browser download?\n\n{}\n\nRusty will verify the saved partial before taking over.", job.filename, display), true)
                 {
@@ -1588,13 +1645,26 @@ impl AppState {
                     request_context: incoming.capture.request_context.clone(),
                 };
                 let submitted = self.browser.as_ref().expect("controller").submit_refresh(
-                    id.clone(), target, candidate, incoming.lease.clone(),
+                    id.clone(),
+                    target,
+                    candidate,
+                    incoming.lease.clone(),
                 );
                 if let Err(error) = submitted {
-                    self.browser.as_ref().expect("controller").decline(&id, if error == CommandError::QueueFull { DeclineCode::Busy } else { DeclineCode::AppClosing });
+                    self.browser.as_ref().expect("controller").decline(
+                        &id,
+                        if error == CommandError::QueueFull {
+                            DeclineCode::Busy
+                        } else {
+                            DeclineCode::AppClosing
+                        },
+                    );
                 } else {
                     self.refresh_target = None;
-                    self.browser.as_ref().expect("controller").set_refresh_armed(false);
+                    self.browser
+                        .as_ref()
+                        .expect("controller")
+                        .set_refresh_armed(false);
                 }
                 continue;
             }
@@ -1621,7 +1691,7 @@ impl AppState {
                         download.request.source_page = incoming.capture.source_page.clone();
                     }
                     intent
-                },
+                }
                 Err(_) => {
                     self.browser
                         .as_ref()
