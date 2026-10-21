@@ -1,5 +1,39 @@
 # Validation
 
+## v0.2.1 multi-connection verification (2026-10-21)
+
+The engine now has a schema-6 range map, per-range owned files, exact range
+probes and worker validation, dynamic splitting after endpoint acknowledgement,
+aggregate speed control, Last-Modified overlap rechecks, ordered assembly and
+cleanup journaling. Native Options exposes 1–16 connections, default 8, for
+newly admitted downloads.
+
+- `cargo test --workspace --locked --offline --quiet`: 125 Rust tests passed.
+  Eight new HTTP fixture cases cover concurrent ranges, ignored-range fallback,
+  malformed range and changed-validator rejection, dynamic splitting,
+  Last-Modified verification, aggregate speed limiting and pause/resume with
+  saved sidecars.
+- `node --test extensions/chrome/tests/*.test.js`: 31 extension tests passed.
+- `python -m unittest discover -s tools/tests -p test_browser_packages.py`:
+  one browser-package test passed.
+- `scripts/verify-source.ps1`: 92 Rust files, workspace versions, native
+  resources, document links, browser source and PowerShell syntax passed.
+- An optimized static-CRT Windows build of the app and native host passed;
+  both binaries report product version 0.2.1.
+- The Inno Setup installer and five archives were produced. All six release
+  artifacts matched their recorded SHA-256 hashes; all five ZIPs passed archive
+  integrity checks.
+
+The first workspace run exposed an old fixture that rejected a validator-free
+`bytes=0-0` probe. A later run exposed a pause-before-probe acknowledgement
+race; both were corrected before the passing run above. One refresh fixture
+network error was intermittent and passed on rerun.
+
+Desktop transfer, forced-process restart with sidecars, checkpoint corruption,
+interrupted assembly, two simultaneous large files, and address refresh with
+segmented partials still need Windows acceptance.
+Installer upgrade/uninstall and live browser handoff remain unverified.
+
 ## v0.2.0 preparation (2026-10-21)
 
 - `cargo test --workspace --locked --offline --quiet`: 111 Rust tests passed. The

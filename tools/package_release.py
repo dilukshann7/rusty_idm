@@ -9,7 +9,7 @@ import subprocess
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 PREFIX = f"RustyDownloadManager-{VERSION}"
 
 
@@ -126,7 +126,7 @@ def stage(binary_dir):
     print(f"Staged {sum(p.is_file() for p in payload.rglob('*'))} files and five archives")
 
 
-def finish():
+def finish(test_suites="not run"):
     dist = ROOT / "dist"
     names = [f"{PREFIX}-windows-x64-setup.exe", f"{PREFIX}-windows-x64-portable.zip"] + [
         f"{PREFIX}-{browser}-extension.zip"
@@ -138,7 +138,7 @@ def finish():
         if not file.is_file():
             raise SystemExit(f"Missing artifact: {file}")
         artifacts.append({"name": name, "bytes": file.stat().st_size, "sha256": hashlib.sha256(file.read_bytes()).hexdigest()})
-    manifest = {"product": "Rusty Download Manager", "version": VERSION, "platform": "windows-x64", "signed": False, "artifacts": artifacts, "verification": {"optimized_windows_build": "passed", "source_checks": "passed", "installer_compilation": "passed", "package_paths_versions_hashes": "passed", "test_suites": "not run", "installer_install_uninstall": "not run", "live_tray_login_chrome": "not run"}}
+    manifest = {"product": "Rusty Download Manager", "version": VERSION, "platform": "windows-x64", "signed": False, "artifacts": artifacts, "verification": {"optimized_windows_build": "passed", "source_checks": "passed", "installer_compilation": "passed", "package_paths_versions_hashes": "passed", "test_suites": test_suites, "installer_install_uninstall": "not run", "live_tray_login_chrome": "not run"}}
     path = dist / "release-manifest.json"
     path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     checksums = artifacts + [{"name": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}]
@@ -150,10 +150,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["stage", "finish"])
     parser.add_argument("--binary-dir", type=Path)
+    parser.add_argument("--test-suites-status", choices=["not run", "passed"], default="not run")
     args = parser.parse_args()
     if args.mode == "stage":
         if not args.binary_dir:
             parser.error("stage requires --binary-dir")
         stage(args.binary_dir.resolve())
     else:
-        finish()
+        finish(args.test_suites_status)

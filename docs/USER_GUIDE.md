@@ -1,8 +1,8 @@
-# Rusty Download Manager 0.2.0
+# Rusty Download Manager 0.2.1
 
 ## Install
 
-Run `RustyDownloadManager-0.2.0-windows-x64-setup.exe`. Setup installs for the
+Run `RustyDownloadManager-0.2.1-windows-x64-setup.exe`. Setup installs for the
 current Windows user and offers **Start Rusty in the background when I sign in**
 (selected by default), an optional desktop shortcut, and Chrome setup.
 This release is unsigned; Windows may show an unknown publisher prompt.
@@ -60,13 +60,30 @@ it if its saved bytes and server response can be verified. A changed response,
 missing range support or altered partial may require a fresh download address
 or an explicit restart from zero. Completed downloads are not permanent history.
 
+## Connections per file
+
+Open **Options > Connection** to choose 1–16 connections per file (default 8).
+The choice is copied into each newly added download; existing queued downloads
+keep their earlier choice. A setting of 1 uses the regular single stream. Rusty
+uses multiple connections only for a known-size HTTP(S) response that accepts
+exact byte ranges and supplies a consistent strong ETag or Last-Modified value.
+Other responses continue through one stream. The limit of two active files is
+unchanged.
+
+Segmented downloads save later byte ranges in separate temporary files beside
+the main partial. Keep all recovery files together if you move them for manual
+inspection. Rusty verifies each saved range before resuming and checks adjacent
+range overlaps when relying on Last-Modified. A changed response or damaged
+range holds the download with its saved bytes intact until you refresh the
+address or explicitly restart it.
+
 Use the sidebar and Scheduler to create named queues, change their order and
 set optional start/stop times. Rusty must be running and Windows awake for a
 schedule to fire. A missed start is skipped.
 
 For a paused, failed or restored job with saved bytes, right-click and choose
 **Refresh download address**. Paste a fresh HTTP/HTTPS URL or wait for a new
-browser download. Rusty checks the saved partial and up to three exact server
+browser download. Rusty checks representative saved bytes against exact server
 ranges before continuing. Protected browser headers are kept only in memory
 and must be captured again after Rusty restarts. See [address refresh](refresh-download-address.md).
 

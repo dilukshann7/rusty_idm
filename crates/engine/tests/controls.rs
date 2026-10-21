@@ -46,7 +46,8 @@ fn respond(mut stream: TcpStream) {
     let end = range.and_then(|(_, end)| end).unwrap_or(body.len() - 1);
     let partial = range.is_some() && !matches!(path, "/ignored" | "/changed");
     if partial {
-        if path != "/weak" {
+        // The capability probe has no prior validator, so it cannot use If-Range.
+        if path != "/weak" && range != Some((0, Some(0))) {
             assert!(req.lines().any(|line| line
                 .split_once(':')
                 .is_some_and(|(name, value)| name.eq_ignore_ascii_case("if-range")

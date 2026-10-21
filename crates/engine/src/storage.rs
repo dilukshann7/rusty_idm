@@ -32,6 +32,32 @@ pub(crate) struct Checkpoint {
     pub total: Option<u64>,
     pub response_url: Option<String>,
     pub etag: Option<String>,
+    #[serde(default)]
+    pub last_modified: Option<String>,
+    #[serde(default)]
+    pub segments: Vec<SegmentCheckpoint>,
+    #[serde(default)]
+    pub cleanup_pending: Vec<PathBuf>,
+}
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SegmentCheckpoint {
+    pub start: u64,
+    pub end: u64,
+    pub saved: u64,
+    pub partial: PathBuf,
+    pub identity: DestinationIdentity,
+    pub prefix_hash: Vec<u8>,
+    pub bytes_hash: Vec<u8>,
+}
+impl Checkpoint {
+    pub fn received(&self) -> u64 {
+        self.segments.iter().fold(self.durable, |total, s| {
+            total.saturating_add(s.saved.saturating_sub(self.durable.saturating_sub(s.start)))
+        })
+    }
+    pub fn segmented(&self) -> bool {
+        !self.segments.is_empty()
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Journal {
@@ -78,7 +104,7 @@ pub(crate) struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            version: 5,
+            version: 6,
             next_entry: 1,
             next_queue: 2,
             queues: [(
@@ -132,7 +158,7 @@ impl Store {
                             .to_string()
                     })?;
                     validate(&state)?;
-                    state.version = 5;
+                    state.version = 6;
                     Ok(state)
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(State::default()),
@@ -232,7 +258,7 @@ impl Recovery {
                     .entries
                     .get_mut(&self.entry)
                     .ok_or("Recovery entry was removed.")?;
-                entry.completed_bytes = entry.checkpoint.as_ref().map(|c| c.durable);
+                entry.completed_bytes = entry.checkpoint.as_ref().map(Checkpoint::received);
                 entry.completed = true;
                 entry.checkpoint = None;
                 entry.journal = None;
@@ -263,7 +289,7 @@ pub(crate) fn storage_error(message: String) -> JobError {
     )
 }
 fn validate(s: &State) -> Result<(), String> {
-    if !matches!(s.version, 1 | 2 | 3 | 4 | 5)
+    if !matches!(s.version, 1 | 2 | 3 | 4 | 5 | 6)
         || !s.queues.contains_key(&QueueId::MAIN)
         || s.entries.len() > 1000
         || s.queues.len() > 100
@@ -293,6 +319,57 @@ fn validate(s: &State) -> Result<(), String> {
         }
     }
     for (id, e) in &s.entries {
+        if let Some(c) = &e.checkpoint {
+            if c.segments.len() > 128
+                || c.cleanup_pending.len() > 128
+                || c.segments.iter().any(|segment| {
+                    segment.start > segment.end
+                        || segment
+                            .end
+                            .checked_sub(segment.start)
+                            .and_then(|n| n.checked_add(1))
+                            .is_none_or(|length| segment.saved > length)
+                        || segment.partial == c.partial
+                        || !segment.partial.is_absolute()
+                        || segment.prefix_hash.len() != 32
+                        || segment.bytes_hash.len() != 32
+                })
+                || c.cleanup_pending
+                    .iter()
+                    .any(|path| !c.segments.iter().any(|segment| &segment.partial == path))
+            {
+                return Err("Invalid saved range map; storage was preserved.".into());
+            }
+            if let Some(total) = c.total {
+                if c.durable > total
+                    || c.received() > total
+                    || c.segments.iter().any(|segment| segment.end >= total)
+                {
+                    return Err(
+                        "Saved ranges exceed the declared file size; storage was preserved.".into(),
+                    );
+                }
+                if !c.segments.is_empty() {
+                    let mut ordered: Vec<_> = c.segments.iter().collect();
+                    ordered.sort_by_key(|segment| segment.start);
+                    let mut next = ordered[0].start;
+                    if next == 0
+                        || ordered.iter().any(|segment| {
+                            if segment.start != next {
+                                return true;
+                            }
+                            next = segment.end.saturating_add(1);
+                            false
+                        })
+                        || next != total
+                    {
+                        return Err(
+                            "Saved ranges have a gap or overlap; storage was preserved.".into()
+                        );
+                    }
+                }
+            }
+        }
         e.options.validate()?;
         crate::validate_request(
             &e.url,

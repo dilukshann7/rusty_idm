@@ -44,10 +44,10 @@ pub(super) fn checkpoint(job: &Job) -> Result<Checkpoint, String> {
     let checkpoint = recovery
         .checkpoint()
         .ok_or("This download has no saved partial to refresh.")?;
-    if checkpoint.durable == 0
+    if checkpoint.received() == 0
         || checkpoint
             .total
-            .is_none_or(|total| checkpoint.durable >= total)
+            .is_none_or(|total| checkpoint.received() >= total)
     {
         return Err("This download has no unfinished saved bytes to refresh.".into());
     }
@@ -100,6 +100,7 @@ pub(super) fn commit(
         let checkpoint = entry.checkpoint.as_mut().expect("checked");
         checkpoint.response_url = Some(verified.final_url.clone());
         checkpoint.etag = verified.etag.clone();
+        checkpoint.last_modified = verified.last_modified.clone();
         checkpoint.refresh_pending = true;
         entry.url = url.as_str().to_owned();
         entry.source_page = new_page.clone();
@@ -121,7 +122,7 @@ pub(super) fn commit(
     job.snapshot
         .recovery_paths
         .retain(|p| p != &expected.partial);
-    job.snapshot.received = expected.durable;
+    job.snapshot.received = expected.received();
     job.snapshot.total = Some(verified.total);
     job.snapshot.resume_capable = true;
     job.snapshot.refreshable = true;

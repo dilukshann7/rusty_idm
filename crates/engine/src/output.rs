@@ -222,6 +222,19 @@ impl OutputFile {
     ) -> Result<Self, JobError> {
         if let Some(recovery) = &request.recovery {
             if let Some(checkpoint) = recovery.checkpoint() {
+                for segment in &checkpoint.segments {
+                    if checkpoint.cleanup_pending.contains(&segment.partial)
+                        && checkpoint.total == Some(checkpoint.durable)
+                        && !segment.partial.exists()
+                    {
+                        continue;
+                    }
+                    verify_segment(segment, request.options.ignore_modified_time).map_err(|e| {
+                        JobError::new(ErrorKind::RestartRequired,
+                            format!("Restart required: saved range verification failed: {e}. All recorded files were preserved."))
+                            .retained(segment.partial.clone())
+                    })?;
+                }
                 let file = reopen_verified(&checkpoint, request.options.ignore_modified_time)
                     .map_err(|e| {
                         JobError::new(
@@ -330,11 +343,30 @@ impl OutputFile {
         result
     }
     pub(crate) async fn checkpoint(&mut self) -> Result<(), JobError> {
-        self.checkpoint_inner().await.map_err(|error| {
+        self.checkpoint_inner(None).await.map_err(|error| {
             crate::storage::storage_error(error.message).retained(self.partial.clone())
         })
     }
-    async fn checkpoint_inner(&mut self) -> Result<(), JobError> {
+    pub(crate) async fn checkpoint_ranges(
+        &mut self,
+        segments: Vec<crate::storage::SegmentCheckpoint>,
+        last_modified: Option<String>,
+        cleanup_pending: Vec<PathBuf>,
+    ) -> Result<(), JobError> {
+        self.checkpoint_inner(Some((segments, last_modified, cleanup_pending)))
+            .await
+            .map_err(|error| {
+                crate::storage::storage_error(error.message).retained(self.partial.clone())
+            })
+    }
+    async fn checkpoint_inner(
+        &mut self,
+        range_map: Option<(
+            Vec<crate::storage::SegmentCheckpoint>,
+            Option<String>,
+            Vec<PathBuf>,
+        )>,
+    ) -> Result<(), JobError> {
         let Some(recovery) = self.recovery.clone() else {
             return Ok(());
         };
@@ -363,6 +395,15 @@ impl OutputFile {
         .map_err(|_| JobError::new(ErrorKind::Io, "Checkpoint worker failed."))??;
         checkpoint.creation_time = self.creation_time;
         checkpoint.refresh_pending = refresh_pending;
+        let (segments, last_modified, cleanup_pending) = range_map.unwrap_or_else(|| {
+            recovery
+                .checkpoint()
+                .map(|old| (old.segments, old.last_modified, old.cleanup_pending))
+                .unwrap_or_default()
+        });
+        checkpoint.segments = segments;
+        checkpoint.last_modified = last_modified;
+        checkpoint.cleanup_pending = cleanup_pending;
         recovery
             .save(checkpoint)
             .map_err(|e| e.retained(self.partial.clone()))
@@ -373,6 +414,24 @@ impl OutputFile {
     }
     pub fn partial_path(&self) -> &Path {
         &self.partial
+    }
+    pub(crate) async fn length(&self) -> Result<u64, JobError> {
+        self.file
+            .as_ref()
+            .expect("open partial")
+            .metadata()
+            .await
+            .map(|m| m.len())
+            .map_err(|_| JobError::new(ErrorKind::Io, "Cannot inspect the partial length."))
+    }
+    pub(crate) async fn seek_end(&mut self) -> Result<(), JobError> {
+        self.file
+            .as_mut()
+            .expect("open partial")
+            .seek(std::io::SeekFrom::End(0))
+            .await
+            .map(|_| ())
+            .map_err(|_| JobError::new(ErrorKind::Io, "Cannot seek the partial."))
     }
     /// Restart only the owned open partial, never a separately reopened path.
     pub async fn restart(&mut self) -> Result<(), JobError> {
@@ -409,6 +468,37 @@ impl OutputFile {
     }
     pub async fn abort(mut self) -> Result<(), JobError> {
         self.retain = true;
+        if let Some(mut checkpoint) = self.recovery.as_ref().and_then(|r| r.checkpoint()) {
+            checkpoint.cleanup_pending = checkpoint
+                .segments
+                .iter()
+                .map(|s| s.partial.clone())
+                .collect();
+            if let Some(recovery) = &self.recovery {
+                recovery.save(checkpoint.clone())?;
+            }
+            for segment in &checkpoint.segments {
+                let file =
+                    match verify_segment(segment, true) {
+                        Ok(file) => file,
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::NotFound
+                                && checkpoint.cleanup_pending.contains(&segment.partial) =>
+                        {
+                            continue
+                        }
+                        Err(_) => return Err(JobError::new(
+                            ErrorKind::Cleanup,
+                            "Cannot verify a range file for cleanup; saved bytes were preserved.",
+                        )
+                        .retained(segment.partial.clone())),
+                    };
+                delete_owned(&file, &segment.partial).map_err(|_| {
+                    JobError::new(ErrorKind::Cleanup, "Cannot remove a saved range file.")
+                        .retained(segment.partial.clone())
+                })?;
+            }
+        }
         let Some(mut file) = self.file.take() else {
             return Ok(());
         };
@@ -632,7 +722,115 @@ fn make_checkpoint(
         total,
         response_url,
         etag,
+        last_modified: None,
+        segments: Vec::new(),
+        cleanup_pending: Vec::new(),
     })
+}
+pub(crate) async fn reserve_segment(
+    base: &Path,
+    start: u64,
+    end: u64,
+) -> Result<(File, crate::storage::SegmentCheckpoint), JobError> {
+    let parent = base
+        .parent()
+        .ok_or_else(|| JobError::new(ErrorKind::Io, "Invalid partial folder."))?;
+    for _ in 0..128 {
+        let id = NEXT_PARTIAL.fetch_add(1, Ordering::Relaxed);
+        let path = parent.join(format!(".rusty-{}-{id}.seg", std::process::id()));
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create_new(true);
+        #[cfg(windows)]
+        {
+            use windows::Win32::{
+                Foundation::{GENERIC_READ, GENERIC_WRITE},
+                Storage::FileSystem::{DELETE, FILE_SHARE_READ},
+            };
+            options
+                .access_mode(GENERIC_READ.0 | GENERIC_WRITE.0 | DELETE.0)
+                .share_mode(FILE_SHARE_READ.0);
+        }
+        match options.open(&path).await {
+            Ok(file) => {
+                file.sync_all()
+                    .await
+                    .map_err(|_| JobError::new(ErrorKind::Io, "Cannot sync a new range file."))?;
+                let segment = segment_checkpoint(&file, path, start, end, 0).await?;
+                return Ok((file, segment));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return Err(JobError::new(ErrorKind::Io, "Cannot reserve a range file.")),
+        }
+    }
+    Err(JobError::new(
+        ErrorKind::Io,
+        "Cannot reserve a unique range file.",
+    ))
+}
+pub(crate) async fn segment_checkpoint(
+    file: &File,
+    partial: PathBuf,
+    start: u64,
+    end: u64,
+    saved: u64,
+) -> Result<crate::storage::SegmentCheckpoint, JobError> {
+    file.sync_all()
+        .await
+        .map_err(|_| JobError::new(ErrorKind::Io, "Cannot sync range bytes."))?;
+    let mut clone = file
+        .try_clone()
+        .await
+        .map_err(|_| JobError::new(ErrorKind::Io, "Cannot inspect range bytes."))?
+        .into_std()
+        .await;
+    tokio::task::spawn_blocking(move || {
+        let identity = identify_destination(&clone)?;
+        if identity.size != saved {
+            return Err(JobError::new(ErrorKind::Io, "Range file length changed."));
+        }
+        let (prefix_hash, bytes_hash) = hashes(&mut clone, saved)
+            .map_err(|_| JobError::new(ErrorKind::Io, "Cannot hash range bytes."))?;
+        Ok(crate::storage::SegmentCheckpoint {
+            start,
+            end,
+            saved,
+            partial,
+            identity,
+            prefix_hash,
+            bytes_hash,
+        })
+    })
+    .await
+    .map_err(|_| JobError::new(ErrorKind::Io, "Range checkpoint worker failed."))?
+}
+pub(crate) fn verify_segment(
+    segment: &crate::storage::SegmentCheckpoint,
+    ignore_modified: bool,
+) -> std::io::Result<std::fs::File> {
+    let mut file = open_owned(&segment.partial)?;
+    let identity = identify_destination(&file).map_err(std::io::Error::other)?;
+    if !same_file(&identity, &segment.identity)
+        || identity.size < segment.saved
+        || (!ignore_modified
+            && identity.size == segment.saved
+            && identity.modified != segment.identity.modified)
+    {
+        return Err(std::io::Error::other("Range identity or length changed"));
+    }
+    let (prefix, full) = hashes(&mut file, segment.saved)?;
+    if prefix != segment.prefix_hash || full != segment.bytes_hash {
+        return Err(std::io::Error::other("Recorded range bytes changed"));
+    }
+    file.set_len(segment.saved)?;
+    file.sync_all()?;
+    Ok(file)
+}
+pub(crate) async fn remove_segment(file: File, path: PathBuf) -> Result<(), JobError> {
+    let file = file.into_std().await;
+    tokio::task::spawn_blocking(move || delete_owned(&file, &path))
+        .await
+        .map_err(|_| JobError::new(ErrorKind::Cleanup, "Range cleanup worker failed."))?
+        .map_err(|_| JobError::new(ErrorKind::Cleanup, "Cannot remove a saved range file."))
 }
 fn open_owned(path: &Path) -> std::io::Result<std::fs::File> {
     let mut options = std::fs::OpenOptions::new();
@@ -714,6 +912,40 @@ pub(crate) fn discard_checkpoint(recovery: &crate::storage::Recovery) -> Result<
     }
     let mut preserved = None;
     if let Some(c) = recovery.checkpoint() {
+        for segment in &c.segments {
+            match verify_segment(segment, true) {
+                Ok(file) => delete_owned(&file, &segment.partial).map_err(|_| {
+                    JobError::new(
+                        ErrorKind::Cleanup,
+                        "Cannot remove the verified old range file.",
+                    )
+                    .retained(segment.partial.clone())
+                })?,
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::NotFound
+                        && c.cleanup_pending.contains(&segment.partial) => {}
+                Err(_) => {
+                    recovery
+                        .store
+                        .update(|s| {
+                            let entry = s
+                                .entries
+                                .get_mut(&recovery.entry)
+                                .ok_or("Recovery entry is missing.")?;
+                            if !entry.retained_files.contains(&segment.partial) {
+                                entry.retained_files.push(segment.partial.clone());
+                            }
+                            Ok(())
+                        })
+                        .map_err(crate::storage::storage_error)?;
+                    return Err(JobError::new(
+                        ErrorKind::Cleanup,
+                        "A saved range changed; its path was preserved for recovery.",
+                    )
+                    .retained(segment.partial.clone()));
+                }
+            }
+        }
         match open_owned(&c.partial) {
             Ok(mut file) => {
                 if verify(&mut file, &c).is_ok() {
@@ -994,6 +1226,19 @@ fn delete_owned<T>(_file: &T, partial: &Path) -> std::io::Result<()> {
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn saved_range_hash_rejects_changed_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("main.part");
+        let (mut file, reserved) = reserve_segment(&base, 4, 7).await.unwrap();
+        file.write_all(b"data").await.unwrap();
+        let recorded = segment_checkpoint(&file, reserved.partial.clone(), 4, 7, 4)
+            .await
+            .unwrap();
+        drop(file);
+        std::fs::write(&recorded.partial, b"evil").unwrap();
+        assert!(verify_segment(&recorded, false).is_err());
+    }
     #[tokio::test]
     async fn cleanup_failure_retains_the_actual_partial_path() {
         let dir = tempfile::tempdir().unwrap();

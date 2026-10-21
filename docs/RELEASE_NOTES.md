@@ -1,10 +1,11 @@
-# Rusty Download Manager v0.2.0 (release candidate)
+# Rusty Download Manager v0.2.1
 
 ## Changes since v0.1.0
 
 - Named download queues, categories, Windows file icons, queue ordering, and optional startup, one-time or weekly schedules.
 - Encrypted checkpoints for unfinished downloads. On restart, Rusty holds those jobs for review before continuing.
 - Pause and resume with stricter HTTP range checks, per-download speed limits, and a smoother speed display.
+- Up to 16 connections for one eligible HTTP(S) file, with dynamic range splitting, aggregate speed limiting, verified sidecar recovery and single-stream fallback for unsupported servers. The native **Options > Connection** page defaults to 8.
 - **Refresh download address** for a paused, failed or restored job with saved bytes. A pasted link or an explicitly selected browser capture is checked against the saved partial before continuation.
 - Compact native Options pages for browser capture, file types, folders and download behavior.
 - Browser extension profiles for Chrome, Brave, Edge and Firefox. Each browser requires its own extension and native-host setup; Firefox distribution requires signing.
@@ -16,4 +17,4 @@ Windows 10/11 x64. Rusty must run in a signed-in, awake Windows session. Ordinar
 
 ## Verification status
 
-The v0.2.0 source, extension tests, Rust tests and a debug desktop smoke check have been exercised; see [validation](VALIDATION.md) for exact results and remaining acceptance cases. Optimized release binaries, installer upgrade/uninstall and live browser handoff have not yet been verified. This is preparation for v0.2.0, not a published release.
+See [validation](VALIDATION.md) for the checks completed on this version and the remaining acceptance cases. Installer upgrade/uninstall, live browser handoff and authenticated address refresh still need hands-on verification.

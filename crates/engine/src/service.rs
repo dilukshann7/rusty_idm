@@ -643,7 +643,7 @@ async fn actor(
                         Err(error) => { job.snapshot.state = JobState::Failed; if error.kind==ErrorKind::RestartRequired {job.snapshot.readiness=EntryReadiness::RestartRequired;} job.snapshot.error = Some(error); },
                     }
                     if job.snapshot.state==JobState::Failed && job.request.options.confirmation_required && job.snapshot.readiness==EntryReadiness::Ready {job.snapshot.readiness=EntryReadiness::ConfirmationRequired;}
-                    job.snapshot.refreshable = job.request.recovery.as_ref().and_then(|r| r.checkpoint()).is_some_and(|c| c.durable > 0 && c.total.is_some_and(|total| c.durable < total));
+                    job.snapshot.refreshable = job.request.recovery.as_ref().and_then(|r| r.checkpoint()).is_some_and(|c| c.received() > 0 && c.total.is_some_and(|total| c.received() < total));
                     if let Some(reply) = prepare_replies.remove(&id) {
                         let result = refresh_support::checkpoint(job).map(|_| job.request.source_page.clone());
                         let _ = reply.send(result);
@@ -716,7 +716,7 @@ async fn actor(
                     job.snapshot.received = update.received; job.snapshot.total = update.total;
                     job.snapshot.resume_capable = update.resume_capable;
                     if job.snapshot.state == JobState::Paused {
-                        job.snapshot.refreshable = job.request.recovery.as_ref().and_then(|r| r.checkpoint()).is_some_and(|c| c.durable > 0 && c.total.is_some_and(|total| c.durable < total));
+                        job.snapshot.refreshable = job.request.recovery.as_ref().and_then(|r| r.checkpoint()).is_some_and(|c| c.received() > 0 && c.total.is_some_and(|total| c.received() < total));
                     }
                     job.snapshot.bytes_per_second = if job.snapshot.state == JobState::Running { job.speed_meter.sample(Instant::now(), update.received) } else { 0 };
                     job.snapshot.eta_seconds = update.total.and_then(|t| t.checked_sub(update.received)).and_then(|remaining| remaining.checked_div(job.snapshot.bytes_per_second));

@@ -98,6 +98,7 @@ pub struct Configuration {
     pub choose_queue_batch: bool,
     pub ignore_modified_time: bool,
     pub user_agent: String,
+    pub max_connections: u8,
     pub progress: ProgressPreferences,
     pub scanner: ScannerPreferences,
 }
@@ -120,7 +121,8 @@ impl Default for Configuration {
             choose_queue_later: false,
             choose_queue_batch: true,
             ignore_modified_time: false,
-            user_agent: "RustyDownloadManager/0.2.0".into(),
+            user_agent: "RustyDownloadManager/0.2.1".into(),
+            max_connections: 8,
             progress: Default::default(),
             scanner: Default::default(),
         }
@@ -175,8 +177,9 @@ impl Configuration {
             user_agent: if manual {
                 self.user_agent.clone()
             } else {
-                "RustyDownloadManager/0.2.0".into()
+                "RustyDownloadManager/0.2.1".into()
             },
+            max_connections: self.max_connections,
             temporary_directory: self.temporary_folder(),
             server_creation_time: self.server_creation_time,
             ignore_modified_time: self.ignore_modified_time,
@@ -225,5 +228,21 @@ mod saved_capture {
         }
         saved.policy.validate().map_err(D::Error::custom)?;
         Ok(saved.policy)
+    }
+}
+#[cfg(test)]
+mod connection_tests {
+    use super::Configuration;
+    #[test]
+    fn old_preferences_load_eight_connections_and_new_requests_copy_setting() {
+        let mut saved = serde_json::to_value(Configuration::default()).unwrap();
+        saved.as_object_mut().unwrap().remove("max_connections");
+        let mut restored: Configuration = serde_json::from_value(saved).unwrap();
+        assert_eq!(restored.max_connections, 8);
+        restored.max_connections = 12;
+        assert_eq!(restored.download_options(true).max_connections, 12);
+        assert_eq!(restored.download_options(false).max_connections, 12);
+        restored.max_connections = 17;
+        assert!(restored.validate_fields().is_err());
     }
 }

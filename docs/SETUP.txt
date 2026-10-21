@@ -1,4 +1,4 @@
-Rusty Download Manager 0.2.0
+Rusty Download Manager 0.2.1
 
 Rusty runs in the Windows notification area after setup. Closing the manager
 hides it; use the tray icon to reopen it or Exit. Sign-in startup is selected

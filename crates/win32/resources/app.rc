@@ -265,8 +265,8 @@ BEGIN
 END
 
 1 VERSIONINFO
- FILEVERSION 0,2,0,0
- PRODUCTVERSION 0,2,0,0
+ FILEVERSION 0,2,1,0
+ PRODUCTVERSION 0,2,1,0
  FILEOS VOS_NT_WINDOWS32
  FILETYPE VFT_APP
 BEGIN
@@ -276,8 +276,8 @@ BEGIN
         BEGIN
             VALUE "FileDescription", "Rusty Download Manager\0"
             VALUE "ProductName", "Rusty Download Manager\0"
-            VALUE "FileVersion", "0.2.0\0"
-            VALUE "ProductVersion", "0.2.0\0"
+            VALUE "FileVersion", "0.2.1\0"
+            VALUE "ProductVersion", "0.2.1\0"
             VALUE "OriginalFilename", "rusty-win32.exe\0"
         END
     END
@@ -481,6 +481,21 @@ BEGIN
     EDITTEXT 3179, 8, 231, 316, 13, ES_AUTOHSCROLL | WS_TABSTOP
     LTEXT "Virus checking settings", -1, 170, 250, 86, 10
     PUSHBUTTON "Edit...", 3180, 264, 247, 60, 13
+END
+
+227 DIALOGEX 0, 0, 332, 260
+STYLE DS_SETFONT | DS_CONTROL | WS_CHILD | WS_CLIPSIBLINGS
+EXSTYLE WS_EX_CONTROLPARENT
+FONT 8, "Tahoma"
+BEGIN
+    CONTROL "", 3101, "Static", SS_ICON, 6, 4, 22, 22
+    RTEXT "Connection settings", 3102, 40, 11, 284, 12
+    CONTROL "", -1, "Static", SS_ETCHEDHORZ, 34, 28, 290, 1
+    GROUPBOX "Downloads", -1, 8, 35, 316, 92
+    LTEXT "Connections per file:", -1, 20, 58, 144, 11
+    COMBOBOX 3190, 170, 55, 62, 170, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT "1 uses a single connection. Eligible HTTP(S) files use up to the selected count.", -1, 20, 80, 294, 28
+    LTEXT "This setting applies to newly added downloads. Two files can run at once.", -1, 12, 144, 308, 28
 END
 
 217 DIALOGEX 0, 0, 296, 176
