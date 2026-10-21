@@ -125,13 +125,14 @@ fn removal_and_retry_only_for_terminal_jobs() {
 }
 
 #[test]
-fn display_url_does_not_reveal_credentials_queries_or_fragments() {
+fn display_url_does_not_reveal_authorization_queries_or_fragments() {
     let request = validate_request(
-        "https://user:pass@example.com/file?token=secret#secret",
+        "https://example.com/file?token=secret#secret",
         "file.bin".into(),
         ReplacementPolicy::Deny,
     )
-    .unwrap();
+    .unwrap()
+    .with_authorization("user".into(), "pass".into());
     assert_eq!(request.source_host(), "example.com");
     assert!(!format!("{request:?}").contains("secret"));
     assert!(!format!("{request:?}").contains("pass"));
@@ -188,9 +189,9 @@ fn authorization_is_never_exposed_by_request_debug() {
 }
 
 #[test]
-fn status_display_url_keeps_the_path_and_removes_credentials_query_and_fragment() {
+fn status_display_url_keeps_the_path_and_removes_query_and_fragment() {
     let request = validate_request(
-        "https://user:password@example.com/files/video.mp4?token=private#secret",
+        "https://example.com/files/video.mp4?token=private#secret",
         "video.mp4".into(),
         ReplacementPolicy::Deny,
     )

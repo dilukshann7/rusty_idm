@@ -51,10 +51,14 @@ fn refresh_context_is_optional_scoped_and_redacted() {
         "headers": [{"name": "Cookie", "value": "session=private"}]
     }]);
     let (_, operation) = Operation::decode(&serde_json::to_vec(&payload).unwrap()).unwrap();
-    let Operation::Capture(request) = operation else { panic!("capture expected") };
+    let Operation::Capture(request) = operation else {
+        panic!("capture expected")
+    };
     assert_eq!(request.request_context.len(), 1);
     assert!(!format!("{request:?}").contains("session=private"));
-    let encoded = Operation::Capture(request).encode(RequestId::parse("12345678-1234-4234-8234-123456789abc").unwrap()).unwrap();
+    let encoded = Operation::Capture(request)
+        .encode(RequestId::parse("12345678-1234-4234-8234-123456789abc").unwrap())
+        .unwrap();
     assert!(Operation::decode(&encoded).is_ok());
     for (name, value) in [("Host", "example.org"), ("Cookie", "one\r\nHost: evil.org")] {
         let mut bad = payload.clone();

@@ -35,7 +35,10 @@ use speed::SpeedMeter;
 mod refresh_support;
 
 pub enum Command {
-    PrepareRefresh(JobId, std::sync::mpsc::SyncSender<Result<Option<String>, String>>),
+    PrepareRefresh(
+        JobId,
+        std::sync::mpsc::SyncSender<Result<Option<String>, String>>,
+    ),
     RefreshAddress {
         job_id: JobId,
         candidate: crate::refresh::RefreshCandidate,
@@ -222,6 +225,11 @@ impl EngineHandle {
 pub fn spawn_engine(wake: Arc<dyn Fn() + Send + Sync>) -> EngineHandle {
     spawn(wake, Arc::new(HttpExecutor), true)
 }
+/// Start the production transfer executor with an isolated in-memory queue store.
+/// Useful for integration tests that must not read or modify the user's queue data.
+pub fn spawn_engine_in_memory(wake: Arc<dyn Fn() + Send + Sync>) -> EngineHandle {
+    spawn(wake, Arc::new(HttpExecutor), false)
+}
 pub fn spawn_engine_with_executor(
     wake: Arc<dyn Fn() + Send + Sync>,
     executor: Arc<dyn TransferExecutor>,
@@ -298,10 +306,14 @@ async fn actor(
     let mut waiting = VecDeque::new();
     let mut tasks = JoinSet::new();
     let mut task_jobs: HashMap<Id, JobId> = HashMap::new();
-    let mut refresh_tasks: JoinSet<(JobId, Result<crate::refresh::VerifiedRefresh, JobError>)> = JoinSet::new();
+    let mut refresh_tasks: JoinSet<(JobId, Result<crate::refresh::VerifiedRefresh, JobError>)> =
+        JoinSet::new();
     let mut refresh_task_jobs: HashMap<Id, JobId> = HashMap::new();
     let mut pending_refreshes: HashMap<JobId, PendingRefresh> = HashMap::new();
-    let mut prepare_replies: HashMap<JobId, std::sync::mpsc::SyncSender<Result<Option<String>, String>>> = HashMap::new();
+    let mut prepare_replies: HashMap<
+        JobId,
+        std::sync::mpsc::SyncSender<Result<Option<String>, String>>,
+    > = HashMap::new();
     let progress: ProgressMap = Arc::new(Mutex::new(HashMap::new()));
     let mut next_id = 1u64;
     let mut queues = QueueRuntime::new(durable);
@@ -788,10 +800,14 @@ fn has_retained_partial(job: &Job) -> bool {
         return true;
     }
     job.snapshot.error.as_ref().is_some_and(|error| {
-        error.retained_original.is_some() || error.retained_partial.as_ref().is_some_and(|path| {
-            job.request.recovery.as_ref().and_then(|recovery| recovery.checkpoint())
-                .is_none_or(|checkpoint| checkpoint.partial != *path)
-        })
+        error.retained_original.is_some()
+            || error.retained_partial.as_ref().is_some_and(|path| {
+                job.request
+                    .recovery
+                    .as_ref()
+                    .and_then(|recovery| recovery.checkpoint())
+                    .is_none_or(|checkpoint| checkpoint.partial != *path)
+            })
     })
 }
 fn same_destination(a: &std::path::Path, b: &std::path::Path) -> bool {
@@ -829,8 +845,13 @@ fn restart_job(job: &mut Job, bus: &EventBus) -> bool {
             bus.publish(Event::JobChanged(job.snapshot.clone()));
             return false;
         }
-        job.snapshot.recovery_paths = recovery.store.snapshot().entries.get(&recovery.entry)
-            .map(|entry| entry.retained_files.clone()).unwrap_or_default();
+        job.snapshot.recovery_paths = recovery
+            .store
+            .snapshot()
+            .entries
+            .get(&recovery.entry)
+            .map(|entry| entry.retained_files.clone())
+            .unwrap_or_default();
         if !job.snapshot.recovery_paths.is_empty() {
             job.snapshot.state = JobState::Failed;
             job.snapshot.error = Some(JobError::new(ErrorKind::Cleanup,
@@ -840,13 +861,18 @@ fn restart_job(job: &mut Job, bus: &EventBus) -> bool {
         }
     }
     match inspect_destination(&job.request.destination) {
-        Ok(identity) => {
-            reset_job(
-                job,
-                identity
-                    .map(ReplacementPolicy::Approved)
-                    .unwrap_or(ReplacementPolicy::Deny),
-            );
+        Ok(Some(_)) => {
+            job.snapshot.state = JobState::Failed;
+            job.snapshot.received = 0;
+            job.snapshot.error = Some(JobError::new(
+                ErrorKind::DestinationConflict,
+                "The destination now exists. Choose a new filename or approve replacement again.",
+            ));
+            bus.publish(Event::JobChanged(job.snapshot.clone()));
+            false
+        }
+        Ok(None) => {
+            reset_job(job, ReplacementPolicy::Deny);
             bus.publish(Event::JobChanged(job.snapshot.clone()));
             true
         }

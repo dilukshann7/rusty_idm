@@ -243,31 +243,49 @@ impl Operation {
                 }
                 if let Some(page) = &p.source_page {
                     let url = url::Url::parse(page).map_err(|_| ProtocolError)?;
-                    if page.len() > 8192 || page.chars().any(char::is_control)
+                    if page.len() > 8192
+                        || page.chars().any(char::is_control)
                         || !matches!(url.scheme(), "http" | "https")
-                        || url.host_str().is_none() || !url.username().is_empty()
+                        || url.host_str().is_none()
+                        || !url.username().is_empty()
                         || url.password().is_some()
-                    { return Err(ProtocolError); }
+                    {
+                        return Err(ProtocolError);
+                    }
                 }
                 let mut context_bytes = 0usize;
-                if p.request_context.len() > 16 { return Err(ProtocolError); }
+                if p.request_context.len() > 16 {
+                    return Err(ProtocolError);
+                }
                 for hop in &p.request_context {
                     let url = url::Url::parse(&hop.url).map_err(|_| ProtocolError)?;
-                    if hop.url.len() > 8192 || hop.url.chars().any(char::is_control) || !matches!(url.scheme(), "http" | "https")
-                        || url.host_str().is_none() || !url.username().is_empty()
-                        || url.password().is_some() || hop.headers.len() > 16
-                    { return Err(ProtocolError); }
+                    if hop.url.len() > 8192
+                        || hop.url.chars().any(char::is_control)
+                        || !matches!(url.scheme(), "http" | "https")
+                        || url.host_str().is_none()
+                        || !url.username().is_empty()
+                        || url.password().is_some()
+                        || hop.headers.len() > 16
+                    {
+                        return Err(ProtocolError);
+                    }
                     context_bytes += hop.url.len();
                     for header in &hop.headers {
                         let name = header.name.to_ascii_lowercase();
-                        if !matches!(name.as_str(), "cookie" | "authorization" | "referer" | "user-agent")
-                            || header.value.len() > 8192
+                        if !matches!(
+                            name.as_str(),
+                            "cookie" | "authorization" | "referer" | "user-agent"
+                        ) || header.value.len() > 8192
                             || header.value.chars().any(char::is_control)
-                        { return Err(ProtocolError); }
+                        {
+                            return Err(ProtocolError);
+                        }
                         context_bytes += name.len() + header.value.len();
                     }
                 }
-                if context_bytes > 32768 { return Err(ProtocolError); }
+                if context_bytes > 32768 {
+                    return Err(ProtocolError);
+                }
                 Self::Capture(CaptureRequest {
                     browser: p.browser,
                     forced: p.forced,

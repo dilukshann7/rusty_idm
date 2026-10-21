@@ -159,7 +159,12 @@ impl RequestRouter for Router {
                     return Ok(());
                 }
                 if !capture.request_context.is_empty() && !state.refresh_armed {
-                    let _ = reply.try_send(Reply::new(id, ReplyStatus::Declined { code: DeclineCode::BrowserFallback }));
+                    let _ = reply.try_send(Reply::new(
+                        id,
+                        ReplyStatus::Declined {
+                            code: DeclineCode::BrowserFallback,
+                        },
+                    ));
                     return Ok(());
                 }
                 let allowed = capture.source != CaptureSource::Automatic
@@ -290,13 +295,22 @@ impl BrowserController {
                             Work::Refresh(id, job_id, candidate, lease) => {
                                 let (reply, result) = oneshot::channel();
                                 if let Err(error) = engine.try_external(ExternalCommand::Refresh {
-                                    id: id.clone(), job_id, candidate, lease: lease.clone(), reply,
+                                    id: id.clone(),
+                                    job_id,
+                                    candidate,
+                                    lease: lease.clone(),
+                                    reply,
                                 }) {
                                     lease.revoke();
                                     shared.lock().unwrap_or_else(|p| p.into_inner()).finish(
-                                        &id, ReplyStatus::Declined { code: command_code(error) },
+                                        &id,
+                                        ReplyStatus::Declined {
+                                            code: command_code(error),
+                                        },
                                     );
-                                } else { waiting.push(Waiting::Apply(id, result)); }
+                                } else {
+                                    waiting.push(Waiting::Apply(id, result));
+                                }
                             }
                             Work::Apply(id, action, lease) => {
                                 let (reply, result) = oneshot::channel();
@@ -499,7 +513,11 @@ impl BrowserController {
         }
     }
     pub fn set_refresh_armed(&self, armed: bool) {
-        self.router.state.lock().unwrap_or_else(|p| p.into_inner()).refresh_armed = armed;
+        self.router
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .refresh_armed = armed;
     }
     pub fn router(&self) -> Arc<dyn RequestRouter> {
         self.router.clone()
@@ -595,11 +613,16 @@ impl BrowserController {
         candidate: RefreshCandidate,
         lease: CaptureLease,
     ) -> Result<(), CommandError> {
-        if lease.state() != LeaseState::Pending { return Err(CommandError::Closed); }
-        self.router.work.try_send(Work::Refresh(id, job_id, candidate, lease)).map_err(|e| match e {
-            mpsc::TrySendError::Full(_) => CommandError::QueueFull,
-            mpsc::TrySendError::Disconnected(_) => CommandError::Closed,
-        })
+        if lease.state() != LeaseState::Pending {
+            return Err(CommandError::Closed);
+        }
+        self.router
+            .work
+            .try_send(Work::Refresh(id, job_id, candidate, lease))
+            .map_err(|e| match e {
+                mpsc::TrySendError::Full(_) => CommandError::QueueFull,
+                mpsc::TrySendError::Disconnected(_) => CommandError::Closed,
+            })
     }
     pub fn decline(&self, id: &RequestId, code: DeclineCode) {
         let mut state = self.router.state.lock().unwrap_or_else(|p| p.into_inner());

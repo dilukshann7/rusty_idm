@@ -297,21 +297,36 @@ impl OutputFile {
     pub(crate) fn clear_refresh_pending(&mut self) {
         self.refresh_pending = false;
     }
-    pub(crate) async fn refresh_samples(&mut self, received: u64) -> Result<Vec<(u64, Vec<u8>)>, JobError> {
+    pub(crate) async fn refresh_samples(
+        &mut self,
+        received: u64,
+    ) -> Result<Vec<(u64, Vec<u8>)>, JobError> {
         let file = self.file.as_mut().expect("open partial");
-        file.flush().await.map_err(|_| JobError::new(ErrorKind::Io, "Cannot flush saved bytes for verification."))?;
-        let previous = file.stream_position().await.map_err(|_| JobError::new(ErrorKind::Io, "Cannot inspect saved byte position."))?;
+        file.flush().await.map_err(|_| {
+            JobError::new(ErrorKind::Io, "Cannot flush saved bytes for verification.")
+        })?;
+        let previous = file
+            .stream_position()
+            .await
+            .map_err(|_| JobError::new(ErrorKind::Io, "Cannot inspect saved byte position."))?;
         let result = async {
             let mut samples = Vec::new();
             for (start, end) in crate::refresh::sample_ranges(received) {
-                file.seek(std::io::SeekFrom::Start(start)).await.map_err(|_| JobError::new(ErrorKind::Io, "Cannot seek saved bytes."))?;
+                file.seek(std::io::SeekFrom::Start(start))
+                    .await
+                    .map_err(|_| JobError::new(ErrorKind::Io, "Cannot seek saved bytes."))?;
                 let mut bytes = vec![0; (end - start + 1) as usize];
-                file.read_exact(&mut bytes).await.map_err(|_| JobError::new(ErrorKind::Io, "Cannot read saved bytes."))?;
+                file.read_exact(&mut bytes)
+                    .await
+                    .map_err(|_| JobError::new(ErrorKind::Io, "Cannot read saved bytes."))?;
                 samples.push((start, bytes));
             }
             Ok(samples)
-        }.await;
-        file.seek(std::io::SeekFrom::Start(previous)).await.map_err(|_| JobError::new(ErrorKind::Io, "Cannot restore saved byte position."))?;
+        }
+        .await;
+        file.seek(std::io::SeekFrom::Start(previous))
+            .await
+            .map_err(|_| JobError::new(ErrorKind::Io, "Cannot restore saved byte position."))?;
         result
     }
     pub(crate) async fn checkpoint(&mut self) -> Result<(), JobError> {
@@ -995,6 +1010,7 @@ mod tests {
             total: None,
             response_url: None,
             etag: None,
+            refresh_pending: false,
             creation_time: None,
             original: None,
         };
@@ -1030,6 +1046,7 @@ mod tests {
                 total: None,
                 response_url: None,
                 etag: None,
+                refresh_pending: false,
                 creation_time: None,
                 original: None,
             },
@@ -1090,6 +1107,7 @@ mod tests {
             total: None,
             response_url: None,
             etag: None,
+            refresh_pending: false,
             creation_time: None,
             original: Some(original),
         };

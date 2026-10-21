@@ -1,4 +1,8 @@
-use crate::{output::OutputFile, refresh::{self, RefreshCandidate}, DownloadRequest, ErrorKind, JobError};
+use crate::{
+    output::OutputFile,
+    refresh::{self, RefreshCandidate},
+    DownloadRequest, ErrorKind, JobError,
+};
 use reqwest::header::{HeaderMap, CONTENT_RANGE, ETAG};
 use std::{
     sync::{Arc, Mutex},
@@ -405,6 +409,19 @@ async fn stream(
         if total == Some(received) {
             return Ok(TransferOutcome::Completed { bytes: received });
         }
+        if received > 0 && total.is_none() {
+            if strict {
+                return Err(JobError::new(
+                    ErrorKind::RestartRequired,
+                    "Restart required: the saved response has no known total size.",
+                ));
+            }
+            output.restart().await?;
+            received = 0;
+            validator = None;
+            representation_url = None;
+            output.representation(None, None, None);
+        }
         if received > 0 && (refresh_pending || validator.is_none()) {
             let samples = output.refresh_samples(received).await?;
             let candidate = RefreshCandidate {
@@ -413,8 +430,12 @@ async fn stream(
                 request_context: request.request_context.clone(),
             };
             let verified = refresh::verify_remote_samples(
-                &scoped_client, &candidate, total.expect("known total"), &samples,
-            ).await?;
+                &scoped_client,
+                &candidate,
+                total.expect("known total"),
+                &samples,
+            )
+            .await?;
             representation_url = url::Url::parse(&verified.final_url).ok();
             validator = verified.etag;
             refresh_pending = false;
@@ -442,17 +463,23 @@ async fn stream(
                 _ = control.pause_requested() => continue 'connect,
                 result = refresh::fetch_range(&scoped_client, &request.url, &request.request_context, received, None, validator.as_deref()) => result?,
             }
-        } else { tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return Ok(TransferOutcome::Cancelled),
-            _ = control.pause_requested() => continue 'connect,
-            response = tokio::time::timeout(Duration::from_secs(30), builder.send()) => response.ok().and_then(Result::ok).ok_or_else(|| JobError::new(ErrorKind::Network, "Connection failed, timed out, or exceeded the redirect limit. Check the URL, network and TLS certificate."))?,
-        }};
-        if resume && !request.request_context.is_empty()
+        } else {
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Ok(TransferOutcome::Cancelled),
+                _ = control.pause_requested() => continue 'connect,
+                response = tokio::time::timeout(Duration::from_secs(30), builder.send()) => response.ok().and_then(Result::ok).ok_or_else(|| JobError::new(ErrorKind::Network, "Connection failed, timed out, or exceeded the redirect limit. Check the URL, network and TLS certificate."))?,
+            }
+        };
+        if resume
+            && !request.request_context.is_empty()
             && (response.status() == reqwest::StatusCode::UNAUTHORIZED
                 || response.status() == reqwest::StatusCode::FORBIDDEN)
         {
-            return Err(JobError::new(ErrorKind::Http, "Browser authorization expired; capture the download again."));
+            return Err(JobError::new(
+                ErrorKind::Http,
+                "Browser authorization expired; capture the download again.",
+            ));
         }
         if !response.status().is_success()
             || (response.status() == reqwest::StatusCode::PARTIAL_CONTENT && !resume)
@@ -480,9 +507,21 @@ async fn stream(
         if resume && response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
             if representation_url.as_ref() != Some(response.url())
                 || if let Some(validator) = validator.as_deref() {
-                    !valid_resume(response.headers(), received, total.expect("known total"), validator, response.content_length())
+                    !valid_resume(
+                        response.headers(),
+                        received,
+                        total.expect("known total"),
+                        validator,
+                        response.content_length(),
+                    )
                 } else {
-                    !refresh::exact_range(response.headers(), received, total.expect("known total") - 1, total.expect("known total"), response.content_length())
+                    !refresh::exact_range(
+                        response.headers(),
+                        received,
+                        total.expect("known total") - 1,
+                        total.expect("known total"),
+                        response.content_length(),
+                    )
                 }
             {
                 return Err(JobError::new(if strict {ErrorKind::RestartRequired}else{ErrorKind::Http}, "Restart required: the server changed the file or returned an invalid resume range."));

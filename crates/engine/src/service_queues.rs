@@ -202,7 +202,9 @@ impl QueueRuntime {
                     entry.checkpoint.as_ref().and_then(|c| c.total)
                 },
                 resume_capable: entry.checkpoint.as_ref().is_some_and(|c| c.etag.is_some()),
-                refreshable: entry.checkpoint.as_ref().is_some_and(|c| c.durable > 0 && c.total.is_some_and(|total| c.durable < total)),
+                refreshable: entry.checkpoint.as_ref().is_some_and(|c| {
+                    c.durable > 0 && c.total.is_some_and(|total| c.durable < total)
+                }),
                 speed_limit: None,
                 bytes_per_second: 0,
                 eta_seconds: None,

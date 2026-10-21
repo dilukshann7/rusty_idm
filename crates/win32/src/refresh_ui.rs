@@ -4,7 +4,10 @@ use windows::{
     core::{w, PCWSTR},
     Win32::{
         Foundation::{HWND, LPARAM, WPARAM},
-        UI::{Controls::EM_SETLIMITTEXT, Shell::ShellExecuteW, WindowsAndMessaging::*},
+        UI::{
+            Controls::EM_SETLIMITTEXT, Input::KeyboardAndMouse::EnableWindow, Shell::ShellExecuteW,
+            WindowsAndMessaging::*,
+        },
     },
 };
 

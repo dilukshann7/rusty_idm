@@ -311,11 +311,15 @@ fn validate(s: &State) -> Result<(), String> {
         }
         if let Some(page) = &e.source_page {
             let parsed = url::Url::parse(page).map_err(|_| "Invalid stored source page.")?;
-            if page.len() > 8192 || page.chars().any(char::is_control)
+            if page.len() > 8192
+                || page.chars().any(char::is_control)
                 || !matches!(parsed.scheme(), "http" | "https")
-                || parsed.host_str().is_none() || !parsed.username().is_empty()
+                || parsed.host_str().is_none()
+                || !parsed.username().is_empty()
                 || parsed.password().is_some()
-            { return Err("Invalid stored source page.".into()); }
+            {
+                return Err("Invalid stored source page.".into());
+            }
         }
     }
     if s.queues.keys().any(|id| id.0 >= s.next_queue) {

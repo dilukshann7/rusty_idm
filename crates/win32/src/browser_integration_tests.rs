@@ -18,7 +18,7 @@ fn capture() -> CaptureRequest {
 }
 #[test]
 fn same_capture_id_shows_one_dialog_and_closing_revokes_pending() {
-    let engine = rusty_engine::spawn_engine(Arc::new(|| {}));
+    let engine = rusty_engine::spawn_engine_in_memory(Arc::new(|| {}));
     let controller = BrowserController::new(engine.client(), Arc::new(|| {}));
     let router = controller.router();
     let request = capture();
@@ -41,7 +41,7 @@ fn same_capture_id_shows_one_dialog_and_closing_revokes_pending() {
 
 #[test]
 fn actor_receipt_and_abort_are_served_while_another_modal_is_open() {
-    let engine = rusty_engine::spawn_engine(Arc::new(|| {}));
+    let engine = rusty_engine::spawn_engine_in_memory(Arc::new(|| {}));
     let controller = BrowserController::new(engine.client(), Arc::new(|| {}));
     let router = controller.router();
     let request = capture();
@@ -140,7 +140,7 @@ fn actor_receipt_and_abort_are_served_while_another_modal_is_open() {
 
 #[test]
 fn thirty_third_pending_capture_declines_busy() {
-    let engine = rusty_engine::spawn_engine(Arc::new(|| {}));
+    let engine = rusty_engine::spawn_engine_in_memory(Arc::new(|| {}));
     let controller = BrowserController::new(engine.client(), Arc::new(|| {}));
     let router = controller.router();
     let mut receivers = Vec::new();
