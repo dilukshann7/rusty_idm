@@ -3,7 +3,7 @@ use rusty_browser_bridge::{
     protocol::*,
     windows::*,
 };
-use rusty_engine::{submissions::*, CommandError, EngineClient};
+use rusty_engine::{refresh::RefreshCandidate, submissions::*, CommandError, EngineClient, JobId};
 use std::{
     collections::{HashMap, VecDeque},
     sync::{
@@ -26,6 +26,7 @@ struct Entry {
 #[derive(Default)]
 struct State {
     policy: rusty_browser_bridge::policy::CapturePolicy,
+    refresh_armed: bool,
     entries: HashMap<RequestId, Entry>,
     inbox: VecDeque<IncomingCapture>,
     activate: bool,
@@ -72,6 +73,7 @@ impl State {
 }
 enum Work {
     Apply(RequestId, SubmissionAction, CaptureLease),
+    Refresh(RequestId, JobId, RefreshCandidate, CaptureLease),
     Status(RequestId, SyncSender<Reply>),
     Abort(RequestId, SyncSender<Reply>),
 }
@@ -112,6 +114,7 @@ impl RequestRouter for Router {
                     ReplyStatus::Policy {
                         browser,
                         policy: state.policy.clone(),
+                        refresh_armed: state.refresh_armed,
                     },
                 ));
             }
@@ -153,6 +156,15 @@ impl RequestRouter for Router {
                         }
                     };
                     let _ = reply.try_send(Reply::new(id, status));
+                    return Ok(());
+                }
+                if !capture.request_context.is_empty() && !state.refresh_armed {
+                    let _ = reply.try_send(Reply::new(
+                        id,
+                        ReplyStatus::Declined {
+                            code: DeclineCode::BrowserFallback,
+                        },
+                    ));
                     return Ok(());
                 }
                 let allowed = capture.source != CaptureSource::Automatic
@@ -280,6 +292,26 @@ impl BrowserController {
                 if waiting.len() < 128 {
                     if let Ok(work) = rx.recv_timeout(Duration::from_millis(10)) {
                         match work {
+                            Work::Refresh(id, job_id, candidate, lease) => {
+                                let (reply, result) = oneshot::channel();
+                                if let Err(error) = engine.try_external(ExternalCommand::Refresh {
+                                    id: id.clone(),
+                                    job_id,
+                                    candidate,
+                                    lease: lease.clone(),
+                                    reply,
+                                }) {
+                                    lease.revoke();
+                                    shared.lock().unwrap_or_else(|p| p.into_inner()).finish(
+                                        &id,
+                                        ReplyStatus::Declined {
+                                            code: command_code(error),
+                                        },
+                                    );
+                                } else {
+                                    waiting.push(Waiting::Apply(id, result));
+                                }
+                            }
                             Work::Apply(id, action, lease) => {
                                 let (reply, result) = oneshot::channel();
                                 if let Err(e) = engine.try_external(ExternalCommand::Apply {
@@ -480,6 +512,13 @@ impl BrowserController {
             );
         }
     }
+    pub fn set_refresh_armed(&self, armed: bool) {
+        self.router
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .refresh_armed = armed;
+    }
     pub fn router(&self) -> Arc<dyn RequestRouter> {
         self.router.clone()
     }
@@ -562,6 +601,24 @@ impl BrowserController {
         self.router
             .work
             .try_send(Work::Apply(id, action, lease))
+            .map_err(|e| match e {
+                mpsc::TrySendError::Full(_) => CommandError::QueueFull,
+                mpsc::TrySendError::Disconnected(_) => CommandError::Closed,
+            })
+    }
+    pub fn submit_refresh(
+        &self,
+        id: RequestId,
+        job_id: JobId,
+        candidate: RefreshCandidate,
+        lease: CaptureLease,
+    ) -> Result<(), CommandError> {
+        if lease.state() != LeaseState::Pending {
+            return Err(CommandError::Closed);
+        }
+        self.router
+            .work
+            .try_send(Work::Refresh(id, job_id, candidate, lease))
             .map_err(|e| match e {
                 mpsc::TrySendError::Full(_) => CommandError::QueueFull,
                 mpsc::TrySendError::Disconnected(_) => CommandError::Closed,

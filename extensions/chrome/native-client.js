@@ -5,7 +5,7 @@ const codes = new Set(['invalid_request', 'unsupported', 'busy', 'user_cancelled
 export function validReply(reply) {
   if (!reply || reply.v !== 1 || !uuid.test(reply.id) || new TextEncoder().encode(JSON.stringify(reply)).length > 65536) return false;
   const fields = { pending: [], accepted: ['job_id', 'created_new'], declined: ['code'], unknown: [], aborted: [], already_accepted: ['job_id', 'created_new'], ok: ['host_version', 'gui_running'], policy: ['browser', 'policy'] }[reply.status];
-  if (!fields || Object.keys(reply).some(k => !['v', 'id', 'status', ...fields].includes(k)) || fields.some(k => !(k in reply))) return false;
+  if (!fields || Object.keys(reply).some(k => !['v', 'id', 'status', ...fields, ...(reply.status === 'policy' ? ['refresh_armed'] : [])].includes(k)) || fields.some(k => !(k in reply))) return false;
   if (['accepted', 'already_accepted'].includes(reply.status)) return Number.isSafeInteger(reply.job_id) && reply.job_id > 0 && typeof reply.created_new === 'boolean';
   if (reply.status === 'declined') return codes.has(reply.code);
   if (reply.status === 'policy') return ['chrome', 'brave', 'edge', 'firefox'].includes(reply.browser) && reply.policy && Number.isSafeInteger(reply.policy.revision) && Array.isArray(reply.policy.browsers) && Array.isArray(reply.policy.extensions) && Array.isArray(reply.policy.excluded_sites) && Array.isArray(reply.policy.excluded_addresses);

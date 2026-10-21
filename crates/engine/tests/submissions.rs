@@ -40,7 +40,7 @@ fn same_id_returns_same_job_once_and_status_survives_event_drain() {
     )
     .unwrap();
     request.deferred = true;
-    let engine = spawn_engine(Arc::new(|| {}));
+    let engine = spawn_engine_in_memory(Arc::new(|| {}));
     let first = apply(&engine, SubmissionAction::Submit(request.clone()), lease()).unwrap();
     assert_eq!(
         first,
@@ -80,7 +80,7 @@ fn revoked_or_expired_request_never_admits() {
         (revoked, SubmissionError::Revoked),
         (expired, SubmissionError::Expired),
     ] {
-        let engine = spawn_engine(Arc::new(|| {}));
+        let engine = spawn_engine_in_memory(Arc::new(|| {}));
         assert_eq!(
             apply(&engine, SubmissionAction::Submit(request.clone()), lease),
             Err(error)
@@ -100,7 +100,7 @@ fn fallback_cancels_only_new_owned_job() {
     )
     .unwrap();
     request.deferred = true;
-    let engine = spawn_engine(Arc::new(|| {}));
+    let engine = spawn_engine_in_memory(Arc::new(|| {}));
     let receipt = apply(&engine, SubmissionAction::Submit(request.clone()), lease()).unwrap();
     let (reply, rx) = tokio::sync::oneshot::channel();
     engine
@@ -124,7 +124,7 @@ fn dropped_reply_receiver_preserves_the_original_receipt() {
     )
     .unwrap();
     request.deferred = true;
-    let engine = spawn_engine(Arc::new(|| {}));
+    let engine = spawn_engine_in_memory(Arc::new(|| {}));
     let (reply, rx) = tokio::sync::oneshot::channel();
     drop(rx);
     engine
@@ -160,7 +160,7 @@ fn reused_existing_entry_is_never_owned_by_browser_fallback() {
     )
     .unwrap();
     request.deferred = true;
-    let engine = spawn_engine(Arc::new(|| {}));
+    let engine = spawn_engine_in_memory(Arc::new(|| {}));
     engine.try_send(Command::Submit(request.clone())).unwrap();
     let receipt = apply(&engine, SubmissionAction::Show(JobId(1)), lease()).unwrap();
     assert!(!receipt.created_new);

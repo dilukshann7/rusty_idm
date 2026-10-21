@@ -157,7 +157,7 @@ fn duplicate_preference_roundtrips_without_storing_a_link() {
         );
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(saved.as_object().unwrap().len(), 6);
+        assert_eq!(saved.as_object().unwrap().len(), 7);
     }
     settings.duplicate_choice = None;
     save_to(&path, &settings).unwrap();

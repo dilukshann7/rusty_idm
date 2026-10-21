@@ -24,12 +24,15 @@ fn respond(mut stream: TcpStream) {
         if !name.eq_ignore_ascii_case("range") {
             return None;
         }
-        value
-            .trim()
-            .strip_prefix("bytes=")?
-            .strip_suffix('-')?
-            .parse::<usize>()
-            .ok()
+        let (start, end) = value.trim().strip_prefix("bytes=")?.split_once('-')?;
+        Some((
+            start.parse::<usize>().ok()?,
+            if end.is_empty() {
+                None
+            } else {
+                Some(end.parse::<usize>().ok()?)
+            },
+        ))
     });
     let mut body = support::bytes();
     if path == "/changed" && range.is_some() {
@@ -38,16 +41,17 @@ fn respond(mut stream: TcpStream) {
     let start = if path == "/ignored" || path == "/changed" {
         0
     } else {
-        range.unwrap_or(0)
+        range.map_or(0, |(start, _)| start)
     };
+    let end = range.and_then(|(_, end)| end).unwrap_or(body.len() - 1);
     let partial = range.is_some() && !matches!(path, "/ignored" | "/changed");
     if partial {
-        assert!(req
-            .lines()
-            .any(|line| line
+        if path != "/weak" {
+            assert!(req.lines().any(|line| line
                 .split_once(':')
                 .is_some_and(|(name, value)| name.eq_ignore_ascii_case("if-range")
                     && value.trim() == "\"v1\"")));
+        }
         let offset = if path == "/bad-range" {
             start + 1
         } else {
@@ -56,7 +60,7 @@ fn respond(mut stream: TcpStream) {
         let _ = write!(
             stream,
             "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {offset}-{}/{}\r\n",
-            body.len() - 1,
+            end,
             body.len()
         );
     } else {
@@ -74,10 +78,10 @@ fn respond(mut stream: TcpStream) {
         "ETag: {tag}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n"
     );
     if path != "/unknown" {
-        let _ = write!(stream, "Content-Length: {}\r\n", body.len() - start);
+        let _ = write!(stream, "Content-Length: {}\r\n", end - start + 1);
     }
     let _ = stream.write_all(b"\r\n");
-    for part in body[start..].chunks(1024) {
+    for part in body[start..=end].chunks(1024) {
         if stream.write_all(part).is_err() {
             break;
         }
@@ -141,13 +145,22 @@ async fn pause_reconnects_with_verified_range_or_safely_restarts_without_it() {
             assert!(result.is_err());
             assert!(!target.exists());
         } else {
-            assert_eq!(result.unwrap(), TransferOutcome::Completed { bytes: 65536 });
+            assert_eq!(
+                result.unwrap_or_else(|error| panic!("{path}: {error:?}")),
+                TransferOutcome::Completed { bytes: 65536 }
+            );
             let expected = if path == "/changed" {
                 vec![19; 65536]
             } else {
                 support::bytes()
             };
-            assert_eq!(std::fs::read(&target).unwrap(), expected, "{path}");
+            let actual = std::fs::read(&target).unwrap();
+            assert!(
+                actual == expected,
+                "{path}: first bytes {:?}, 19 count {}",
+                &actual[..32],
+                actual.iter().filter(|&&b| b == 19).count()
+            );
         }
         assert_eq!(
             std::fs::read_dir(dir.path()).unwrap().count(),
@@ -185,7 +198,7 @@ async fn cancel_while_paused_cleans_owned_partial() {
 
 #[tokio::test]
 async fn live_limit_can_be_removed_without_restarting_the_transfer() {
-    let fixture = support::Fixture::new(respond);
+    let fixture = support::Fixture::new(support::respond);
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("file.bin");
     let request = validate_request(&fixture.url, target.clone(), ReplacementPolicy::Deny).unwrap();
@@ -218,8 +231,8 @@ async fn live_limit_can_be_removed_without_restarting_the_transfer() {
 }
 
 #[test]
-fn paused_job_releases_slot_and_resume_waits_its_turn_then_shutdown_cleans_all() {
-    use rusty_engine::{spawn_engine, Command, EngineHandle, Event, JobId, JobState};
+fn paused_job_releases_slot_and_resume_waits_its_turn_then_explicit_cancel_cleans_all() {
+    use rusty_engine::{spawn_engine_in_memory, Command, EngineHandle, Event, JobId, JobState};
     fn wait(engine: &EngineHandle, predicate: impl Fn(&[Event]) -> bool) {
         let deadline = std::time::Instant::now() + Duration::from_secs(4);
         let mut events = Vec::new();
@@ -234,7 +247,7 @@ fn paused_job_releases_slot_and_resume_waits_its_turn_then_shutdown_cleans_all()
     }
     let fixture = support::Fixture::new(respond);
     let dir = tempfile::tempdir().unwrap();
-    let engine = spawn_engine(Arc::new(|| {}));
+    let engine = spawn_engine_in_memory(Arc::new(|| {}));
     for id in 1..=3 {
         let mut request = validate_request(
             &fixture.url,
@@ -266,6 +279,10 @@ fn paused_job_releases_slot_and_resume_waits_its_turn_then_shutdown_cleans_all()
     engine.try_send(Command::Pause(JobId(1))).unwrap();
     wait(&engine, |events| {
         events.iter().any(|e| matches!(e, Event::JobChanged(s) if s.id == JobId(1) && s.state == JobState::Paused))
+    });
+    engine.try_send(Command::CancelAll).unwrap();
+    wait(&engine, |events| {
+        [1, 2].iter().all(|id| events.iter().any(|e| matches!(e, Event::JobChanged(s) if s.id == JobId(*id) && s.state == JobState::Cancelled)))
     });
     engine.try_send(Command::Shutdown).unwrap();
     wait(&engine, |events| {

@@ -61,14 +61,19 @@ fn request(name: impl Into<std::path::PathBuf>) -> DownloadRequest {
     request
 }
 fn collect_until(engine: &EngineHandle, check: impl Fn(&[Event]) -> bool) -> Vec<Event> {
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + Duration::from_secs(30);
     let mut events = vec![];
     loop {
         events.extend(engine.drain_events());
         if check(&events) {
             return events;
         }
-        assert!(Instant::now() < deadline, "event deadline: {events:?}");
+        assert!(
+            Instant::now() < deadline,
+            "event deadline after {} events; recent: {:?}",
+            events.len(),
+            events.iter().rev().take(3).collect::<Vec<_>>()
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
 }

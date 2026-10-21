@@ -109,6 +109,7 @@ impl QueueRuntime {
             request.deferred = true;
             request.category = entry.category.clone();
             request.description = entry.description.clone();
+            request.source_page = entry.source_page.clone();
             request.recovery = Some(Recovery {
                 store: self.store.clone(),
                 entry: entry.id,
@@ -157,6 +158,11 @@ impl QueueRuntime {
             {
                 readiness = EntryReadiness::RestartRequired;
             }
+            if !completed && entry.refresh_needs_capture && readiness == EntryReadiness::Ready {
+                readiness = EntryReadiness::RestartRequired;
+                error = Some(JobError::new(ErrorKind::RestartRequired,
+                    "This protected download needs a fresh browser capture after restart. Use Refresh download address to keep the saved bytes."));
+            }
             let id = JobId(*next);
             *next += 1;
             let queue_id = state
@@ -196,6 +202,9 @@ impl QueueRuntime {
                     entry.checkpoint.as_ref().and_then(|c| c.total)
                 },
                 resume_capable: entry.checkpoint.as_ref().is_some_and(|c| c.etag.is_some()),
+                refreshable: entry.checkpoint.as_ref().is_some_and(|c| {
+                    c.durable > 0 && c.total.is_some_and(|total| c.durable < total)
+                }),
                 speed_limit: None,
                 bytes_per_second: 0,
                 eta_seconds: None,
@@ -692,6 +701,7 @@ fn check_name(name: &str) -> Result<(), String> {
 }
 fn stored(id: EntryId, r: &DownloadRequest) -> StoredEntry {
     StoredEntry {
+        source_page: r.source_page.clone(),
         options: r.options.clone(),
         ephemeral: !r.deferred,
         admission_pending: false,
@@ -702,6 +712,7 @@ fn stored(id: EntryId, r: &DownloadRequest) -> StoredEntry {
         category: r.category.clone(),
         description: r.description.clone(),
         authenticated: r.authorization.is_some(),
+        refresh_needs_capture: false,
         completed: false,
         completed_bytes: None,
         retained_files: vec![],

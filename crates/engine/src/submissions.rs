@@ -1,4 +1,4 @@
-use crate::{DownloadRequest, JobId};
+use crate::{refresh::RefreshCandidate, DownloadRequest, JobId};
 use rusty_browser_bridge::{lease::CaptureLease, protocol::RequestId};
 use tokio::sync::oneshot;
 #[derive(Clone, Debug)]
@@ -8,6 +8,7 @@ pub enum SubmissionAction {
     Activate(JobId),
     Restart(JobId),
     RestartApproved(JobId, crate::ReplacementPolicy),
+    Refresh(JobId),
 }
 impl SubmissionAction {
     pub(crate) fn same(&self, other: &Self) -> bool {
@@ -16,6 +17,7 @@ impl SubmissionAction {
             (Self::Show(a), Self::Show(b))
             | (Self::Activate(a), Self::Activate(b))
             | (Self::Restart(a), Self::Restart(b)) => a == b,
+            (Self::Refresh(a), Self::Refresh(b)) => a == b,
             (Self::Submit(a), Self::Submit(b)) => {
                 a.same_source(b)
                     && a.options == b.options
@@ -69,6 +71,13 @@ pub enum CancelOwnedResult {
     Unknown,
 }
 pub enum ExternalCommand {
+    Refresh {
+        id: RequestId,
+        job_id: JobId,
+        candidate: RefreshCandidate,
+        lease: CaptureLease,
+        reply: oneshot::Sender<Result<SubmissionReceipt, SubmissionError>>,
+    },
     Apply {
         id: RequestId,
         action: SubmissionAction,

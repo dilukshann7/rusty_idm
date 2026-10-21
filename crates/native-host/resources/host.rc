@@ -1,8 +1,8 @@
 #include <windows.h>
 501 ICON "../../assets/branding/rusty.ico"
 1 VERSIONINFO
- FILEVERSION 0,1,0,0
- PRODUCTVERSION 0,1,0,0
+ FILEVERSION 0,2,0,0
+ PRODUCTVERSION 0,2,0,0
  FILEOS VOS_NT_WINDOWS32
  FILETYPE VFT_APP
 BEGIN
@@ -12,9 +12,9 @@ BEGIN
   BEGIN
    VALUE "CompanyName", "Rusty Download Manager contributors\0"
    VALUE "FileDescription", "Rusty Download Manager Chrome bridge\0"
-   VALUE "FileVersion", "0.1.0\0"
+   VALUE "FileVersion", "0.2.0\0"
    VALUE "ProductName", "Rusty Download Manager\0"
-   VALUE "ProductVersion", "0.1.0\0"
+   VALUE "ProductVersion", "0.2.0\0"
    VALUE "OriginalFilename", "rusty-native-host.exe\0"
   END
  END

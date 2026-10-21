@@ -24,7 +24,10 @@ impl Fixture {
         let thread = thread::spawn(move || {
             while !flag.load(Ordering::Acquire) {
                 match listener.accept() {
-                    Ok((stream, _)) => handler(stream),
+                    Ok((stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
+                        handler(stream);
+                    }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(5))
                     }

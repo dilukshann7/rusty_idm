@@ -196,6 +196,7 @@ mod tests {
             received,
             total: None,
             resume_capable: false,
+            refreshable: false,
             speed_limit: None,
             bytes_per_second: 0,
             eta_seconds: None,

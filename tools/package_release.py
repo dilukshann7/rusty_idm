@@ -9,7 +9,7 @@ import subprocess
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 PREFIX = f"RustyDownloadManager-{VERSION}"
 
 
@@ -68,16 +68,17 @@ def archive(source, target, prefix=""):
 def write_package_readme(payload):
     # Keep distribution links relative to files that are actually shipped.
     (payload / "README.md").write_text(
-        "# Rusty Download Manager 0.1.0\n\n"
+        f"# Rusty Download Manager {VERSION}\n\n"
         "![Rusty](branding/rusty-128.png)\n\n"
         "Run `bin/rusty-win32.exe` to open the manager. Close or minimize it to "
         "keep downloads running in the notification area. Use tray Exit to stop it.\n\n"
-        "Read the [user guide](docs/USER_GUIDE.md) for Chrome capture, background "
+        "Read the [user guide](docs/USER_GUIDE.md) for browser capture, background "
         "startup and portable execution. See [release notes](docs/RELEASE_NOTES.md), "
+        "[validation](docs/VALIDATION.md), "
         "[third-party notices](THIRD_PARTY.md) and [license](LICENSE).\n\n"
-        "Windows 10/11 x64. Unsigned release. History is session-only. "
-        "Chrome needs one-time extension and website-access approval. Portable "
-        "execution does not enable startup or register Chrome automatically.\n",
+        "Windows 10/11 x64. Unsigned release. Unfinished jobs are held after restart. "
+        "Browser capture needs each extension and website-access approval. Portable "
+        "execution does not enable startup or register browser hosts automatically.\n",
         encoding="utf-8",
     )
 
@@ -94,7 +95,7 @@ def stage(binary_dir):
     for name in ["LICENSE", "README.md", "THIRD_PARTY.md"]:
         copy_file(ROOT / name, payload / name)
     write_package_readme(payload)
-    for name in ["USER_GUIDE.md", "RELEASE_NOTES.md", "SETUP.txt"]:
+    for name in ["USER_GUIDE.md", "RELEASE_NOTES.md", "VALIDATION.md", "SETUP.txt"]:
         copy_file(ROOT / "docs" / name, payload / "docs" / name)
     for name in ["register-chrome-host.ps1", "unregister-chrome-host.ps1", "chrome-integration.ps1", "release-integration.ps1", "browser-host.ps1"]:
         copy_file(ROOT / "scripts" / name, payload / "scripts" / name)
@@ -120,13 +121,17 @@ def stage(binary_dir):
         inventory.append({"name": package["name"], "version": package["version"], "license": package.get("license"), "files": sorted({f.name for f in files})})
     (payload / "licenses/dependencies.json").write_text(json.dumps(inventory, indent=2) + "\n", encoding="utf-8")
     archive(payload, dist / f"{PREFIX}-windows-x64-portable.zip", f"{PREFIX}/")
-    archive(extension, dist / f"{PREFIX}-chrome-extension.zip")
-    print(f"Staged {sum(p.is_file() for p in payload.rglob('*'))} files and two archives")
+    for browser in ("chrome", "brave", "edge", "firefox"):
+        archive(payload / f"{browser}-extension", dist / f"{PREFIX}-{browser}-extension.zip")
+    print(f"Staged {sum(p.is_file() for p in payload.rglob('*'))} files and five archives")
 
 
 def finish():
     dist = ROOT / "dist"
-    names = [f"{PREFIX}-windows-x64-setup.exe", f"{PREFIX}-windows-x64-portable.zip", f"{PREFIX}-chrome-extension.zip"]
+    names = [f"{PREFIX}-windows-x64-setup.exe", f"{PREFIX}-windows-x64-portable.zip"] + [
+        f"{PREFIX}-{browser}-extension.zip"
+        for browser in ("chrome", "brave", "edge", "firefox")
+    ]
     artifacts = []
     for name in names:
         file = dist / name

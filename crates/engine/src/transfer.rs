@@ -1,4 +1,8 @@
-use crate::{output::OutputFile, DownloadRequest, ErrorKind, JobError};
+use crate::{
+    output::OutputFile,
+    refresh::{self, RefreshCandidate},
+    DownloadRequest, ErrorKind, JobError,
+};
 use reqwest::header::{HeaderMap, CONTENT_RANGE, ETAG};
 use std::{
     sync::{Arc, Mutex},
@@ -363,6 +367,7 @@ async fn stream(
         .connect_timeout(Duration::from_secs(30))
         .build()
         .map_err(|_| JobError::new(ErrorKind::Network, "Cannot initialize the HTTP client."))?;
+    let scoped_client = refresh::client()?;
     let cancel = control.token();
     let saved = request.recovery.as_ref().and_then(|r| r.checkpoint());
     let mut received = saved.as_ref().map_or(0, |c| c.durable);
@@ -372,8 +377,9 @@ async fn stream(
         .as_ref()
         .and_then(|c| c.response_url.as_deref())
         .and_then(|s| url::Url::parse(s).ok());
+    let mut refresh_pending = saved.as_ref().is_some_and(|c| c.refresh_pending);
     let mut strict = request.recovery.is_some();
-    if received > 0 && (validator.is_none() || total.is_none() || representation_url.is_none()) {
+    if received > 0 && (total.is_none() || representation_url.is_none()) {
         return Err(JobError::new(
             ErrorKind::RestartRequired,
             "Restart required: no safe continuation validator is available.",
@@ -400,10 +406,44 @@ async fn stream(
             return Ok(TransferOutcome::Cancelled);
         }
         // A fully received known-length body needs no request after an EOF pause.
-        if total == Some(received) && validator.is_some() {
+        if total == Some(received) {
             return Ok(TransferOutcome::Completed { bytes: received });
         }
-        let resume = received > 0 && validator.is_some() && total.is_some();
+        if received > 0 && total.is_none() {
+            if strict {
+                return Err(JobError::new(
+                    ErrorKind::RestartRequired,
+                    "Restart required: the saved response has no known total size.",
+                ));
+            }
+            output.restart().await?;
+            received = 0;
+            validator = None;
+            representation_url = None;
+            output.representation(None, None, None);
+        }
+        if received > 0 && (refresh_pending || validator.is_none()) {
+            let samples = output.refresh_samples(received).await?;
+            let candidate = RefreshCandidate {
+                url: request.url.as_str().to_owned(),
+                source_page: request.source_page.clone(),
+                request_context: request.request_context.clone(),
+            };
+            let verified = refresh::verify_remote_samples(
+                &scoped_client,
+                &candidate,
+                total.expect("known total"),
+                &samples,
+            )
+            .await?;
+            representation_url = url::Url::parse(&verified.final_url).ok();
+            validator = verified.etag;
+            refresh_pending = false;
+            output.representation(total, Some(verified.final_url), validator.clone());
+            output.clear_refresh_pending();
+            output.checkpoint().await?;
+        }
+        let resume = received > 0 && total.is_some();
         let mut builder = client
             .get(request.url.clone())
             .header(reqwest::header::ACCEPT_ENCODING, "identity");
@@ -411,19 +451,36 @@ async fn stream(
             builder = builder.basic_auth(&authorization.login, Some(&authorization.password));
         }
         if resume {
-            builder = builder
-                .header(reqwest::header::RANGE, format!("bytes={received}-"))
-                .header(
-                    reqwest::header::IF_RANGE,
-                    validator.as_deref().expect("resume validator"),
-                );
+            builder = builder.header(reqwest::header::RANGE, format!("bytes={received}-"));
+            if let Some(validator) = validator.as_deref() {
+                builder = builder.header(reqwest::header::IF_RANGE, validator);
+            }
         }
-        let mut response = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return Ok(TransferOutcome::Cancelled),
-            _ = control.pause_requested() => continue 'connect,
-            response = tokio::time::timeout(Duration::from_secs(30), builder.send()) => response.ok().and_then(Result::ok).ok_or_else(|| JobError::new(ErrorKind::Network, "Connection failed, timed out, or exceeded the redirect limit. Check the URL, network and TLS certificate."))?,
+        let mut response = if resume && !request.request_context.is_empty() {
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Ok(TransferOutcome::Cancelled),
+                _ = control.pause_requested() => continue 'connect,
+                result = refresh::fetch_range(&scoped_client, &request.url, &request.request_context, received, None, validator.as_deref()) => result?,
+            }
+        } else {
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Ok(TransferOutcome::Cancelled),
+                _ = control.pause_requested() => continue 'connect,
+                response = tokio::time::timeout(Duration::from_secs(30), builder.send()) => response.ok().and_then(Result::ok).ok_or_else(|| JobError::new(ErrorKind::Network, "Connection failed, timed out, or exceeded the redirect limit. Check the URL, network and TLS certificate."))?,
+            }
         };
+        if resume
+            && !request.request_context.is_empty()
+            && (response.status() == reqwest::StatusCode::UNAUTHORIZED
+                || response.status() == reqwest::StatusCode::FORBIDDEN)
+        {
+            return Err(JobError::new(
+                ErrorKind::Http,
+                "Browser authorization expired; capture the download again.",
+            ));
+        }
         if !response.status().is_success()
             || (response.status() == reqwest::StatusCode::PARTIAL_CONTENT && !resume)
         {
@@ -449,13 +506,23 @@ async fn stream(
         }
         if resume && response.status() == reqwest::StatusCode::PARTIAL_CONTENT {
             if representation_url.as_ref() != Some(response.url())
-                || !valid_resume(
-                    response.headers(),
-                    received,
-                    total.expect("known total"),
-                    validator.as_deref().expect("validator"),
-                    response.content_length(),
-                )
+                || if let Some(validator) = validator.as_deref() {
+                    !valid_resume(
+                        response.headers(),
+                        received,
+                        total.expect("known total"),
+                        validator,
+                        response.content_length(),
+                    )
+                } else {
+                    !refresh::exact_range(
+                        response.headers(),
+                        received,
+                        total.expect("known total") - 1,
+                        total.expect("known total"),
+                        response.content_length(),
+                    )
+                }
             {
                 return Err(JobError::new(if strict {ErrorKind::RestartRequired}else{ErrorKind::Http}, "Restart required: the server changed the file or returned an invalid resume range."));
             }
@@ -466,7 +533,7 @@ async fn stream(
                 if strict {
                     return Err(JobError::new(
                         ErrorKind::RestartRequired,
-                        "Restart required: the server did not accept a safe continuation.",
+                        "The server ignored the requested resume byte range. Saved bytes were preserved.",
                     ));
                 }
                 output.restart().await?;

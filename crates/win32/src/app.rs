@@ -23,6 +23,7 @@ use rusty_browser_bridge::{
     protocol::DeclineCode,
     windows::{PipeServer, UserSession},
 };
+use rusty_engine::refresh::RefreshCandidate;
 use rusty_engine::{spawn_engine, Command, CommandError, EngineHandle, Event};
 use std::{
     cell::{Cell, RefCell},
@@ -151,7 +152,7 @@ impl MainWindow {
             let hwnd = CreateWindowExW(
                 WS_EX_CONTROLPARENT,
                 class.lpszClassName,
-                w!("Rusty Download Manager 0.1.0"),
+                w!("Rusty Download Manager 0.2.0"),
                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
@@ -208,6 +209,7 @@ struct AppState {
     scanner: crate::scanner::Scanner,
     pending_create: Option<u64>,
     pending_editor: Option<(rusty_engine::QueueId, Tab)>,
+    refresh_target: Option<rusty_engine::JobId>,
     tray: TrayIcon,
     settings: Settings,
     category: Category,
@@ -431,7 +433,7 @@ impl AppState {
             return;
         }
         let active = self.view.active();
-        let accepted = !active || message(Some(owner), "Stop downloads and exit?", "Exit Rusty? Queued downloads keep their recovery data. Ordinary downloads are stopped and their partial files cleaned up.", true);
+        let accepted = !active || message(Some(owner), "Save downloads and exit?", "Exit Rusty? Unfinished downloads keep their saved partials and return held after restart.", true);
         if self.lifecycle.begin_close(active, accepted) {
             if let Some(browser) = &self.browser {
                 browser.close();
@@ -462,6 +464,19 @@ impl AppState {
         for event in events {
             match &event {
                 Event::JobChanged(snapshot) => {
+                    if self.refresh_target == Some(snapshot.id)
+                        && matches!(
+                            snapshot.state,
+                            rusty_engine::JobState::Running
+                                | rusty_engine::JobState::Completed
+                                | rusty_engine::JobState::Waiting
+                        )
+                    {
+                        self.refresh_target = None;
+                        if let Some(browser) = &self.browser {
+                            browser.set_refresh_armed(false);
+                        }
+                    }
                     let newly_completed = !snapshot.restored
                         && snapshot.state == rusty_engine::JobState::Completed
                         && self.view.jobs.get(&snapshot.id).map_or(true, |previous| {
@@ -528,6 +543,12 @@ impl AppState {
                     }
                 }
                 Event::JobRemoved(id) => {
+                    if self.refresh_target == Some(*id) {
+                        self.refresh_target = None;
+                        if let Some(browser) = &self.browser {
+                            browser.set_refresh_armed(false);
+                        }
+                    }
                     self.details.remove(*id);
                     self.scanner.removed(*id);
                 }
@@ -858,12 +879,85 @@ impl AppState {
                             .refresh(owner, &self.view, self.category, false);
                     }
                     ABOUT => {
-                        message(Some(owner), "About Rusty Download Manager", "Rusty Download Manager 0.1.0\n\nNative Windows controls and single-stream HTTP/HTTPS downloads.\nTwo simultaneous downloads. Queues recover held after restart.\n\nPause/resume, speed limits, guarded replacement and Chrome capture.\nClose the manager to keep Rusty in the tray. Use Exit to stop it.\nChrome integration requires one-time extension setup.", false);
+                        message(Some(owner), "About Rusty Download Manager", "Rusty Download Manager pre-alpha\n\nNative Windows controls and single-stream HTTP/HTTPS downloads.\nTwo simultaneous downloads. Unfinished jobs return held after restart.\n\nPause/resume, speed limits, guarded replacement and browser capture.\nClose the manager to keep Rusty in the tray. Use Exit to save unfinished jobs.\nBrowser integration requires one-time extension setup.", false);
                     }
                     _ => self.download_command(window, selected, id)?,
                 }
             }
             _ => {}
+        }
+        Ok(())
+    }
+    fn begin_refresh(
+        &mut self,
+        window: &MainWindow,
+        id: rusty_engine::JobId,
+    ) -> Result<(), AppError> {
+        let owner = window.hwnd;
+        if self.refresh_target == Some(id) {
+            self.refresh_target = None;
+            if let Some(browser) = &self.browser {
+                browser.set_refresh_armed(false);
+            }
+            message(
+                Some(owner),
+                "Refresh cancelled",
+                "Browser capture is no longer waiting for this download.",
+                false,
+            );
+            return Ok(());
+        }
+        self.refresh_target = None;
+        if let Some(browser) = &self.browser {
+            browser.set_refresh_armed(false);
+        }
+        let (reply, result) = std::sync::mpsc::sync_channel(1);
+        if !self.command(owner, Command::PrepareRefresh(id, reply)) {
+            return Ok(());
+        }
+        let source_page = match result.recv_timeout(std::time::Duration::from_secs(15)) {
+            Ok(Ok(page)) => page,
+            Ok(Err(error)) => {
+                message(Some(owner), "Cannot refresh address", &error, false);
+                return Ok(());
+            }
+            Err(_) => {
+                message(
+                    Some(owner),
+                    "Cannot refresh address",
+                    "Timed out while saving the partial. Try again after the download is paused.",
+                    false,
+                );
+                return Ok(());
+            }
+        };
+        self.events(window);
+        match crate::refresh_ui::choose(owner, source_page.clone())? {
+            crate::refresh_ui::RefreshChoice::Cancel => {}
+            crate::refresh_ui::RefreshChoice::WaitForBrowser => {
+                if let Some(browser) = &self.browser {
+                    self.refresh_target = Some(id);
+                    browser.set_refresh_armed(true);
+                    message(Some(owner), "Waiting for new address", "Start the same download in your browser. Rusty will ask before using the new link. Choose Refresh download address again to cancel waiting.", false);
+                } else {
+                    message(Some(owner), "Browser unavailable", "Browser capture is unavailable. Use Refresh download address and paste a new URL.", false);
+                }
+            }
+            crate::refresh_ui::RefreshChoice::Paste(url) => {
+                let (reply, _) = tokio::sync::oneshot::channel();
+                self.command(
+                    owner,
+                    Command::RefreshAddress {
+                        job_id: id,
+                        candidate: RefreshCandidate {
+                            url,
+                            source_page,
+                            request_context: Vec::new(),
+                        },
+                        reply,
+                    },
+                );
+            }
         }
         Ok(())
     }
@@ -892,6 +986,12 @@ impl AppState {
         let Some(job) = self.view.jobs.get(&id) else {
             return Ok(());
         };
+        if command == REFRESH_ADDRESS {
+            if job.refreshable {
+                self.begin_refresh(window, id)?;
+            }
+            return Ok(());
+        }
         let actions = self.view.actions(Some(id));
         match command {
             QUEUE_ADD=>{self.command(owner,Command::AssignQueue(id,Some(rusty_engine::QueueId::MAIN)));},
@@ -1018,6 +1118,7 @@ pub fn run() -> Result<(), AppError> {
         scanner: crate::scanner::Scanner::default(),
         pending_create: None,
         pending_editor: None,
+        refresh_target: None,
         tray: TrayIcon::new(window.hwnd),
         settings,
         category: Category::All,
@@ -1501,6 +1602,72 @@ impl AppState {
         }
         for incoming in captures {
             let id = incoming.capture.id.clone();
+            if let Some(target) = self.refresh_target {
+                let eligible = self.lifecycle.accepts_submissions()
+                    && incoming.lease.state() == LeaseState::Pending
+                    && self.view.jobs.get(&target).is_some_and(|job| {
+                        job.refreshable
+                            && (matches!(
+                                job.state,
+                                rusty_engine::JobState::Paused | rusty_engine::JobState::Failed
+                            ) || job.state == rusty_engine::JobState::Waiting && job.deferred)
+                    });
+                if !eligible {
+                    self.browser
+                        .as_ref()
+                        .expect("controller")
+                        .decline(&id, DeclineCode::BrowserFallback);
+                    self.refresh_target = None;
+                    self.browser
+                        .as_ref()
+                        .expect("controller")
+                        .set_refresh_armed(false);
+                    continue;
+                }
+                let job = self.view.jobs.get(&target).expect("checked");
+                let display = url::Url::parse(&incoming.capture.url)
+                    .ok()
+                    .map(|mut url| {
+                        url.set_query(None);
+                        url.set_fragment(None);
+                        String::from(url)
+                    })
+                    .unwrap_or_else(|| "the new address".into());
+                if !message(Some(window.hwnd), "Use new download link?",
+                    &format!("Continue {} using this browser download?\n\n{}\n\nRusty will verify the saved partial before taking over.", job.filename, display), true)
+                {
+                    self.browser.as_ref().expect("controller").decline(&id, DeclineCode::UserCancelled);
+                    continue;
+                }
+                let candidate = RefreshCandidate {
+                    url: incoming.capture.url.clone(),
+                    source_page: incoming.capture.source_page.clone(),
+                    request_context: incoming.capture.request_context.clone(),
+                };
+                let submitted = self.browser.as_ref().expect("controller").submit_refresh(
+                    id.clone(),
+                    target,
+                    candidate,
+                    incoming.lease.clone(),
+                );
+                if let Err(error) = submitted {
+                    self.browser.as_ref().expect("controller").decline(
+                        &id,
+                        if error == CommandError::QueueFull {
+                            DeclineCode::Busy
+                        } else {
+                            DeclineCode::AppClosing
+                        },
+                    );
+                } else {
+                    self.refresh_target = None;
+                    self.browser
+                        .as_ref()
+                        .expect("controller")
+                        .set_refresh_armed(false);
+                }
+                continue;
+            }
             let intent = if self.lifecycle.accepts_submissions()
                 && incoming.lease.state() == LeaseState::Pending
             {
@@ -1519,7 +1686,12 @@ impl AppState {
                 Ok(DownloadIntent::Cancelled)
             };
             let intent = match intent {
-                Ok(intent) => intent,
+                Ok(mut intent) => {
+                    if let DownloadIntent::New(download) = &mut intent {
+                        download.request.source_page = incoming.capture.source_page.clone();
+                    }
+                    intent
+                }
                 Err(_) => {
                     self.browser
                         .as_ref()

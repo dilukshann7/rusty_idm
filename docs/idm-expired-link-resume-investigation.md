@@ -1,0 +1,21 @@
+# IDM expired-link resume investigation
+
+Investigated installed `IDMan.exe` version 6.42.61.3 (SHA-256 `c7c80b420579d774f445b6b3f9282c0850760ef790373c0ece0f856a0a05d1d5`) with REA/Ghidra static analysis on 2026-10-20. No IDM download was run. Addresses below refer to this binary only; decompiled code is reconstructed, not original source.
+
+## Observed flow
+
+1. IDM's [official help](https://project.internetdownloadmanager.com/register/new_faq/sites2_3.html) says **Refresh download address** opens the page where the original link was captured. The user starts the same download again in the browser. IDM associates the newly captured link with the waiting download, asks for confirmation if it cannot recognize the link, then resumes.
+2. The executable contains the corresponding messages: a request to start the same file again (`0x69a0e8`, `0x69a1c8`), a one-at-a-time waiting restriction (`0x69a2b0`), a confirmation question (`0x69a368`), and success (`0x69a188`). REA Evidence `ev_dd7e598496b8a395149e5524c8dfa5931d17487080d2320bf6c7e3e11b1a8055`, `ev_e893826391ad6d7c47ba342791aae1f28e307a0a7e8687c628d588d0d7b0a0ff`, `ev_3d6fb7eb0a71fe7a1e54e0027a80597cb382ab5c8a618507bb708c44e7a6f71e`.
+3. The refresh command at `0x49340d–0x4937b3` selects an existing download record, rejects a second waiting refresh, records its ID in application state at offset `0x370`, prepares its owner page address, and shows the waiting prompt. The menu item is constructed at `0x467f40` with command ID `0x2b40`. REA Evidence `ev_e250a1fbfc9e96d72cc7a55d2625ce93267ea6a2d134d7dc66a983a7cb4bb0ff` and the instruction/data references `ev_bba82ecab19583ddaa90dfb907dfd7ca8ecce1750ae391cdd04533900a239e78`.
+4. A later command path at `0x4925aa–0x492e8a` accesses the waiting record and a newly selected record, probes the new address, transfers URL and request/session fields into the waiting record, updates its stored data, and clears the waiting ID. In the ordinary branch, the transfer includes a call to `0x4672c0`; its decompilation writes several URL and request-context strings into the destination record. Some branches handle other download types separately. REA Evidence `ev_0169ca084a023d5db060a63cd78af8d897a97265eddd6bde6687c25fcba6664f` plus disassembly at the stated addresses. The exact browser matching rule and every field's meaning are not recovered.
+5. The HTTP engine constructs `Range: bytes=<start>-<end>` and open-ended range requests (`0x589430`); response parsing reads `Content-Range`, `ETag`, content length, and encoding (`0x5801e0`, `0x58a880`). REA Evidence `ev_e603d1bdeea915069deb4643ba4be95a187f87eea7596beeb4262e65e3e8aa7a`, `ev_87896d30f9981e49e1fae3779f815eea7af0e803d29d680646ece96e111f416f`, `ev_ff2d65a6e715dc08e3e0d7fd1c24eccf0d84153d41a8e33e5bf324bb83c32dea`.
+
+## Mechanism and limits
+
+The key operation is **rebind the original partial download to a fresh browser-captured URL and session context**, then request the remaining byte ranges. A changed URL does not itself imply a changed file. The old partial data and its completed ranges remain associated with the original download record. This is supported by the refresh command, record-transfer path, and range code together; it was not confirmed by a live network capture.
+
+The exact rules IDM uses to decide that a new capture is the same file, and the exact byte-level validation before appending, remain unknown. The prompt shows that IDM may require the user to confirm an ambiguous match. The official [resume FAQ](https://project.internetdownloadmanager.com/register/new_faq/sites2_6.html) also says refreshing cannot help when the site does not support continuation.
+
+## Rusty IDM implication
+
+Before the address-refresh change, Rusty's engine required the resumed response's final URL and strong ETag to match the saved checkpoint (`crates/engine/src/transfer.rs`). The new source path keeps the original job and partial, checks the replacement's exact total and bounded byte samples, and then requests only missing bytes. It retains the partial when identity cannot be established or the server ignores ranges. This is Rusty's design, not a claim about IDM's exact validator algorithm; the new path has not had a Rust build or live browser test yet.

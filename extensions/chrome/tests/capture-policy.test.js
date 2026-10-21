@@ -28,3 +28,40 @@ test('observation_backpressure_fails_open_and_never_stores_credential_values', a
   await observations.update({ requestId: '1', requestHeaders: [{ name: 'Cookie', value: 'secret-cookie' }] }, 'headers');
   assert.equal(JSON.stringify(stored).includes('secret-cookie'), false);
 });
+test('explicit_refresh_can_retrieve_short_lived_headers_without_persisting_values', async () => {
+  let stored = {};
+  const storage = { async get() { return structuredClone(stored); }, async set(value) { stored = structuredClone(value); } };
+  const observations = new Observations(storage, () => now);
+  await observations.update({ requestId: 'refresh', url: item.url, method: 'GET', timeStamp: now }, 'before');
+  await observations.update({ requestId: 'refresh', url: item.url, method: 'GET', requestHeaders: [
+    { name: 'Cookie', value: 'private=one' }, { name: 'Referer', value: 'https://example.org/page' },
+  ] }, 'headers');
+  assert.equal(JSON.stringify(stored).includes('private=one'), false);
+  assert.deepEqual(observations.takeContext('refresh'), [{ url: item.url, headers: [
+    { name: 'Cookie', value: 'private=one' }, { name: 'Referer', value: 'https://example.org/page' },
+  ] }]);
+  assert.deepEqual(observations.takeContext('refresh'), []);
+  const protectedChain = { ...chain, credentials: true };
+  assert.equal(classifyDownload(item, [protectedChain], { captureEnabled: true, hostAccess: true, refreshArmed: true }, now).eligible, true);
+  assert.equal(classify(item, [protectedChain]).eligible, false);
+});
+test('refresh_headers_expire_and_are kept per observed redirect hop', async () => {
+  let current = now; let stored = {};
+  const storage = { async get() { return structuredClone(stored); }, async set(value) { stored = structuredClone(value); } };
+  const observations = new Observations(storage, () => current);
+  const first = item.url, second = 'https://files.example.net/new';
+  await observations.update({ requestId: 'redirect', url: first, method: 'GET', timeStamp: now }, 'before');
+  await observations.update({ requestId: 'redirect', url: first, method: 'GET', requestHeaders: [{ name: 'Cookie', value: 'first-only' }] }, 'headers');
+  await observations.update({ requestId: 'redirect', url: second, method: 'GET', timeStamp: now }, 'before');
+  await observations.update({ requestId: 'redirect', url: second, method: 'GET', requestHeaders: [{ name: 'Authorization', value: 'Bearer second-only' }, { name: 'Host', value: 'blocked' }] }, 'headers');
+  assert.deepEqual(observations.takeContext('redirect'), [
+    { url: first, headers: [{ name: 'Cookie', value: 'first-only' }] },
+    { url: second, headers: [{ name: 'Authorization', value: 'Bearer second-only' }] },
+  ]);
+  assert.equal(JSON.stringify(stored).includes('first-only'), false);
+  assert.equal(JSON.stringify(stored).includes('second-only'), false);
+  await observations.update({ requestId: 'expired', url: first, method: 'GET', timeStamp: now }, 'before');
+  await observations.update({ requestId: 'expired', url: first, method: 'GET', requestHeaders: [{ name: 'Cookie', value: 'short-lived' }] }, 'headers');
+  current += 30001;
+  assert.deepEqual(observations.takeContext('expired'), []);
+});

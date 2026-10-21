@@ -24,16 +24,14 @@ fn frame_uses_utf8_byte_length_and_handles_fragmented_reads() {
 }
 #[test]
 fn oversize_prefix_is_rejected_before_reading_body() {
-    struct Prefix(bool);
+    struct Prefix(Cursor<[u8; 4]>);
     impl Read for Prefix {
         fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
-            assert!(!self.0);
-            self.0 = true;
-            out.copy_from_slice(&65537u32.to_le_bytes());
-            Ok(4)
+            assert!(self.0.position() < 4, "body must not be read");
+            self.0.read(out)
         }
     }
-    assert!(read_frame(&mut Prefix(false)).is_err());
+    assert!(read_frame(&mut Prefix(Cursor::new(65537u32.to_le_bytes()))).is_err());
 }
 #[test]
 fn eof_truncation_and_multiple_frames() {
