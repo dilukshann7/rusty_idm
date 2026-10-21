@@ -1,5 +1,7 @@
 pub mod categories;
 pub mod events;
+pub mod media;
+mod media_process;
 pub mod model;
 pub mod output;
 pub mod queues;

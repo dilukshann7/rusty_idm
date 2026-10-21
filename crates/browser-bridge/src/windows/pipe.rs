@@ -84,7 +84,7 @@ impl PipeServer {
                     if connection.is_err() { break; }
                     let next=match create(&session,false) { Ok(p)=>p,Err(_)=>break }; let connected=std::mem::replace(&mut pipe,next);
                     if clients.len()>=63 { drop(connected); continue; }
-                    let session=session.clone(); let router=router.clone(); clients.spawn(async move { let _=tokio::time::timeout(Duration::from_secs(122),serve(connected,session,router)).await; });
+                    let session=session.clone(); let router=router.clone(); clients.spawn(async move { let _=tokio::time::timeout(Duration::from_secs(370),serve(connected,session,router)).await; });
                 }, _=tokio::time::sleep(Duration::from_millis(50))=>{}, _=clients.join_next(),if !clients.is_empty()=>{} }
             }
             clients.abort_all(); while clients.join_next().await.is_some() {}
@@ -163,18 +163,30 @@ impl PipeClient {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let id = match &operation {
             Operation::Capture(c) => c.id.clone(),
+            Operation::MediaInspect { id, .. } | Operation::MediaSubmit { id, .. } => id.clone(),
             _ => RequestId::parse(&format!(
                 "00000000-0000-4000-8000-{:012x}",
                 NEXT.fetch_add(1, Ordering::Relaxed) & 0xffffffffffff
             ))
             .map_err(io::Error::other)?,
         };
+        let version = if matches!(
+            operation,
+            Operation::MediaInspect { .. } | Operation::MediaSubmit { .. }
+        ) {
+            2
+        } else {
+            1
+        };
         let data = operation.encode(id.clone()).map_err(io::Error::other)?;
         let (rt, mut pipe) = self
             .connection
             .take()
             .ok_or_else(|| io::Error::other("Connection already used"))?;
-        if matches!(operation, Operation::Capture(_) | Operation::Activate) {
+        if matches!(
+            operation,
+            Operation::Capture(_) | Operation::MediaSubmit { .. } | Operation::Activate
+        ) {
             // Chrome's native child can delegate foreground permission to the
             // verified GUI process before its UI thread receives the request.
             // Do not grant ASFW_ANY or change system foreground-lock settings.
@@ -195,11 +207,11 @@ impl PipeClient {
         let (tx, rx) = mpsc::sync_channel(4);
         thread::spawn(move || {
             rt.block_on(async move {
-                let result = tokio::time::timeout(Duration::from_secs(122), async {
+                let result = tokio::time::timeout(Duration::from_secs(370), async {
                     write(&mut pipe, &data).await?;
                     loop {
                         let reply: Reply = serde_json::from_slice(&read(&mut pipe).await?)?;
-                        if reply.v != 1 || reply.id != id {
+                        if reply.v != version || reply.id != id {
                             return Err(io::Error::other("Mismatched reply"));
                         }
                         let pending = reply.result == ReplyStatus::Pending;

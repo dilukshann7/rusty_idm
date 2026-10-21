@@ -67,6 +67,8 @@ pub(crate) struct Journal {
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct StoredEntry {
     #[serde(default)]
+    pub media: Option<crate::media::MediaSelection>,
+    #[serde(default)]
     pub source_page: Option<String>,
     #[serde(default)]
     pub refresh_needs_capture: bool,
@@ -371,6 +373,12 @@ fn validate(s: &State) -> Result<(), String> {
             }
         }
         e.options.validate()?;
+        if e.media
+            .as_ref()
+            .is_some_and(|selection| selection.validate().is_err())
+        {
+            return Err("Invalid saved media selection; storage was preserved.".into());
+        }
         crate::validate_request(
             &e.url,
             e.destination.clone(),

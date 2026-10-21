@@ -27,12 +27,21 @@ host registration. The installer offers a Chrome helper. For another browser,
 open **Options > General > Add browser** and follow its extension setup steps.
 Firefox distribution requires signing before normal installation.
 
-After setup, supported public HTTP/HTTPS GET downloads open Rusty's File Info
-prompt, even while the main manager is hidden. Unsupported downloads and failed
-handoffs stay with the browser. Signed-in/cookie-protected pages, streaming/blob
-URLs, DRM, upload requests and private downloads are outside automatic capture.
-An explicitly armed address refresh can use short-lived headers from the matching
-browser GET; see [address refresh](refresh-download-address.md).
+After setup, supported HTTP/HTTPS GET downloads open Rusty's File Info prompt,
+even while the main manager is hidden. A uniquely observed download with Cookie
+or Authorization headers requires a separate, unchecked approval in File Info.
+Declining it, missing headers or an expired observation leaves the download in
+the browser. Headers stay in memory and require a new capture after restart.
+Unsupported downloads and failed handoffs stay with the browser. Upload requests
+and private downloads are outside automatic capture. See [address refresh](refresh-download-address.md).
+
+If media panels are enabled in Options and website access is granted, a video
+can show **Choose video format in Rusty**. Click it to inspect an observed public
+HLS/DASH source or an individual public YouTube page, choose a quality/container
+and submit it to Rusty's destination dialog. Direct file buttons still work.
+The preview expires; inspect again if it does. Rusty does not support playlists,
+live streams, DRM or account-required video. See [browser video and protected
+capture](browser-media-support.md).
 
 ## Background use
 

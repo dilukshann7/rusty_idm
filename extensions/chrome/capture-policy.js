@@ -44,7 +44,6 @@ export function classifyDownload(item, observations, preferences, nowMs) {
   if (
     !candidate.allGet ||
     !candidate.headersObserved ||
-    (candidate.credentials && !preferences.refreshArmed) ||
     candidate.incognito ||
     candidate.consumed
   )
@@ -56,6 +55,7 @@ export function classifyDownload(item, observations, preferences, nowMs) {
     request: {
       url: item.finalUrl || item.url,
       source: "automatic",
+      protected: candidate.credentials === true,
       download_id: item.id,
       ...(hint && hint.length <= 255 && !/[\u0000-\u001f\u007f]/u.test(hint)
         ? { filename_hint: hint }
@@ -63,6 +63,24 @@ export function classifyDownload(item, observations, preferences, nowMs) {
     },
     observationId: candidate.requestId,
   };
+}
+
+// Raw headers live only in the service worker. A worker restart or a missed
+// redirect must leave a protected download with its browser owner.
+export function completeContext(observation, context) {
+  return Array.isArray(observation?.urls) && Array.isArray(context) &&
+    context.length === observation.urls?.length &&
+    context.every((hop, index) =>
+      hop.url === observation.urls[index] &&
+      Array.isArray(hop.headers) && hop.headers.length > 0 &&
+      hop.headers.every((header) =>
+        ["cookie", "authorization", "referer", "user-agent"].includes(header.name?.toLowerCase()) &&
+        typeof header.value === "string" && header.value.length <= 8192
+      )
+    ) &&
+    (!observation.credentials || context.some((hop) =>
+      hop.headers.some((header) => ["cookie", "authorization"].includes(header.name.toLowerCase()))
+    ));
 }
 
 // Header values are never copied. Each redirect hop needs its own observed headers.

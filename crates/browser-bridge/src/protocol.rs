@@ -96,6 +96,46 @@ pub struct CaptureRequest {
     pub download_id: Option<u64>,
     pub expires_at_ms: u64,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaKind {
+    Hls,
+    Dash,
+    Youtube,
+}
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MediaInspectRequest {
+    #[serde(default)]
+    pub browser: BrowserKind,
+    pub url: String,
+    pub kind: MediaKind,
+}
+impl fmt::Debug for MediaInspectRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MediaInspectRequest")
+            .field("browser", &self.browser)
+            .field("kind", &self.kind)
+            .finish_non_exhaustive()
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MediaSubmitRequest {
+    #[serde(default)]
+    pub browser: BrowserKind,
+    pub preview_id: RequestId,
+    pub variant_id: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MediaVariant {
+    pub id: String,
+    pub quality: String,
+    pub container: String,
+    pub audio: String,
+    pub size: Option<u64>,
+}
 impl fmt::Debug for CaptureRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CaptureRequest")
@@ -104,6 +144,17 @@ impl fmt::Debug for CaptureRequest {
     }
 }
 impl CaptureRequest {
+    pub fn has_credentials(&self) -> bool {
+        self.request_context
+            .iter()
+            .flat_map(|hop| &hop.headers)
+            .any(|header| {
+                matches!(
+                    header.name.to_ascii_lowercase().as_str(),
+                    "cookie" | "authorization"
+                )
+            })
+    }
     pub fn deadline(&self) -> Instant {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -118,8 +169,20 @@ pub enum Operation {
     Ping,
     Activate,
     Capture(CaptureRequest),
-    Status { capture_id: RequestId },
-    Abort { capture_id: RequestId },
+    MediaInspect {
+        id: RequestId,
+        request: MediaInspectRequest,
+    },
+    MediaSubmit {
+        id: RequestId,
+        request: MediaSubmitRequest,
+    },
+    Status {
+        capture_id: RequestId,
+    },
+    Abort {
+        capture_id: RequestId,
+    },
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -141,6 +204,8 @@ enum WireOperation {
     Ping(Empty),
     Activate(Empty),
     Capture(CapturePayload),
+    MediaInspect(MediaInspectRequest),
+    MediaSubmit(MediaSubmitRequest),
     Status(Target),
     Abort(Target),
 }
@@ -194,7 +259,7 @@ impl Operation {
             return Err(ProtocolError);
         }
         let v = object["v"].as_u64().ok_or(ProtocolError)?;
-        if v != 1 {
+        if v != 1 && v != 2 {
             return Err(ProtocolError);
         }
         let id = RequestId::parse(object["id"].as_str().ok_or(ProtocolError)?)?;
@@ -203,6 +268,39 @@ impl Operation {
         )
         .map_err(|_| ProtocolError)?;
         let operation = match wire {
+            WireOperation::MediaInspect(p) => {
+                if v != 2 || p.url.len() > 8192 || p.url.chars().any(char::is_control) {
+                    return Err(ProtocolError);
+                }
+                let url = url::Url::parse(&p.url).map_err(|_| ProtocolError)?;
+                if !matches!(url.scheme(), "http" | "https")
+                    || url.host_str().is_none()
+                    || !url.username().is_empty()
+                    || url.password().is_some()
+                {
+                    return Err(ProtocolError);
+                }
+                Self::MediaInspect {
+                    id: id.clone(),
+                    request: p,
+                }
+            }
+            WireOperation::MediaSubmit(p) => {
+                if v != 2
+                    || p.variant_id.is_empty()
+                    || p.variant_id.len() > 96
+                    || !p
+                        .variant_id
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '+'))
+                {
+                    return Err(ProtocolError);
+                }
+                Self::MediaSubmit {
+                    id: id.clone(),
+                    request: p,
+                }
+            }
             WireOperation::Ping(_) => Self::Ping,
             WireOperation::Policy(p) => Self::Policy(p.browser),
             WireOperation::Activate(_) => Self::Activate,
@@ -213,6 +311,9 @@ impl Operation {
                 capture_id: t.capture_id,
             },
             WireOperation::Capture(p) => {
+                if v != 1 {
+                    return Err(ProtocolError);
+                }
                 if p.url.len() > 8192
                     || p.url.chars().any(char::is_control)
                     || p.filename_hint.as_ref().is_some_and(|h| {
@@ -255,6 +356,16 @@ impl Operation {
                 }
                 let mut context_bytes = 0usize;
                 if p.request_context.len() > 16 {
+                    return Err(ProtocolError);
+                }
+                if !p.request_context.is_empty()
+                    && (p.request_context.last().is_none_or(|hop| hop.url != p.url)
+                        || p.request_context.iter().enumerate().any(|(index, hop)| {
+                            p.request_context[..index]
+                                .iter()
+                                .any(|earlier| earlier.url == hop.url)
+                        }))
+                {
                     return Err(ProtocolError);
                 }
                 for hop in &p.request_context {
@@ -302,10 +413,20 @@ impl Operation {
                 })
             }
         };
+        if v == 2
+            && !matches!(
+                operation,
+                Self::MediaInspect { .. } | Self::MediaSubmit { .. }
+            )
+        {
+            return Err(ProtocolError);
+        }
         Ok((id, operation))
     }
     pub fn encode(&self, id: RequestId) -> Result<Vec<u8>, ProtocolError> {
         let operation = match self {
+            Self::MediaInspect { request, .. } => WireOperation::MediaInspect(request.clone()),
+            Self::MediaSubmit { request, .. } => WireOperation::MediaSubmit(request.clone()),
             Self::Ping => WireOperation::Ping(Empty {}),
             Self::Policy(browser) => WireOperation::Policy(PolicyTarget { browser: *browser }),
             Self::Activate => WireOperation::Activate(Empty {}),
@@ -330,7 +451,11 @@ impl Operation {
             }),
         };
         serde_json::to_vec(&Envelope {
-            v: 1,
+            v: if matches!(self, Self::MediaInspect { .. } | Self::MediaSubmit { .. }) {
+                2
+            } else {
+                1
+            },
             id,
             operation,
         })
@@ -353,6 +478,12 @@ pub enum DeclineCode {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ReplyStatus {
+    MediaPreview {
+        preview_id: RequestId,
+        expires_at_ms: u64,
+        title: String,
+        variants: Vec<MediaVariant>,
+    },
     Policy {
         browser: BrowserKind,
         policy: CapturePolicy,
@@ -388,5 +519,8 @@ pub struct Reply {
 impl Reply {
     pub fn new(id: RequestId, result: ReplyStatus) -> Self {
         Self { v: 1, id, result }
+    }
+    pub fn media(id: RequestId, result: ReplyStatus) -> Self {
+        Self { v: 2, id, result }
     }
 }

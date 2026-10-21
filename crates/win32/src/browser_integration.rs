@@ -23,17 +23,43 @@ struct Entry {
     waiters: Vec<SyncSender<Reply>>,
     at: Instant,
 }
+struct MediaEntry {
+    request: MediaSubmitRequest,
+    lease: CaptureLease,
+    result: Option<ReplyStatus>,
+    waiters: Vec<SyncSender<Reply>>,
+    at: Instant,
+}
+pub struct IncomingMedia {
+    pub id: RequestId,
+    pub preview: rusty_engine::media::MediaPreview,
+    pub selection: rusty_engine::media::MediaSelection,
+    pub lease: CaptureLease,
+}
 #[derive(Default)]
 struct State {
     policy: rusty_browser_bridge::policy::CapturePolicy,
     refresh_armed: bool,
     entries: HashMap<RequestId, Entry>,
+    media_previews: HashMap<RequestId, (rusty_engine::media::MediaPreview, BrowserKind, Instant)>,
+    media_inspections: usize,
+    media_entries: HashMap<RequestId, MediaEntry>,
+    media_inbox: VecDeque<IncomingMedia>,
     inbox: VecDeque<IncomingCapture>,
     activate: bool,
     presentations: VecDeque<rusty_engine::JobId>,
     closing: bool,
 }
 impl State {
+    fn media_capacity(&self) -> bool {
+        self.media_entries.len() < MAX_RECEIPTS
+            && self
+                .media_entries
+                .values()
+                .filter(|entry| entry.result.is_none())
+                .count()
+                < MAX_PENDING
+    }
     fn finish(&mut self, id: &RequestId, status: ReplyStatus) {
         if let Some(entry) = self.entries.get_mut(id) {
             if entry.original.is_none() {
@@ -52,16 +78,49 @@ impl State {
             }
             entry.current = Some(status);
         }
+        if let Some(entry) = self.media_entries.get_mut(id) {
+            if entry.result.is_none() {
+                if let ReplyStatus::Accepted { job_id, .. } = &status {
+                    let job_id = JobId(*job_id);
+                    if self.presentations.len() < MAX_RECEIPTS
+                        && !self.presentations.contains(&job_id)
+                    {
+                        self.presentations.push_back(job_id);
+                    }
+                }
+                for waiter in entry.waiters.drain(..) {
+                    let _ = waiter.try_send(Reply::media(id.clone(), status.clone()));
+                }
+                entry.result = Some(status);
+            }
+        }
     }
     fn close(&mut self) {
         self.closing = true;
         self.inbox.clear();
+        self.media_inbox.clear();
         let ids: Vec<_> = self
             .entries
             .iter()
             .filter_map(|(id, e)| (e.lease.revoke() != LeaseState::Accepted).then_some(id.clone()))
             .collect();
         for id in ids {
+            self.finish(
+                &id,
+                ReplyStatus::Declined {
+                    code: DeclineCode::AppClosing,
+                },
+            );
+        }
+        let media: Vec<_> = self
+            .media_entries
+            .iter()
+            .filter_map(|(id, entry)| {
+                (entry.result.is_none() && entry.lease.revoke() != LeaseState::Accepted)
+                    .then_some(id.clone())
+            })
+            .collect();
+        for id in media {
             self.finish(
                 &id,
                 ReplyStatus::Declined {
@@ -101,13 +160,247 @@ struct Router {
 fn target_id() -> RequestId {
     RequestId::parse("00000000-0000-4000-8000-000000000000").expect("fixed identifier")
 }
+impl Router {
+    fn media_inspect(&self, id: RequestId, request: MediaInspectRequest, reply: SyncSender<Reply>) {
+        {
+            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            if state.closing
+                || !state.policy.panels.enabled
+                || !state.policy.browsers.contains(&request.browser)
+                || state.policy.excluded(&request.url)
+            {
+                let _ = reply.try_send(Reply::media(
+                    id,
+                    ReplyStatus::Declined {
+                        code: DeclineCode::Unsupported,
+                    },
+                ));
+                return;
+            }
+            if state.media_inspections >= 4 {
+                let _ = reply.try_send(Reply::media(
+                    id,
+                    ReplyStatus::Declined {
+                        code: DeclineCode::Busy,
+                    },
+                ));
+                return;
+            }
+            state.media_inspections += 1;
+        }
+        let _ = reply.try_send(Reply::media(id.clone(), ReplyStatus::Pending));
+        let state = self.state.clone();
+        thread::spawn(move || {
+            let inspected = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .ok()
+                .and_then(|runtime| {
+                    runtime
+                        .block_on(rusty_engine::media::inspect(
+                            &request.url,
+                            request.kind.clone(),
+                            tokio_util::sync::CancellationToken::new(),
+                        ))
+                        .ok()
+                });
+            let result = if let Some(preview) = inspected {
+                let expires = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64
+                    + 120_000;
+                let status = ReplyStatus::MediaPreview {
+                    preview_id: id.clone(),
+                    expires_at_ms: expires,
+                    title: preview.title.clone(),
+                    variants: preview.variants.clone(),
+                };
+                let mut locked = state.lock().unwrap_or_else(|p| p.into_inner());
+                locked.media_inspections = locked.media_inspections.saturating_sub(1);
+                if locked.closing {
+                    ReplyStatus::Declined {
+                        code: DeclineCode::AppClosing,
+                    }
+                } else {
+                    locked
+                        .media_previews
+                        .retain(|_, (_, _, at)| at.elapsed() < Duration::from_secs(120));
+                    if locked.media_previews.len() >= 64 {
+                        ReplyStatus::Declined {
+                            code: DeclineCode::Busy,
+                        }
+                    } else {
+                        locked
+                            .media_previews
+                            .insert(id.clone(), (preview, request.browser, Instant::now()));
+                        status
+                    }
+                }
+            } else {
+                let mut locked = state.lock().unwrap_or_else(|p| p.into_inner());
+                locked.media_inspections = locked.media_inspections.saturating_sub(1);
+                ReplyStatus::Declined {
+                    code: DeclineCode::Unsupported,
+                }
+            };
+            let _ = reply.try_send(Reply::media(id, result));
+        });
+    }
+
+    fn media_submit(&self, id: RequestId, request: MediaSubmitRequest, reply: SyncSender<Reply>) {
+        let (preview, selected, lease) = {
+            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            state
+                .media_entries
+                .retain(|_, entry| entry.result.is_none() || entry.at.elapsed() < RETENTION);
+            if let Some(entry) = state.media_entries.get_mut(&id) {
+                let result = if entry.request != request {
+                    ReplyStatus::Declined {
+                        code: DeclineCode::InvalidRequest,
+                    }
+                } else if let Some(status) = &entry.result {
+                    status.clone()
+                } else if entry.waiters.len() < 4 {
+                    entry.waiters.push(reply.clone());
+                    ReplyStatus::Pending
+                } else {
+                    ReplyStatus::Declined {
+                        code: DeclineCode::Busy,
+                    }
+                };
+                let _ = reply.try_send(Reply::media(id, result));
+                return;
+            }
+            let Some((preview, browser, at)) =
+                state.media_previews.get(&request.preview_id).cloned()
+            else {
+                let _ = reply.try_send(Reply::media(
+                    id,
+                    ReplyStatus::Declined {
+                        code: DeclineCode::Expired,
+                    },
+                ));
+                return;
+            };
+            if state.closing
+                || !state.policy.panels.enabled
+                || !state.policy.browsers.contains(&request.browser)
+                || browser != request.browser
+                || at.elapsed() >= Duration::from_secs(120)
+                || state.policy.excluded(&preview.url)
+                || !state.media_capacity()
+            {
+                let _ = reply.try_send(Reply::media(
+                    id,
+                    ReplyStatus::Declined {
+                        code: DeclineCode::BrowserFallback,
+                    },
+                ));
+                return;
+            }
+            let Some(selected) = preview
+                .variants
+                .iter()
+                .find(|variant| variant.id == request.variant_id)
+                .cloned()
+            else {
+                let _ = reply.try_send(Reply::media(
+                    id,
+                    ReplyStatus::Declined {
+                        code: DeclineCode::InvalidRequest,
+                    },
+                ));
+                return;
+            };
+            let lease = CaptureLease::new(Instant::now() + Duration::from_secs(300));
+            state.media_entries.insert(
+                id.clone(),
+                MediaEntry {
+                    request,
+                    lease: lease.clone(),
+                    result: None,
+                    waiters: vec![reply.clone()],
+                    at: Instant::now(),
+                },
+            );
+            let _ = reply.try_send(Reply::media(id.clone(), ReplyStatus::Pending));
+            (preview, selected, lease)
+        };
+        let state = self.state.clone();
+        let wake = self.wake.clone();
+        thread::spawn(move || {
+            let current = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .ok()
+                .and_then(|runtime| {
+                    runtime
+                        .block_on(rusty_engine::media::inspect(
+                            &preview.url,
+                            preview.kind.clone(),
+                            tokio_util::sync::CancellationToken::new(),
+                        ))
+                        .ok()
+                });
+            let mut locked = state.lock().unwrap_or_else(|p| p.into_inner());
+            let valid = current.as_ref().is_some_and(|candidate| {
+                candidate.identity == preview.identity
+                    && candidate.kind == preview.kind
+                    && candidate.variants.iter().any(|variant| {
+                        variant.id == selected.id
+                            && variant.container == selected.container
+                            && variant.quality == selected.quality
+                            && variant.audio == selected.audio
+                    })
+            });
+            if !valid || lease.state() != LeaseState::Pending || locked.closing {
+                locked.finish(
+                    &id,
+                    ReplyStatus::Declined {
+                        code: DeclineCode::Unsupported,
+                    },
+                );
+                return;
+            }
+            locked.media_inbox.push_back(IncomingMedia {
+                id: id.clone(),
+                preview: current.expect("validated"),
+                selection: rusty_engine::media::MediaSelection {
+                    identity: preview.identity,
+                    format_id: selected.id,
+                    container: selected.container,
+                    quality: selected.quality,
+                    audio: selected.audio,
+                    kind: preview.kind,
+                },
+                lease,
+            });
+            wake();
+        });
+    }
+}
 impl RequestRouter for Router {
     fn dispatch(&self, operation: Operation, reply: SyncSender<Reply>) -> Result<(), BridgeError> {
+        let operation = match operation {
+            Operation::MediaInspect { id, request } => {
+                self.media_inspect(id, request, reply);
+                return Ok(());
+            }
+            Operation::MediaSubmit { id, request } => {
+                self.media_submit(id, request, reply);
+                return Ok(());
+            }
+            other => other,
+        };
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         state
             .entries
             .retain(|_, e| e.original.is_none() || e.at.elapsed() < RETENTION);
         match operation {
+            Operation::MediaInspect { .. } | Operation::MediaSubmit { .. } => {
+                unreachable!("handled before lock")
+            }
             Operation::Policy(browser) => {
                 let _ = reply.try_send(Reply::new(
                     target_id(),
@@ -158,7 +451,10 @@ impl RequestRouter for Router {
                     let _ = reply.try_send(Reply::new(id, status));
                     return Ok(());
                 }
-                if !capture.request_context.is_empty() && !state.refresh_armed {
+                if !capture.request_context.is_empty()
+                    && !state.refresh_armed
+                    && !capture.has_credentials()
+                {
                     let _ = reply.try_send(Reply::new(
                         id,
                         ReplyStatus::Declined {
@@ -463,6 +759,26 @@ impl BrowserController {
                         },
                     );
                 }
+                let expired_media: Vec<_> = state
+                    .media_entries
+                    .iter()
+                    .filter_map(|(id, entry)| {
+                        (entry.result.is_none()
+                            && matches!(
+                                entry.lease.state(),
+                                LeaseState::Expired | LeaseState::Revoked
+                            ))
+                        .then_some(id.clone())
+                    })
+                    .collect();
+                for id in expired_media {
+                    state.finish(
+                        &id,
+                        ReplyStatus::Declined {
+                            code: DeclineCode::Expired,
+                        },
+                    );
+                }
             }
             shared.lock().unwrap_or_else(|p| p.into_inner()).close();
         });
@@ -530,6 +846,41 @@ impl BrowserController {
             .inbox
             .drain(..)
             .collect()
+    }
+    pub fn drain_media(&self) -> Vec<IncomingMedia> {
+        self.router
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .media_inbox
+            .drain(..)
+            .collect()
+    }
+    pub fn submit_media(
+        &self,
+        id: RequestId,
+        request: rusty_engine::DownloadRequest,
+        lease: CaptureLease,
+    ) -> Result<(), CommandError> {
+        if lease.state() != LeaseState::Pending {
+            return Err(CommandError::Closed);
+        }
+        self.router
+            .work
+            .try_send(Work::Apply(id, SubmissionAction::Submit(request), lease))
+            .map_err(|e| match e {
+                mpsc::TrySendError::Full(_) => CommandError::QueueFull,
+                mpsc::TrySendError::Disconnected(_) => CommandError::Closed,
+            })
+    }
+    pub fn decline_media(&self, id: &RequestId, code: DeclineCode) {
+        let mut state = self.router.state.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(entry) = state.media_entries.get(id) {
+            if entry.lease.revoke() == LeaseState::Accepted {
+                return;
+            }
+        }
+        state.finish(id, ReplyStatus::Declined { code });
     }
     pub fn take_presentations(&self) -> Vec<rusty_engine::JobId> {
         self.router

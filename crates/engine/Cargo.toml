@@ -19,3 +19,4 @@ tempfile = "=3.23.0"
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_Security"] }

@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyDownload, Observations } from '../capture-policy.js';
+import { classifyDownload, completeContext, Observations } from '../capture-policy.js';
 const now = 100000;
 const item = { id: 1, url: 'https://example.org/a', finalUrl: 'https://example.org/a', state: 'in_progress', danger: 'safe', paused: false, incognito: false, referrer: '', startTime: new Date(now).toISOString(), filename: 'C:\\Downloads\\a.zip' };
 const chain = { requestId: 'one', urls: [item.url], startedAt: now, lastAt: now, allGet: true, headersObserved: true, credentials: false, referrer: '' };
 const classify = (i = item, observations = [chain]) => classifyDownload(i, observations, { captureEnabled: true, hostAccess: true }, now);
 test('keeps_post_blob_incognito_and_ambiguous_requests_in_chrome', () => {
   assert.equal(classify().eligible, true);
-  for (const bad of [{ ...chain, allGet: false }, { ...chain, credentials: true }]) assert.equal(classify(item, [bad]).eligible, false);
+  for (const bad of [{ ...chain, allGet: false }, { ...chain, headersObserved: false }]) assert.equal(classify(item, [bad]).eligible, false);
   assert.equal(classify({ ...item, incognito: true }).eligible, false);
   assert.equal(classify({ ...item, url: 'blob:https://example.org/a' }).eligible, false);
   assert.equal(classify(item, [chain, { ...chain, requestId: 'two', allGet: false, tabId: 2 }]).eligible, false);
@@ -43,7 +43,17 @@ test('explicit_refresh_can_retrieve_short_lived_headers_without_persisting_value
   assert.deepEqual(observations.takeContext('refresh'), []);
   const protectedChain = { ...chain, credentials: true };
   assert.equal(classifyDownload(item, [protectedChain], { captureEnabled: true, hostAccess: true, refreshArmed: true }, now).eligible, true);
-  assert.equal(classify(item, [protectedChain]).eligible, false);
+  assert.equal(classify(item, [protectedChain]).eligible, true);
+  assert.equal(classify(item, [protectedChain]).request.protected, true);
+});
+test('protected_handoff_requires_a_complete_fresh_context_for_every_redirect', () => {
+  const observed = { ...chain, urls: [item.url, 'https://files.example.net/a'], credentials: true };
+  const first = { url: item.url, headers: [{ name: 'Cookie', value: 'private=one' }] };
+  const second = { url: observed.urls[1], headers: [{ name: 'Authorization', value: 'Bearer two' }] };
+  assert.equal(completeContext(observed, [first, second]), true);
+  assert.equal(completeContext(observed, [first]), false);
+  assert.equal(completeContext(observed, [first, { ...second, url: 'https://elsewhere.example/a' }]), false);
+  assert.equal(completeContext(observed, [{ ...first, headers: [] }, second]), false);
 });
 test('refresh_headers_expire_and_are kept per observed redirect hop', async () => {
   let current = now; let stored = {};

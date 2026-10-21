@@ -55,6 +55,7 @@ fn refresh_context_is_optional_scoped_and_redacted() {
         panic!("capture expected")
     };
     assert_eq!(request.request_context.len(), 1);
+    assert!(request.has_credentials());
     assert!(!format!("{request:?}").contains("session=private"));
     let encoded = Operation::Capture(request)
         .encode(RequestId::parse("12345678-1234-4234-8234-123456789abc").unwrap())
@@ -66,4 +67,35 @@ fn refresh_context_is_optional_scoped_and_redacted() {
         bad["payload"]["request_context"][0]["headers"][0]["value"] = value.into();
         assert!(Operation::decode(&serde_json::to_vec(&bad).unwrap()).is_err());
     }
+}
+
+#[test]
+fn media_protocol_is_versioned_and_rejects_unchecked_variants() {
+    let inspect = serde_json::json!({"v":2,"id":"12345678-1234-4234-8234-123456789abc","op":"media_inspect","payload":{
+        "browser":"firefox","url":"https://www.youtube.com/watch?v=abcdefghijk","kind":"youtube"
+    }});
+    let (id, operation) = Operation::decode(&serde_json::to_vec(&inspect).unwrap()).unwrap();
+    assert!(matches!(operation, Operation::MediaInspect { .. }));
+    let mut private = inspect.clone();
+    private["payload"]["url"] = "https://example.org/master.m3u8?token=private-media-token".into();
+    let (_, private) = Operation::decode(&serde_json::to_vec(&private).unwrap()).unwrap();
+    assert!(!format!("{private:?}").contains("private-media-token"));
+    let encoded = operation.encode(id).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&encoded).unwrap()["v"],
+        2
+    );
+    let mut legacy = inspect.clone();
+    legacy["v"] = 1.into();
+    assert!(Operation::decode(&serde_json::to_vec(&legacy).unwrap()).is_err());
+    let mut bad = inspect.clone();
+    bad["payload"]["url"] = "https://name:password@example.org/".into();
+    assert!(Operation::decode(&serde_json::to_vec(&bad).unwrap()).is_err());
+    let submit = serde_json::json!({"v":2,"id":"22222222-2222-4222-8222-222222222222","op":"media_submit","payload":{
+        "browser":"edge","preview_id":"12345678-1234-4234-8234-123456789abc","variant_id":"137+140"
+    }});
+    assert!(Operation::decode(&serde_json::to_vec(&submit).unwrap()).is_ok());
+    let mut bad_variant = submit;
+    bad_variant["payload"]["variant_id"] = "--exec=bad".into();
+    assert!(Operation::decode(&serde_json::to_vec(&bad_variant).unwrap()).is_err());
 }

@@ -40,6 +40,7 @@ pub const LOGIN_LABEL: i32 = 2112;
 pub const PASSWORD_LABEL: i32 = 2113;
 pub const CATEGORY_ADD: i32 = 2114;
 pub const FILE_TYPE_ICON: i32 = 2115;
+pub const BROWSER_CREDENTIAL_APPROVAL: i32 = 2116;
 pub const TOOLBAR: u16 = 1101;
 pub const TREE: u16 = 1102;
 pub const LIST: u16 = 1103;

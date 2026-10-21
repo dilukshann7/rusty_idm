@@ -72,7 +72,7 @@ impl TransferControl {
             .store(true, std::sync::atomic::Ordering::Release);
         self.settings.send_modify(|_| {});
     }
-    async fn await_confirmation(
+    pub(crate) async fn await_confirmation(
         &self,
         output: &mut OutputFile,
         progress: &ProgressSink,
@@ -107,7 +107,7 @@ impl TransferControl {
         self.checkpoint_ack.send_replace(None);
         self.settings.send_modify(|_| {});
     }
-    fn recovery(&self) -> Option<crate::storage::Recovery> {
+    pub(crate) fn recovery(&self) -> Option<crate::storage::Recovery> {
         self.recovery
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -176,8 +176,7 @@ impl TransferControl {
             }
         }
     }
-    #[cfg(test)]
-    async fn wait_until_resumed(&self) -> bool {
+    pub(crate) async fn wait_until_resumed(&self) -> bool {
         let mut settings = self.settings.subscribe();
         loop {
             if self.token.is_cancelled() {
@@ -189,7 +188,7 @@ impl TransferControl {
             tokio::select! {biased; _=self.token.cancelled()=>return false, _=settings.changed()=>{}}
         }
     }
-    async fn pause_requested(&self) {
+    pub(crate) async fn pause_requested(&self) {
         let mut settings = self.settings.subscribe();
         loop {
             if settings.borrow_and_update().paused {
@@ -282,6 +281,9 @@ pub async fn controlled_transfer(
     control: TransferControl,
     progress: ProgressSink,
 ) -> Result<TransferOutcome, JobError> {
+    if request.media.is_some() {
+        return crate::media::controlled_transfer(request, control, progress).await;
+    }
     let cancel = control.token();
     if cancel.is_cancelled() {
         return Ok(TransferOutcome::Cancelled);
@@ -462,12 +464,18 @@ async fn stream(
                 builder = builder.header(reqwest::header::IF_RANGE, validator);
             }
         }
-        let mut response = if resume && !request.request_context.is_empty() {
+        let mut response = if !request.request_context.is_empty() {
             tokio::select! {
                 biased;
                 _ = cancel.cancelled() => return Ok(TransferOutcome::Cancelled),
                 _ = control.pause_requested() => continue 'connect,
-                result = refresh::fetch_range(&scoped_client, &request.url, &request.request_context, received, None, validator.as_deref()) => result?,
+                result = async {
+                    if resume {
+                        refresh::fetch_range(&scoped_client, &request.url, &request.request_context, received, None, validator.as_deref()).await
+                    } else {
+                        refresh::fetch_get(&scoped_client, &request.url, &request.request_context).await
+                    }
+                } => result?,
             }
         } else {
             tokio::select! {
@@ -477,8 +485,7 @@ async fn stream(
                 response = tokio::time::timeout(Duration::from_secs(30), builder.send()) => response.ok().and_then(Result::ok).ok_or_else(|| JobError::new(ErrorKind::Network, "Connection failed, timed out, or exceeded the redirect limit. Check the URL, network and TLS certificate."))?,
             }
         };
-        if resume
-            && !request.request_context.is_empty()
+        if !request.request_context.is_empty()
             && (response.status() == reqwest::StatusCode::UNAUTHORIZED
                 || response.status() == reqwest::StatusCode::FORBIDDEN)
         {

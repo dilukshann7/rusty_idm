@@ -20,7 +20,7 @@ use crate::{
 };
 use rusty_browser_bridge::{
     lease::{CaptureLease, LeaseState},
-    protocol::DeclineCode,
+    protocol::{CaptureRequest, DeclineCode},
     windows::{PipeServer, UserSession},
 };
 use rusty_engine::refresh::RefreshCandidate;
@@ -295,6 +295,13 @@ impl AppState {
                 .map(|s| s.destination.as_path())
                 .unwrap_or(&download.request.destination);
             if !message(Some(owner),"Replace existing download?",&format!("Download again and replace an existing file only after the transfer succeeds?\n\n{}",target.display()),true){return Ok(DownloadIntent::Cancelled);}
+        }
+        if !download.request.browser_context_is_empty()
+            && existing.is_some()
+            && choice != DuplicateChoice::Numbered
+        {
+            message(Some(owner), "New browser capture", "This protected download needs a new job. Choose a numbered copy, or Cancel to keep it in the browser.", false);
+            return Ok(DownloadIntent::Cancelled);
         }
         match choice {
             DuplicateChoice::Numbered => {
@@ -844,7 +851,8 @@ impl AppState {
                         if let Some(prepared) =
                             dialogs::prepare_add_download(owner, &self.settings)?
                         {
-                            let intent = self.prepared_intent(window, prepared, None)?;
+                            let intent =
+                                self.prepared_intent(window, prepared, None, None, None)?;
                             self.execute_manual_intent(owner, intent)?;
                         }
                     }
@@ -1505,9 +1513,12 @@ impl AppState {
         window: &MainWindow,
         prepared: dialogs::PreparedDownload,
         lease: Option<&CaptureLease>,
+        capture: Option<&CaptureRequest>,
+        media: Option<&rusty_engine::media::MediaSelection>,
     ) -> Result<DownloadIntent, AppError> {
         let client = self.engine.as_ref().expect("running engine").client();
-        let immediate = self.settings.configuration.show_start_dialog
+        let immediate = !prepared.requires_dialog()
+            && self.settings.configuration.show_start_dialog
             && self.settings.configuration.immediate_info;
         let download = if immediate {
             prepared.initial(window.hwnd, &self.settings, lease, &client)?
@@ -1517,6 +1528,19 @@ impl AppState {
         let Some(mut download) = download else {
             return Ok(DownloadIntent::Cancelled);
         };
+        if let Some(capture) = capture {
+            download.request.source_page = capture.source_page.clone();
+            if !capture.request_context.is_empty() {
+                download.request = download
+                    .request
+                    .with_browser_context(capture.request_context.clone())
+                    .map_err(|error| AppError(error.message))?;
+            }
+        }
+        if let Some(selection) = media {
+            download.request.media = Some(selection.clone());
+            download.request.options.confirmation_required = false;
+        }
         if immediate && !download.request.deferred {
             download.request.options.confirmation_required = true;
         }
@@ -1588,6 +1612,7 @@ impl AppState {
         }
         let presentations = browser.take_presentations();
         let captures = browser.drain();
+        let media_submissions = browser.drain_media();
         if !presentations.is_empty() {
             self.events(window);
             if self.lifecycle.accepts_submissions() {
@@ -1639,6 +1664,22 @@ impl AppState {
                     self.browser.as_ref().expect("controller").decline(&id, DeclineCode::UserCancelled);
                     continue;
                 }
+                if incoming.capture.has_credentials()
+                    && !dialogs::approve_protected_refresh(
+                        window.hwnd,
+                        &self.settings,
+                        &incoming.capture,
+                        job,
+                        &incoming.lease,
+                    )
+                    .unwrap_or(false)
+                {
+                    self.browser
+                        .as_ref()
+                        .expect("controller")
+                        .decline(&id, DeclineCode::UserCancelled);
+                    continue;
+                }
                 let candidate = RefreshCandidate {
                     url: incoming.capture.url.clone(),
                     source_page: incoming.capture.source_page.clone(),
@@ -1676,9 +1717,13 @@ impl AppState {
                     &incoming.capture,
                     &incoming.lease,
                 ) {
-                    Ok(Some(prepared)) => {
-                        self.prepared_intent(window, prepared, Some(&incoming.lease))
-                    }
+                    Ok(Some(prepared)) => self.prepared_intent(
+                        window,
+                        prepared,
+                        Some(&incoming.lease),
+                        Some(&incoming.capture),
+                        None,
+                    ),
                     Ok(None) => Ok(DownloadIntent::Cancelled),
                     Err(e) => Err(e),
                 }
@@ -1686,12 +1731,7 @@ impl AppState {
                 Ok(DownloadIntent::Cancelled)
             };
             let intent = match intent {
-                Ok(mut intent) => {
-                    if let DownloadIntent::New(download) = &mut intent {
-                        download.request.source_page = incoming.capture.source_page.clone();
-                    }
-                    intent
-                }
+                Ok(intent) => intent,
                 Err(_) => {
                     self.browser
                         .as_ref()
@@ -1760,6 +1800,59 @@ impl AppState {
                     .as_ref()
                     .expect("controller")
                     .decline(&id, DeclineCode::UserCancelled);
+            }
+        }
+        for incoming in media_submissions {
+            let id = incoming.id.clone();
+            if !self.lifecycle.accepts_submissions()
+                || incoming.lease.state() != LeaseState::Pending
+            {
+                self.browser
+                    .as_ref()
+                    .expect("controller")
+                    .decline_media(&id, DeclineCode::AppClosing);
+                continue;
+            }
+            let prepared = dialogs::prepare_media_download(
+                &self.settings,
+                &incoming.preview,
+                &incoming.selection.container,
+            );
+            let intent = self.prepared_intent(
+                window,
+                prepared,
+                Some(&incoming.lease),
+                None,
+                Some(&incoming.selection),
+            );
+            match intent {
+                Ok(DownloadIntent::New(download)) => {
+                    self.remember_download(window.hwnd, &download);
+                    if let Err(error) = self.browser.as_ref().expect("controller").submit_media(
+                        id.clone(),
+                        download.request,
+                        incoming.lease,
+                    ) {
+                        self.browser.as_ref().expect("controller").decline_media(
+                            &id,
+                            if error == CommandError::QueueFull {
+                                DeclineCode::Busy
+                            } else {
+                                DeclineCode::AppClosing
+                            },
+                        );
+                    }
+                }
+                Ok(_) => self
+                    .browser
+                    .as_ref()
+                    .expect("controller")
+                    .decline_media(&id, DeclineCode::UserCancelled),
+                Err(_) => self
+                    .browser
+                    .as_ref()
+                    .expect("controller")
+                    .decline_media(&id, DeclineCode::InvalidRequest),
             }
         }
         Ok(())

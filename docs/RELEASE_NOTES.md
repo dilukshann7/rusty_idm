@@ -9,11 +9,13 @@
 - **Refresh download address** for a paused, failed or restored job with saved bytes. A pasted link or an explicitly selected browser capture is checked against the saved partial before continuation.
 - Compact native Options pages for browser capture, file types, folders and download behavior.
 - Browser extension profiles for Chrome, Brave, Edge and Firefox. Each browser requires its own extension and native-host setup; Firefox distribution requires signing.
+- Protected GET capture with a separate unchecked File Info approval and exact observed redirect headers.
+- Opt-in public HLS, DASH and single YouTube video format inspection and media jobs, using pinned bundled tools in installer and portable distributions.
 - Updated native toolbar, scheduler, File Info and transfer dialogs.
 
 ## Scope and limits
 
-Windows 10/11 x64. Rusty must run in a signed-in, awake Windows session. Ordinary automatic browser capture covers eligible public HTTP/HTTPS GET downloads. Protected captures are used only when the user explicitly arms address refresh. Streaming, private browsing and uploads are outside automatic handoff. Saved-byte verification samples up to three ranges, so it does not prove equality of unseen bytes. Completed downloads are not permanent history. This release is unsigned and has no automatic updater.
+Windows 10/11 x64. Rusty must run in a signed-in, awake Windows session. Automatic browser capture covers eligible HTTP/HTTPS GET downloads; protected ones require a separate approval. Public on-demand HLS, DASH and individual YouTube videos are selected from the opt-in media panel. Playlists, live streams, DRM, account-required video, private browsing and uploads are outside this release. Saved-byte verification samples up to three ranges, so it does not prove equality of unseen bytes. Completed downloads are not permanent history. This release is unsigned and has no automatic updater.
 
 ## Verification status
 

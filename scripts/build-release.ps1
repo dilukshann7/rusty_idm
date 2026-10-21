@@ -11,6 +11,8 @@ Push-Location -LiteralPath $root
 $oldFlags = $env:RUSTFLAGS
 try {
     & (Join-Path $PSScriptRoot 'verify-source.ps1')
+    & python tools/fetch_media_tools.py
+    if($LASTEXITCODE -ne 0) { throw 'Pinned media tool preparation failed.' }
     $env:RUSTFLAGS = '-C target-feature=+crt-static'
     & "$env:USERPROFILE/.cargo/bin/cargo.exe" build --release --locked --offline -p rusty-win32 -p rusty-native-host --target-dir $TargetDir
     if($LASTEXITCODE -ne 0) { throw 'Optimized Windows build failed.' }

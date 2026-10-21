@@ -8,6 +8,7 @@ build = "build.rs"
 [dependencies]
 rusty-browser-bridge = { path = "../browser-bridge" }
 tokio.workspace = true
+tokio-util.workspace = true
 rusty-engine = { path = "../engine" }
 serde.workspace = true
 serde_json.workspace = true

@@ -1,5 +1,9 @@
 # Chrome integration
 
+This page records the earlier Chrome handoff design and setup history. For the
+current source behavior covering protected files and opt-in public video across
+Chrome, Edge, Brave and Firefox, see [browser video and protected capture](browser-media-support.md).
+
 Source implements an opt-in Manifest V3 extension, Windows native messaging
 host, user/logon/session secured pipe, File Info integration, actor-confirmed
 receipts and session recovery. Windows debug compilation and per-user host

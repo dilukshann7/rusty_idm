@@ -13,7 +13,7 @@ VERSION = "0.2.1"
 PREFIX = f"RustyDownloadManager-{VERSION}"
 
 
-def inspect_pe(path):
+def inspect_pe(path, allow_system_crt=False):
     data = path.read_bytes()
     pe = struct.unpack_from("<I", data, 60)[0]
     if data[:2] != b"MZ" or data[pe:pe + 4] != b"PE\0\0":
@@ -40,7 +40,8 @@ def inspect_pe(path):
             name = offset(struct.unpack_from("<I", data, entry + 12)[0])
             imports.append(data[name:data.index(0, name)].decode("ascii"))
             entry += 20
-    if any(name.lower().startswith(("vcruntime", "msvcp", "ucrtbase", "api-ms-win-crt")) for name in imports):
+    blocked = ("vcruntime", "msvcp") if allow_system_crt else ("vcruntime", "msvcp", "ucrtbase", "api-ms-win-crt")
+    if any(name.lower().startswith(blocked) for name in imports):
         raise SystemExit(f"External Visual C++ runtime dependency: {path}")
     return {"machine": "x64", "imports": imports}
 
@@ -92,10 +93,29 @@ def stage(binary_dir):
     for name in ["rusty-win32.exe", "rusty-native-host.exe"]:
         inspect_pe(binary_dir / name)
         copy_file(binary_dir / name, payload / "bin" / name)
+    lock = json.loads((ROOT / "tools/media_tools_lock.json").read_text(encoding="utf-8"))
+    source_tools = ROOT / "assets/media-tools/windows-x64"
+    tool_manifest = json.loads((source_tools / "manifest.json").read_text(encoding="utf-8"))
+    if tool_manifest.get("archive_sha256") != {entry["name"]: entry["archive_sha256"] for entry in lock["tools"]}:
+        raise SystemExit("Media tool archive hashes do not match the pinned lock")
+    for name in ["yt-dlp.exe", "ffmpeg.exe", "ffprobe.exe", "deno.exe"]:
+        source = source_tools / name
+        expected = next(entry["outputs"][name] for entry in lock["tools"] if name in entry["outputs"])
+        if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != expected or tool_manifest["files"].get(name) != expected:
+            raise SystemExit(f"Missing or changed media tool: {name}")
+        inspect_pe(source, allow_system_crt=True)
+        copy_file(source, payload / "tools" / name)
+    copy_file(ROOT / "tools/media_tools_lock.json", payload / "tools" / "media_tools_lock.json")
+    copy_file(source_tools / "manifest.json", payload / "tools" / "manifest.json")
+    for notice in lock["notices"]:
+        source = ROOT / "assets/media-tool-notices" / notice
+        if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != lock["notices"][notice]:
+            raise SystemExit(f"Missing or changed media notice: {notice}")
+        copy_file(source, payload / "licenses" / "media-tools" / notice)
     for name in ["LICENSE", "README.md", "THIRD_PARTY.md"]:
         copy_file(ROOT / name, payload / name)
     write_package_readme(payload)
-    for name in ["USER_GUIDE.md", "RELEASE_NOTES.md", "VALIDATION.md", "SETUP.txt"]:
+    for name in ["USER_GUIDE.md", "RELEASE_NOTES.md", "VALIDATION.md", "SETUP.txt", "browser-media-support.md", "refresh-download-address.md"]:
         copy_file(ROOT / "docs" / name, payload / "docs" / name)
     for name in ["register-chrome-host.ps1", "unregister-chrome-host.ps1", "chrome-integration.ps1", "release-integration.ps1", "browser-host.ps1"]:
         copy_file(ROOT / "scripts" / name, payload / "scripts" / name)

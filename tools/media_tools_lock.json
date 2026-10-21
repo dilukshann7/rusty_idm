@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "platform": "windows-x64",
+  "tools": [
+    {
+      "name": "yt-dlp",
+      "version": "2026.08.19",
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe",
+      "archive_sha256": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a",
+      "archive": "raw",
+      "outputs": {"yt-dlp.exe": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a"}
+    },
+    {
+      "name": "Deno",
+      "version": "v2.9.7",
+      "url": "https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-pc-windows-msvc.zip",
+      "archive_sha256": "a0c3101b4158d1dfb7d6a78a7bf0f3de80c96bb423c152beec8beb22786f2238",
+      "archive": "zip",
+      "outputs": {"deno.exe": "e020f3e232bd16e33768dee528e5983349c962952051ced0a5d58ad42f5d9b33"}
+    },
+    {
+      "name": "FFmpeg/ffprobe",
+      "version": "autobuild-2026-10-17-20-33",
+      "url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/autobuild-2026-10-17-20-33/ffmpeg-N-127617-g94cba3150c-win64-gpl.zip",
+      "archive_sha256": "19852763398ad0a56f9c763c96e0cb7706bec68994b33c77786451b9cc5cee98",
+      "archive": "zip",
+      "outputs": {
+        "ffmpeg.exe": "63fc73812f8dddbe5ecc3e0cbe50c597ce7c9845fe8562bc4ff9d14a9d9c48ea",
+        "ffprobe.exe": "21ac55ed7fccb092980d6583a784058ae1e42ad713d422de8e771f26e46a5611"
+      }
+    }
+  ],
+  "notices": {
+    "SOURCES.md": "7117db70ec27fc058fae2bb2679045d04ec52813e4ee1a5ee38010c102e32a0f",
+    "deno-node-LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "deno-undici-LICENSE": "a6db8096b2707bc0102d256917d4d33f298ba36d8c3f25de067a2b5bb379db27",
+    "deno-webgpu-LICENSE.md": "f62497fffecc0852960c8d3e6934b9db86d16396e9b604072e923892cae3a588",
+    "yt-dlp-THIRD_PARTY_LICENSES.txt": "472aefe951c7db35e1657c1d13fd337140511ed6f2b329205105ad441c5a02b7",
+    "yt-dlp-LICENSE": "7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c",
+    "deno-LICENSE.md": "f62497fffecc0852960c8d3e6934b9db86d16396e9b604072e923892cae3a588",
+    "ffmpeg-COPYING.GPLv3": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+    "ffmpeg-build-NOTICE.txt": "525af45230cff55914da7f7bc3c646aa3f67312e8ae73bfd56bc7d32464766e5"
+  }
+}
