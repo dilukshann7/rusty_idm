@@ -54,12 +54,41 @@ pub enum CaptureSource {
     Automatic,
     ContextMenu,
 }
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequestHeader {
+    pub name: String,
+    pub value: String,
+}
+impl fmt::Debug for RequestHeader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RequestHeader")
+            .field("name", &self.name)
+            .field("value", &"[redacted]")
+            .finish()
+    }
+}
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequestHop {
+    pub url: String,
+    pub headers: Vec<RequestHeader>,
+}
+impl fmt::Debug for RequestHop {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RequestHop")
+            .field("header_count", &self.headers.len())
+            .finish_non_exhaustive()
+    }
+}
 #[derive(Clone, PartialEq, Eq)]
 pub struct CaptureRequest {
     pub browser: BrowserKind,
     pub forced: bool,
     pub policy_revision: u64,
     pub original_url: Option<String>,
+    pub source_page: Option<String>,
+    pub request_context: Vec<RequestHop>,
     pub id: RequestId,
     pub url: String,
     pub filename_hint: Option<String>,
@@ -140,6 +169,10 @@ struct CapturePayload {
     policy_revision: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     original_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_page: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    request_context: Vec<RequestHop>,
     url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     filename_hint: Option<String>,
@@ -208,11 +241,40 @@ impl Operation {
                         return Err(ProtocolError);
                     }
                 }
+                if let Some(page) = &p.source_page {
+                    let url = url::Url::parse(page).map_err(|_| ProtocolError)?;
+                    if page.len() > 8192 || page.chars().any(char::is_control)
+                        || !matches!(url.scheme(), "http" | "https")
+                        || url.host_str().is_none() || !url.username().is_empty()
+                        || url.password().is_some()
+                    { return Err(ProtocolError); }
+                }
+                let mut context_bytes = 0usize;
+                if p.request_context.len() > 16 { return Err(ProtocolError); }
+                for hop in &p.request_context {
+                    let url = url::Url::parse(&hop.url).map_err(|_| ProtocolError)?;
+                    if hop.url.len() > 8192 || hop.url.chars().any(char::is_control) || !matches!(url.scheme(), "http" | "https")
+                        || url.host_str().is_none() || !url.username().is_empty()
+                        || url.password().is_some() || hop.headers.len() > 16
+                    { return Err(ProtocolError); }
+                    context_bytes += hop.url.len();
+                    for header in &hop.headers {
+                        let name = header.name.to_ascii_lowercase();
+                        if !matches!(name.as_str(), "cookie" | "authorization" | "referer" | "user-agent")
+                            || header.value.len() > 8192
+                            || header.value.chars().any(char::is_control)
+                        { return Err(ProtocolError); }
+                        context_bytes += name.len() + header.value.len();
+                    }
+                }
+                if context_bytes > 32768 { return Err(ProtocolError); }
                 Self::Capture(CaptureRequest {
                     browser: p.browser,
                     forced: p.forced,
                     policy_revision: p.policy_revision,
                     original_url: p.original_url,
+                    source_page: p.source_page,
+                    request_context: p.request_context,
                     id: id.clone(),
                     url: p.url,
                     filename_hint: p.filename_hint,
@@ -240,6 +302,8 @@ impl Operation {
                 forced: p.forced,
                 policy_revision: p.policy_revision,
                 original_url: p.original_url.clone(),
+                source_page: p.source_page.clone(),
+                request_context: p.request_context.clone(),
                 url: p.url.clone(),
                 filename_hint: p.filename_hint.clone(),
                 source: p.source,
@@ -274,6 +338,8 @@ pub enum ReplyStatus {
     Policy {
         browser: BrowserKind,
         policy: CapturePolicy,
+        #[serde(default)]
+        refresh_armed: bool,
     },
     Ok {
         host_version: String,

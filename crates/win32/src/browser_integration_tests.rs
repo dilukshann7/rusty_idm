@@ -6,6 +6,8 @@ fn capture() -> CaptureRequest {
         forced: false,
         policy_revision: 0,
         original_url: None,
+        source_page: None,
+        request_context: vec![],
         id: RequestId::parse("12345678-1234-4234-8234-123456789abc").unwrap(),
         url: "https://example.org/file".into(),
         filename_hint: None,

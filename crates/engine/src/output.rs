@@ -5,7 +5,7 @@ use std::{
 };
 use tokio::{
     fs::{File, OpenOptions},
-    io::{AsyncSeekExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
 };
 
 static NEXT_PARTIAL: AtomicU64 = AtomicU64::new(1);
@@ -128,6 +128,7 @@ pub struct OutputFile {
     total: Option<u64>,
     response_url: Option<String>,
     etag: Option<String>,
+    refresh_pending: bool,
     creation_time: Option<std::time::SystemTime>,
     #[cfg(windows)]
     original: Option<std::fs::File>,
@@ -206,7 +207,7 @@ impl OutputFile {
                     .share_mode(FILE_SHARE_READ.0);
             }
             match options.open(&partial).await {
-                Ok(file) => return Ok(Self { file: Some(file), partial, destination: destination.to_owned(), retain: false, recovery: None, total: None, response_url: None, etag: None, creation_time: None, #[cfg(windows)] original }),
+                Ok(file) => return Ok(Self { file: Some(file), partial, destination: destination.to_owned(), retain: false, recovery: None, total: None, response_url: None, etag: None, refresh_pending: false, creation_time: None, #[cfg(windows)] original }),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(_) => return Err(JobError::new(ErrorKind::Io, "Cannot reserve a partial file. Check the save folder, permissions and available space.")),
             }
@@ -251,6 +252,7 @@ impl OutputFile {
                     total: checkpoint.total,
                     response_url: checkpoint.response_url,
                     etag: checkpoint.etag,
+                    refresh_pending: checkpoint.refresh_pending,
                     creation_time: checkpoint.creation_time,
                     #[cfg(windows)]
                     original,
@@ -292,6 +294,26 @@ impl OutputFile {
         });
         self.etag = etag;
     }
+    pub(crate) fn clear_refresh_pending(&mut self) {
+        self.refresh_pending = false;
+    }
+    pub(crate) async fn refresh_samples(&mut self, received: u64) -> Result<Vec<(u64, Vec<u8>)>, JobError> {
+        let file = self.file.as_mut().expect("open partial");
+        file.flush().await.map_err(|_| JobError::new(ErrorKind::Io, "Cannot flush saved bytes for verification."))?;
+        let previous = file.stream_position().await.map_err(|_| JobError::new(ErrorKind::Io, "Cannot inspect saved byte position."))?;
+        let result = async {
+            let mut samples = Vec::new();
+            for (start, end) in crate::refresh::sample_ranges(received) {
+                file.seek(std::io::SeekFrom::Start(start)).await.map_err(|_| JobError::new(ErrorKind::Io, "Cannot seek saved bytes."))?;
+                let mut bytes = vec![0; (end - start + 1) as usize];
+                file.read_exact(&mut bytes).await.map_err(|_| JobError::new(ErrorKind::Io, "Cannot read saved bytes."))?;
+                samples.push((start, bytes));
+            }
+            Ok(samples)
+        }.await;
+        file.seek(std::io::SeekFrom::Start(previous)).await.map_err(|_| JobError::new(ErrorKind::Io, "Cannot restore saved byte position."))?;
+        result
+    }
     pub(crate) async fn checkpoint(&mut self) -> Result<(), JobError> {
         self.checkpoint_inner().await.map_err(|error| {
             crate::storage::storage_error(error.message).retained(self.partial.clone())
@@ -318,12 +340,14 @@ impl OutputFile {
         let total = self.total;
         let response_url = self.response_url.clone();
         let etag = self.etag.clone();
+        let refresh_pending = self.refresh_pending;
         let mut checkpoint = tokio::task::spawn_blocking(move || {
             make_checkpoint(file, path, total, response_url, etag)
         })
         .await
         .map_err(|_| JobError::new(ErrorKind::Io, "Checkpoint worker failed."))??;
         checkpoint.creation_time = self.creation_time;
+        checkpoint.refresh_pending = refresh_pending;
         recovery
             .save(checkpoint)
             .map_err(|e| e.retained(self.partial.clone()))
@@ -583,6 +607,7 @@ fn make_checkpoint(
     let (prefix_hash, bytes_hash) = hashes(&mut file, durable)
         .map_err(|_| JobError::new(ErrorKind::Io, "Cannot hash checkpoint bytes."))?;
     Ok(crate::storage::Checkpoint {
+        refresh_pending: false,
         creation_time: None,
         partial,
         identity,
@@ -640,7 +665,7 @@ fn verify(file: &mut std::fs::File, c: &crate::storage::Checkpoint) -> std::io::
     }
     Ok(())
 }
-fn reopen_verified(
+pub(crate) fn inspect_checkpoint(
     c: &crate::storage::Checkpoint,
     ignore_modified: bool,
 ) -> std::io::Result<std::fs::File> {
@@ -650,6 +675,13 @@ fn reopen_verified(
     if !ignore_modified && identity.size == c.durable && identity.modified != c.identity.modified {
         return Err(std::io::Error::other("Partial modification time changed"));
     }
+    Ok(file)
+}
+fn reopen_verified(
+    c: &crate::storage::Checkpoint,
+    ignore_modified: bool,
+) -> std::io::Result<std::fs::File> {
+    let file = inspect_checkpoint(c, ignore_modified)?;
     // Only a verified file's uncheckpointed tail can be discarded.
     file.set_len(c.durable)?;
     file.sync_all()?;

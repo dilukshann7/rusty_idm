@@ -14,7 +14,7 @@ export function classifyDownload(item, observations, preferences, nowMs) {
     (!item.referrer || (preferences.referrerDigest && o.referrerDigest === preferences.referrerDigest)));
   if (candidates.length !== 1) return reject('ambiguous_metadata');
   const candidate = candidates[0];
-  if (!candidate.allGet || !candidate.headersObserved || candidate.credentials || candidate.incognito || candidate.consumed) return reject('unsafe_request');
+  if (!candidate.allGet || !candidate.headersObserved || (candidate.credentials && !preferences.refreshArmed) || candidate.incognito || candidate.consumed) return reject('unsafe_request');
   const hint = (item.filename || '').split(/[\\/]/u).pop();
   return { eligible: true, reason: 'eligible', request: { url: item.finalUrl || item.url, source: 'automatic', download_id: item.id,
     ...(hint && hint.length <= 255 && !/[\u0000-\u001f\u007f]/u.test(hint) ? { filename_hint: hint } : {}) }, observationId: candidate.requestId };
@@ -22,7 +22,7 @@ export function classifyDownload(item, observations, preferences, nowMs) {
 
 // Header values are never copied. Each redirect hop needs its own observed headers.
 export class Observations {
-  constructor(storage, now = Date.now) { this.storage = storage; this.now = now; this.queue = Promise.resolve(); this.pending = 0; this.uncertainUntil = 0; }
+  constructor(storage, now = Date.now) { this.storage = storage; this.now = now; this.queue = Promise.resolve(); this.pending = 0; this.uncertainUntil = 0; this.raw = new Map(); }
   update(details, stage) {
     if (this.pending >= 128) { this.uncertainUntil = this.now() + 30000; return Promise.resolve(); }
     // Reduce headers immediately: the queued operation must not retain raw values.
@@ -30,6 +30,19 @@ export class Observations {
     summary.credentials = (details.requestHeaders || []).some(h => ['cookie', 'authorization', 'proxy-authorization'].includes(h.name.toLowerCase()));
     const referrer = (details.requestHeaders || []).find(h => h.name.toLowerCase() === 'referer')?.value;
     const digest = referrer ? fingerprintReferrer(referrer).catch(() => null) : Promise.resolve(null);
+    for (const [id, entry] of this.raw) if (this.now() - entry.at > 30000) this.raw.delete(id);
+    if (stage === 'headers' && summary.method === 'GET' && !summary.incognito && supportedUrl(summary.url) && this.raw.size < 128) {
+      const headers = (details.requestHeaders || [])
+        .filter(h => ['cookie', 'authorization', 'referer', 'user-agent'].includes(h.name.toLowerCase()))
+        .filter(h => typeof h.value === 'string' && h.value.length <= 8192 && !/[\u0000-\u001f\u007f]/u.test(h.value))
+        .map(h => ({ name: h.name, value: h.value }));
+      const previous = this.raw.get(summary.requestId);
+      const hops = previous && this.now() - previous.at <= 30000 ? previous.hops : [];
+      if (hops.length < 16 && JSON.stringify(hops).length + JSON.stringify(headers).length <= 32768) {
+        hops.push({ url: summary.url, headers });
+        this.raw.set(summary.requestId, { at: this.now(), hops });
+      } else this.raw.delete(summary.requestId);
+    }
     details = null;
     this.pending++;
     const operation = async () => {
@@ -59,8 +72,9 @@ export class Observations {
   }
   async list() { await this.queue; if (this.now() < this.uncertainUntil) return []; const r = await this.storage.get('requestObservations'); return (r.requestObservations || []).filter(o => this.now() - o.lastAt <= 30000).map(o => ({ ...o, headersObserved: o.headersObserved && o.hopHeaders })); }
   consume(id) { const operation = async () => { const r = await this.storage.get('requestObservations'); await this.storage.set({ requestObservations: (r.requestObservations || []).map(o => o.requestId === id ? { ...o, consumed: true } : o) }); }; const result = this.queue.then(operation); this.queue = result.catch(() => {}); return result; }
-  clear() { const result = this.queue.then(() => this.storage.remove('requestObservations')); this.queue = result.catch(() => {}); return result; }
-  clearExpired() { const operation = async () => { const r = await this.storage.get('requestObservations'); await this.storage.set({ requestObservations: (r.requestObservations || []).filter(o => this.now() - o.lastAt <= 30000) }); }; const result = this.queue.then(operation); this.queue = result.catch(() => {}); return result; }
+  takeContext(id) { const entry = this.raw.get(id); this.raw.delete(id); return entry && this.now() - entry.at <= 30000 ? entry.hops : []; }
+  clear() { this.raw.clear(); const result = this.queue.then(() => this.storage.remove('requestObservations')); this.queue = result.catch(() => {}); return result; }
+  clearExpired() { for (const [id, entry] of this.raw) if (this.now() - entry.at > 30000) this.raw.delete(id); const operation = async () => { const r = await this.storage.get('requestObservations'); await this.storage.set({ requestObservations: (r.requestObservations || []).filter(o => this.now() - o.lastAt <= 30000) }); }; const result = this.queue.then(operation); this.queue = result.catch(() => {}); return result; }
 }
 
 export async function fingerprintReferrer(value) { const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)); return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, '0')).join(''); }

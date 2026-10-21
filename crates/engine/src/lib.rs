@@ -2,6 +2,7 @@ pub mod categories;
 pub mod events;
 pub mod model;
 pub mod output;
+pub mod refresh;
 pub mod queues;
 pub mod schedule;
 pub mod service;

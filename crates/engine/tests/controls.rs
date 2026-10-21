@@ -218,7 +218,7 @@ async fn live_limit_can_be_removed_without_restarting_the_transfer() {
 }
 
 #[test]
-fn paused_job_releases_slot_and_resume_waits_its_turn_then_shutdown_cleans_all() {
+fn paused_job_releases_slot_and_resume_waits_its_turn_then_explicit_cancel_cleans_all() {
     use rusty_engine::{spawn_engine, Command, EngineHandle, Event, JobId, JobState};
     fn wait(engine: &EngineHandle, predicate: impl Fn(&[Event]) -> bool) {
         let deadline = std::time::Instant::now() + Duration::from_secs(4);
@@ -266,6 +266,10 @@ fn paused_job_releases_slot_and_resume_waits_its_turn_then_shutdown_cleans_all()
     engine.try_send(Command::Pause(JobId(1))).unwrap();
     wait(&engine, |events| {
         events.iter().any(|e| matches!(e, Event::JobChanged(s) if s.id == JobId(1) && s.state == JobState::Paused))
+    });
+    engine.try_send(Command::CancelAll).unwrap();
+    wait(&engine, |events| {
+        [1, 2].iter().all(|id| events.iter().any(|e| matches!(e, Event::JobChanged(s) if s.id == JobId(*id) && s.state == JobState::Cancelled)))
     });
     engine.try_send(Command::Shutdown).unwrap();
     wait(&engine, |events| {

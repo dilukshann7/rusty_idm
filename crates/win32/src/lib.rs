@@ -33,6 +33,8 @@ pub mod platform;
 #[cfg(windows)]
 mod queue_ui;
 #[cfg(windows)]
+mod refresh_ui;
+#[cfg(windows)]
 mod scheduler;
 #[cfg(windows)]
 mod shell_icons;

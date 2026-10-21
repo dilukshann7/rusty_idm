@@ -18,8 +18,10 @@ pub(crate) struct StoredQueue {
     #[serde(default)]
     pub schedule: crate::schedule::ScheduleRecord,
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Checkpoint {
+    #[serde(default)]
+    pub refresh_pending: bool,
     #[serde(default)]
     pub creation_time: Option<std::time::SystemTime>,
     pub partial: PathBuf,
@@ -38,6 +40,10 @@ pub(crate) struct Journal {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct StoredEntry {
+    #[serde(default)]
+    pub source_page: Option<String>,
+    #[serde(default)]
+    pub refresh_needs_capture: bool,
     #[serde(default)]
     pub options: DownloadOptions,
     #[serde(default)]
@@ -72,7 +78,7 @@ pub(crate) struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            version: 4,
+            version: 5,
             next_entry: 1,
             next_queue: 2,
             queues: [(
@@ -126,7 +132,7 @@ impl Store {
                             .to_string()
                     })?;
                     validate(&state)?;
-                    state.version = 4;
+                    state.version = 5;
                     Ok(state)
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(State::default()),
@@ -239,6 +245,7 @@ impl Recovery {
             .update(|s| {
                 if let Some(e) = s.entries.get_mut(&self.entry) {
                     e.checkpoint = None;
+                    e.refresh_needs_capture = false;
                     e.journal = None;
                     e.staging = None;
                     e.completed = false;
@@ -252,11 +259,11 @@ impl Recovery {
 pub(crate) fn storage_error(message: String) -> JobError {
     JobError::new(
         ErrorKind::Storage,
-        format!("Queue storage failed; the queue is held. {message}"),
+        format!("Download storage failed; the download is held. {message}"),
     )
 }
 fn validate(s: &State) -> Result<(), String> {
-    if !matches!(s.version, 1 | 2 | 3 | 4)
+    if !matches!(s.version, 1 | 2 | 3 | 4 | 5)
         || !s.queues.contains_key(&QueueId::MAIN)
         || s.entries.len() > 1000
         || s.queues.len() > 100
@@ -301,6 +308,14 @@ fn validate(s: &State) -> Result<(), String> {
             || u.password().is_some()
         {
             return Err("Invalid stored entry; storage was preserved.".into());
+        }
+        if let Some(page) = &e.source_page {
+            let parsed = url::Url::parse(page).map_err(|_| "Invalid stored source page.")?;
+            if page.len() > 8192 || page.chars().any(char::is_control)
+                || !matches!(parsed.scheme(), "http" | "https")
+                || parsed.host_str().is_none() || !parsed.username().is_empty()
+                || parsed.password().is_some()
+            { return Err("Invalid stored source page.".into()); }
         }
     }
     if s.queues.keys().any(|id| id.0 >= s.next_queue) {

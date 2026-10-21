@@ -5,7 +5,7 @@ use crate::{
     *,
 };
 use rusty_browser_bridge::{
-    lease::LeaseFailure,
+    lease::{CaptureLease, LeaseFailure, LeaseState},
     protocol::{RequestId, MAX_RECEIPTS, RETENTION},
 };
 use std::{
@@ -31,8 +31,16 @@ use queue_support::QueueRuntime;
 #[path = "service_speed.rs"]
 mod speed;
 use speed::SpeedMeter;
+#[path = "service_refresh.rs"]
+mod refresh_support;
 
 pub enum Command {
+    PrepareRefresh(JobId, std::sync::mpsc::SyncSender<Result<Option<String>, String>>),
+    RefreshAddress {
+        job_id: JobId,
+        candidate: crate::refresh::RefreshCandidate,
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
     CreateQueue(String),
     CreateQueueForEditor {
         request: u64,
@@ -265,6 +273,19 @@ struct Job {
     resume_after_pause: bool,
     user_held: bool,
 }
+enum RefreshReply {
+    Manual(tokio::sync::oneshot::Sender<Result<(), String>>),
+    Browser {
+        id: RequestId,
+        lease: CaptureLease,
+        reply: tokio::sync::oneshot::Sender<Result<SubmissionReceipt, SubmissionError>>,
+    },
+}
+struct PendingRefresh {
+    checkpoint: crate::storage::Checkpoint,
+    candidate: crate::refresh::RefreshCandidate,
+    reply: RefreshReply,
+}
 type ProgressMap = Arc<Mutex<HashMap<JobId, TransferProgress>>>;
 async fn actor(
     mut receiver: mpsc::Receiver<Command>,
@@ -277,6 +298,10 @@ async fn actor(
     let mut waiting = VecDeque::new();
     let mut tasks = JoinSet::new();
     let mut task_jobs: HashMap<Id, JobId> = HashMap::new();
+    let mut refresh_tasks: JoinSet<(JobId, Result<crate::refresh::VerifiedRefresh, JobError>)> = JoinSet::new();
+    let mut refresh_task_jobs: HashMap<Id, JobId> = HashMap::new();
+    let mut pending_refreshes: HashMap<JobId, PendingRefresh> = HashMap::new();
+    let mut prepare_replies: HashMap<JobId, std::sync::mpsc::SyncSender<Result<Option<String>, String>>> = HashMap::new();
     let progress: ProgressMap = Arc::new(Mutex::new(HashMap::new()));
     let mut next_id = 1u64;
     let mut queues = QueueRuntime::new(durable);
@@ -300,6 +325,7 @@ async fn actor(
             waiting.clear();
         }
         if shutdown && tasks.is_empty() {
+            refresh_tasks.abort_all();
             bus.publish(Event::ShutdownComplete);
             break;
         }
@@ -310,6 +336,33 @@ async fn actor(
                     Some(Command::External(command)) => {
                         receipts.retain(|_,r|r.at.elapsed()<RETENTION);
                         match command {
+                            ExternalCommand::Refresh { id, job_id, candidate, lease, reply } => {
+                                if let Some(record) = receipts.get(&id) {
+                                    let result = if record.action.same(&SubmissionAction::Refresh(job_id)) { record.result.clone() } else { Err(SubmissionError::InvalidAction) };
+                                    let _ = reply.send(result);
+                                    continue;
+                                }
+                                if lease.state() != LeaseState::Pending || receipts.len() >= MAX_RECEIPTS {
+                                    let _ = reply.send(Err(SubmissionError::Busy));
+                                    continue;
+                                }
+                                match refresh_support::preflight(&jobs, &pending_refreshes, job_id, &candidate) {
+                                    Ok((checkpoint, ignore_modified)) => {
+                                        let verify_checkpoint = checkpoint.clone();
+                                        let verify_candidate = candidate.clone();
+                                        let task = refresh_tasks.spawn(async move { (job_id, crate::refresh::verify_checkpoint(verify_checkpoint, ignore_modified, verify_candidate).await) });
+                                        refresh_task_jobs.insert(task.id(), job_id);
+                                        pending_refreshes.insert(job_id, PendingRefresh {
+                                            checkpoint, candidate,
+                                            reply: RefreshReply::Browser { id, lease, reply },
+                                        });
+                                    }
+                                    Err(error) => {
+                                        reject(&bus, &error);
+                                        let _ = reply.send(Err(SubmissionError::RecoveryRequired));
+                                    }
+                                }
+                            }
                             ExternalCommand::Apply{id,action,lease,reply}=> {
                                 if let Some(record)=receipts.get(&id) { let _=reply.send(if record.action.same(&action) { record.result.clone() } else { Err(SubmissionError::InvalidAction) }); continue; }
                                 if receipts.len()>=MAX_RECEIPTS { let _=reply.send(Err(SubmissionError::Busy)); continue; }
@@ -328,7 +381,10 @@ async fn actor(
                                             let approved=match replacement{ReplacementPolicy::Deny=>None,ReplacementPolicy::Approved(identity)=>Some(identity.clone())};
                                             if actual!=approved{return Err(SubmissionError::InvalidAction);}
                                             let job=jobs.get_mut(id).expect("checked");
-                                            if let Some(recovery)=&job.request.recovery{recovery.clear().map_err(|_|SubmissionError::InvalidAction)?;}
+                                            if let Some(recovery)=&job.request.recovery{
+                                                crate::output::discard_checkpoint(recovery).map_err(|_|SubmissionError::RecoveryRequired)?;
+                                                job.snapshot.recovery_paths = recovery.store.snapshot().entries.get(&recovery.entry).map(|entry|entry.retained_files.clone()).unwrap_or_default();
+                                            }
                                             reset_job(job,replacement.clone());waiting.retain(|j|j!=id);waiting.push_back(*id);bus.publish(Event::JobChanged(job.snapshot.clone()));(*id,false)
                                         },
                                         SubmissionAction::Restart(id)=> {
@@ -340,11 +396,15 @@ async fn actor(
                                             let identity=inspect_destination(&job.request.destination).map_err(|_|SubmissionError::InvalidAction)?;
                                             job.request.replacement=identity.map(ReplacementPolicy::Approved).unwrap_or(ReplacementPolicy::Deny);
                                             if job.snapshot.state.is_terminal() && !bus.terminal_pending(*id) || job.snapshot.state==JobState::Waiting && !job.started {
-                                                if let Some(recovery)=&job.request.recovery {recovery.clear().map_err(|_|SubmissionError::InvalidAction)?;}
+                                                if let Some(recovery)=&job.request.recovery {
+                                                    crate::output::discard_checkpoint(recovery).map_err(|_|SubmissionError::RecoveryRequired)?;
+                                                    job.snapshot.recovery_paths = recovery.store.snapshot().entries.get(&recovery.entry).map(|entry|entry.retained_files.clone()).unwrap_or_default();
+                                                }
                                                 let replacement=job.request.replacement.clone(); reset_job(job,replacement); waiting.retain(|j|j!=id); waiting.push_back(*id); bus.publish(Event::JobChanged(job.snapshot.clone()));
                                             } else { job.restart=true; job.resume_after_pause=false; cancel_job(job,&bus); }
                                             (*id,false)
                                         }
+                                        SubmissionAction::Refresh(_) => return Err(SubmissionError::InvalidAction),
                                     };
                                     if lease.deadline_elapsed() {
                                         waiting.retain(|queued|*queued!=job_id);
@@ -390,6 +450,37 @@ async fn actor(
                     },
                     None | Some(Command::Shutdown) => { shutdown = true; closing.store(true, Ordering::Release); receiver.close(); for job in jobs.values_mut() { job.restart = false; job.resume_after_pause = false; shutdown_job(job, &bus); } waiting.clear(); },
                     Some(Command::Inspect(id,reply))=>{let _=reply.send(jobs.get(&id).map(|j|(j.snapshot.clone(),j.request.options.confirmation_required)));},
+                    Some(Command::PrepareRefresh(id, reply)) => {
+                        if prepare_replies.contains_key(&id) {
+                            let _ = reply.send(Err("This download is already preparing for refresh.".into()));
+                            continue;
+                        }
+                        match jobs.get_mut(&id) {
+                            Some(job) if job.snapshot.state == JobState::Paused && job.started => {
+                                job.cancel.preserve_on_exit();
+                                job.snapshot.state = JobState::Pausing;
+                                bus.publish(Event::JobChanged(job.snapshot.clone()));
+                                prepare_replies.insert(id, reply);
+                            }
+                            Some(job) => {
+                                let result = refresh_support::checkpoint(job).map(|_| job.request.source_page.clone());
+                                let _ = reply.send(result);
+                            }
+                            None => { let _ = reply.send(Err("The download no longer exists.".into())); }
+                        }
+                    },
+                    Some(Command::RefreshAddress { job_id, candidate, reply }) => {
+                        match refresh_support::preflight(&jobs, &pending_refreshes, job_id, &candidate) {
+                            Ok((checkpoint, ignore_modified)) => {
+                                let verify_checkpoint = checkpoint.clone();
+                                let verify_candidate = candidate.clone();
+                                let task = refresh_tasks.spawn(async move { (job_id, crate::refresh::verify_checkpoint(verify_checkpoint, ignore_modified, verify_candidate).await) });
+                                refresh_task_jobs.insert(task.id(), job_id);
+                                pending_refreshes.insert(job_id, PendingRefresh { checkpoint, candidate, reply: RefreshReply::Manual(reply) });
+                            }
+                            Err(error) => { reject(&bus, &error); let _ = reply.send(Err(error)); }
+                        }
+                    },
                     Some(Command::QueryQueues(reply))=>{queues.publish(&jobs,&bus);let _=reply.send(queues.snapshots());},
                     Some(Command::CreateQueueReply(name,reply))=>{let result=queues.create_for_reply(name);queues.publish(&jobs,&bus);let _=reply.send(result);},
                     Some(Command::RenameCategories(renames,reply))=>{let result=queues.rename_categories(&mut jobs,renames,&bus);let _=reply.send(result);},
@@ -486,17 +577,30 @@ async fn actor(
                     Some(Command::Remove(id)) => {
                         if jobs.get(&id).is_some_and(has_retained_partial) { reject(&bus,"Recovery files must be resolved before removing this entry. Use the required restart action or inspect its recovery paths.");continue; }
                         if jobs.get(&id).is_some_and(|job| job.snapshot.state.is_terminal() && has_retained_partial(job)) && bus.terminal_pending(id) { reject(&bus, "A partial file needs attention. Read its recovery path before removing the entry."); continue; }
+                        if let Some(job) = jobs.get_mut(&id).filter(|job| job.snapshot.state.is_terminal()) {
+                            if let Some(recovery) = &job.request.recovery {
+                                if let Err(error) = crate::output::discard_checkpoint(recovery) {
+                                    job.snapshot.error = Some(error);
+                                    bus.publish(Event::JobChanged(job.snapshot.clone()));
+                                    continue;
+                                }
+                                job.snapshot.recovery_paths = recovery.store.snapshot().entries.get(&recovery.entry).map(|entry| entry.retained_files.clone()).unwrap_or_default();
+                                if !job.snapshot.recovery_paths.is_empty() {
+                                    reject(&bus, "The saved partial changed. Its recovery path was preserved; inspect it before removing this entry.");
+                                    bus.publish(Event::JobChanged(job.snapshot.clone()));
+                                    continue;
+                                }
+                            }
+                        }
                         if let Some(job) = jobs.get_mut(&id) { job.restart = false; job.resume_after_pause = false; if job.snapshot.state.is_terminal() { jobs.remove(&id); bus.publish(Event::JobRemoved(id)); } else { job.remove = true; cancel_job(job, &bus); if job.snapshot.state.is_terminal() { jobs.remove(&id); bus.publish(Event::JobRemoved(id)); } } }
                     },
                     Some(Command::Retry(id)) => {
                         if jobs.get(&id).is_some_and(|j|j.snapshot.readiness!=EntryReadiness::Ready){reject(&bus,"Supply credentials or confirm the required restart before retrying.");continue;}
                         if let Some(job) = jobs.get_mut(&id) {
                             if !job.snapshot.state.can_retry() { reject(&bus, "Only failed or cancelled entries can be retried."); continue; }
-                            if has_retained_partial(job) { reject(&bus, "A retained partial needs attention. Use Add URL with a new filename; this version cannot resume retained bytes."); continue; }
+                            if has_retained_partial(job) { reject(&bus, "A recovery file needs attention. Inspect its path before retrying."); continue; }
                             if bus.terminal_pending(id) { reject(&bus, "Wait for the previous result to appear before retrying."); continue; }
-                            // Old approval is never reused on retry. prepare() validates again.
-                            reset_job(job, ReplacementPolicy::Deny);
-                            waiting.push_back(id); bus.publish(Event::JobChanged(job.snapshot.clone()));
+                            if restart_job(job, &bus) { waiting.push_back(id); }
                         }
                     },
                     Some(_) => reject(&bus, "Unsupported queue command."),
@@ -510,7 +614,16 @@ async fn actor(
                     match result {
                         Ok(TransferOutcome::Completed { bytes }) if job.snapshot.state != JobState::Cancelling => { job.snapshot.received = bytes; job.snapshot.total = Some(bytes); job.snapshot.state = JobState::Completed; },
                         Ok(TransferOutcome::Completed { .. }) => job.snapshot.state = JobState::Cancelled,
-                        Ok(TransferOutcome::Cancelled) if job.cancel.preserving() => { job.snapshot.state=JobState::Waiting;job.snapshot.deferred=true; },
+                        Ok(TransferOutcome::Cancelled) if job.cancel.preserving() => {
+                            if prepare_replies.contains_key(&id) {
+                                job.snapshot.state = JobState::Paused;
+                                job.snapshot.deferred = true;
+                                job.request.deferred = true;
+                                job.started = false;
+                                job.cancel = TransferControl::new(CancellationToken::new());
+                                job.cancel.set_speed_limit(job.snapshot.speed_limit);
+                            } else { job.snapshot.state=JobState::Waiting;job.snapshot.deferred=true; }
+                        },
                         Ok(TransferOutcome::Cancelled) => {
                             job.snapshot.state=JobState::Cancelled;
                             if let Some(recovery)=&job.request.recovery {if let Err(error)=crate::output::discard_checkpoint(recovery){job.snapshot.state=JobState::Failed;job.snapshot.error=Some(error);}}
@@ -518,6 +631,11 @@ async fn actor(
                         Err(error) => { job.snapshot.state = JobState::Failed; if error.kind==ErrorKind::RestartRequired {job.snapshot.readiness=EntryReadiness::RestartRequired;} job.snapshot.error = Some(error); },
                     }
                     if job.snapshot.state==JobState::Failed && job.request.options.confirmation_required && job.snapshot.readiness==EntryReadiness::Ready {job.snapshot.readiness=EntryReadiness::ConfirmationRequired;}
+                    job.snapshot.refreshable = job.request.recovery.as_ref().and_then(|r| r.checkpoint()).is_some_and(|c| c.durable > 0 && c.total.is_some_and(|total| c.durable < total));
+                    if let Some(reply) = prepare_replies.remove(&id) {
+                        let result = refresh_support::checkpoint(job).map(|_| job.request.source_page.clone());
+                        let _ = reply.send(result);
+                    }
                     job.snapshot.bytes_per_second = 0; job.snapshot.eta_seconds = None;
                     if job.restart && !shutdown && !closing.load(Ordering::Acquire) && !has_retained_partial(job) {
                         // Restart is serialized after cleanup, including a late
@@ -529,6 +647,44 @@ async fn actor(
                     bus.publish(Event::JobChanged(job.snapshot.clone()));
                     if job.remove && !has_retained_partial(job) { jobs.remove(&id); bus.publish(Event::JobRemoved(id)); }
                     else { job.remove = false; }
+                }
+            },
+            result = refresh_tasks.join_next_with_id(), if !refresh_tasks.is_empty() => {
+                let (task_id, verification) = match result.expect("nonempty refresh tasks") {
+                    Ok((task_id, (_, verification))) => (task_id, verification),
+                    Err(error) => (error.id(), Err(JobError::new(ErrorKind::Io, "The refresh verification worker stopped unexpectedly."))),
+                };
+                let Some(job_id) = refresh_task_jobs.remove(&task_id) else { continue; };
+                let Some(pending) = pending_refreshes.remove(&job_id) else { continue; };
+                match pending.reply {
+                    RefreshReply::Manual(reply) => {
+                        let outcome = verification.map_err(|e| e.message).and_then(|verified| {
+                            refresh_support::commit_and_queue(&mut jobs, &mut waiting, &bus, job_id, &pending.checkpoint, pending.candidate, verified)
+                        });
+                        if let Err(error) = &outcome { reject(&bus, error); }
+                        let _ = reply.send(outcome);
+                    }
+                    RefreshReply::Browser { id, lease, reply } => {
+                        let outcome = match verification {
+                            Ok(verified) => lease.try_accept(|| {
+                                refresh_support::commit_and_queue(&mut jobs, &mut waiting, &bus, job_id, &pending.checkpoint, pending.candidate, verified)
+                                    .map_err(|error| { reject(&bus, &error); SubmissionError::RecoveryRequired })?;
+                                Ok(SubmissionReceipt { id: id.clone(), job_id, created_new: false })
+                            }).map_err(|error| match error {
+                                LeaseFailure::Expired => SubmissionError::Expired,
+                                LeaseFailure::Revoked => SubmissionError::Revoked,
+                                LeaseFailure::AlreadyAccepted => SubmissionError::InvalidAction,
+                                LeaseFailure::Action(error) => error,
+                            }),
+                            Err(error) => {
+                                reject(&bus, &error.message);
+                                Err(SubmissionError::RecoveryRequired)
+                            }
+                        };
+                        if outcome.is_err() { lease.revoke(); }
+                        receipts.insert(id, Record { action: SubmissionAction::Refresh(job_id), result: outcome.clone(), cancelled: false, at: Instant::now() });
+                        let _ = reply.send(outcome);
+                    }
                 }
             },
             _ = tick.tick() => {
@@ -547,6 +703,9 @@ async fn actor(
                     }
                     job.snapshot.received = update.received; job.snapshot.total = update.total;
                     job.snapshot.resume_capable = update.resume_capable;
+                    if job.snapshot.state == JobState::Paused {
+                        job.snapshot.refreshable = job.request.recovery.as_ref().and_then(|r| r.checkpoint()).is_some_and(|c| c.durable > 0 && c.total.is_some_and(|total| c.durable < total));
+                    }
                     job.snapshot.bytes_per_second = if job.snapshot.state == JobState::Running { job.speed_meter.sample(Instant::now(), update.received) } else { 0 };
                     job.snapshot.eta_seconds = update.total.and_then(|t| t.checked_sub(update.received)).and_then(|remaining| remaining.checked_div(job.snapshot.bytes_per_second));
                     bus.publish(Event::JobChanged(job.snapshot.clone()));
@@ -628,10 +787,12 @@ fn has_retained_partial(job: &Job) -> bool {
     if !job.snapshot.recovery_paths.is_empty() {
         return true;
     }
-    job.snapshot
-        .error
-        .as_ref()
-        .is_some_and(|e| e.retained_partial.is_some() || e.retained_original.is_some())
+    job.snapshot.error.as_ref().is_some_and(|error| {
+        error.retained_original.is_some() || error.retained_partial.as_ref().is_some_and(|path| {
+            job.request.recovery.as_ref().and_then(|recovery| recovery.checkpoint())
+                .is_none_or(|checkpoint| checkpoint.partial != *path)
+        })
+    })
 }
 fn same_destination(a: &std::path::Path, b: &std::path::Path) -> bool {
     a.to_string_lossy().replace('/', "\\").to_lowercase()
@@ -644,6 +805,7 @@ fn reset_job(job: &mut Job, replacement: ReplacementPolicy) {
     job.snapshot.error = None;
     job.snapshot.last_try = None;
     job.snapshot.resume_capable = false;
+    job.snapshot.refreshable = false;
     job.snapshot.bytes_per_second = 0;
     job.snapshot.eta_seconds = None;
     job.speed_meter.reset(Instant::now(), 0);
@@ -661,9 +823,18 @@ fn reset_job(job: &mut Job, replacement: ReplacementPolicy) {
 fn restart_job(job: &mut Job, bus: &EventBus) -> bool {
     job.restart = false;
     if let Some(recovery) = &job.request.recovery {
-        if let Err(error) = recovery.clear() {
+        if let Err(error) = crate::output::discard_checkpoint(recovery) {
             job.snapshot.error = Some(error);
             job.snapshot.state = JobState::Failed;
+            bus.publish(Event::JobChanged(job.snapshot.clone()));
+            return false;
+        }
+        job.snapshot.recovery_paths = recovery.store.snapshot().entries.get(&recovery.entry)
+            .map(|entry| entry.retained_files.clone()).unwrap_or_default();
+        if !job.snapshot.recovery_paths.is_empty() {
+            job.snapshot.state = JobState::Failed;
+            job.snapshot.error = Some(JobError::new(ErrorKind::Cleanup,
+                "The old partial changed and was preserved. Inspect its recovery path before restarting."));
             bus.publish(Event::JobChanged(job.snapshot.clone()));
             return false;
         }
@@ -688,14 +859,8 @@ fn restart_job(job: &mut Job, bus: &EventBus) -> bool {
     }
 }
 fn shutdown_job(job: &mut Job, bus: &EventBus) {
-    let retained = job.request.options.confirmation_required
-        || job.request.recovery.as_ref().is_some_and(|r| {
-            r.store
-                .snapshot()
-                .entries
-                .get(&r.entry)
-                .is_some_and(|e| !e.ephemeral)
-        });
+    // Ordinary downloads now have the same held recovery path as queued jobs.
+    let retained = job.request.recovery.is_some();
     if retained {
         if job.started && !job.snapshot.state.is_terminal() {
             job.cancel.preserve_on_exit();
@@ -760,18 +925,14 @@ fn admit(
         .options
         .validate()
         .map_err(|_| SubmissionError::InvalidAction)?;
-    let entry_id = if request.deferred
-        || request.options.confirmation_required
-        || request.options.temporary_directory.is_some()
-    {
-        Some(
-            queues
-                .admit(&mut request, pending_admission)
-                .map_err(|_| SubmissionError::InvalidAction)?,
-        )
-    } else {
-        None
-    };
+    // Every transfer needs a durable checkpoint so ordinary failures can
+    // retain their owned partial for address refresh. Ephemeral entries are
+    // removed after successful completion or explicit cancellation.
+    let entry_id = Some(
+        queues
+            .admit(&mut request, pending_admission)
+            .map_err(|_| SubmissionError::InvalidAction)?,
+    );
     bus.register_request(id, &request);
     let snapshot = JobSnapshot {
         id,
@@ -795,6 +956,7 @@ fn admit(
         received: 0,
         total: None,
         resume_capable: false,
+        refreshable: false,
         speed_limit: None,
         bytes_per_second: 0,
         eta_seconds: None,

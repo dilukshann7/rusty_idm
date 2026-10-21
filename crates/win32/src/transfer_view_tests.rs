@@ -34,6 +34,7 @@ fn job() -> JobSnapshot {
         received: 8354,
         total: Some(10000),
         resume_capable: false,
+        refreshable: false,
         speed_limit: None,
         bytes_per_second: 1_048_576,
         eta_seconds: Some(0),

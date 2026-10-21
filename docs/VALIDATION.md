@@ -19,6 +19,12 @@ build/package results. They do not establish live desktop/browser behavior.
 | Context menu | Right-click row targeting, keyboard menu, state-dependent actions and double-click preference |
 | Layout | 100/125/150/200 percent DPI, monitor changes, compact controls and keyboard access |
 
+## Unreleased address refresh source (2026-10-21)
+
+The [address refresh guide](refresh-download-address.md) describes the new flow. The extension's JavaScript suite passed 31/31 tests, including secret handling, short-lived redirect headers, browser fallback and user pause preservation. Offline Cargo manifest inspection, changed-file Rust parsing with `rustfmt --emit stdout`, the Chrome source script, duplicate dialog-ID inspection and `git diff --check` also passed. Existing source files were already outside `rustfmt --check` formatting, so the full `verify-source.ps1` formatting gate is not claimed here.
+
+Rust compilation, Rust tests and live Windows/browser checks were not run under the workspace's no-build instruction. Authenticated refresh, restart-held recovery, storage failure and exact-range behavior still need runtime acceptance on Windows.
+
 No test suite or live acceptance is claimed by packaging the release. The exact
 artifact hashes and sizes are in the published SHA256SUMS.txt and release manifest.
 The v0.1.0 build record is available in

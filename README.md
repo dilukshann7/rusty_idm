@@ -1,83 +1,61 @@
 # Rusty Download Manager
 
-**v0.1.0 · Windows 10/11 x64 · Native Win32 · Rust**
+![Rusty Download Manager icon](assets/branding/rusty-128.png)
 
-![Rusty icon](assets/branding/rusty-128.png)
+**Pre-alpha · Windows 10/11 x64 · Rust + native Win32**
 
-A compact Windows download manager that stays in the notification area and can
-catch supported public downloads from Chrome.
+Rusty Download Manager is an early Windows download manager built with Rust and native Windows controls. It can download HTTP/HTTPS files, manage transfers from the notification area, and hand off eligible public downloads from a browser extension.
 
-## Install
+This project is under active development. The current source contains features that are newer than the published v0.1.0 installer, and several of those changes have only had source checks. Expect rough edges and changes to saved data or behavior.
 
-Download the [v0.1.0 Windows installer](https://github.com/dilukshann7/rusty_idm/releases/download/v0.1.0/RustyDownloadManager-0.1.0-windows-x64-setup.exe).
-Setup installs for your Windows user, offers background startup at sign-in, and
-provides a **Connect Chrome** helper. Chrome requires one-time extension and
-website-access approval. Existing integration preferences are preserved on upgrade.
+## What is in the project
 
-Close or minimize the manager to keep it running in the background. Use its
-tray icon to reopen it, add a URL, change options or Exit. Rusty operates while
-Windows is awake and you are signed in. The portable ZIP also runs without an
-installer; it does not configure startup or Chrome automatically.
+| Area | Current source |
+| --- | --- |
+| Downloads | HTTP/HTTPS transfers, up to two active jobs, progress, pause/resume, cancellation, per-download speed limits and saved partials for unfinished jobs. |
+| Windows app | Native File Info, progress and completion dialogs; download list and categories; notification-area controls and optional sign-in startup. |
+| Files | Duplicate-download choices, numbered copies, guarded replacement and partial-file recovery paths. |
+| Organization | Manual queues, queue ordering and optional schedules. Unfinished jobs use encrypted current-user storage and are held for review after a restart. |
+| Browser capture | A Chrome extension, native-messaging host and local bridge for eligible downloads. The source also includes browser-specific profiles for Brave, Edge and Firefox. |
+| Address refresh | A paused, failed or restored download with saved bytes can use a pasted URL or a new browser capture. Rusty checks the local checkpoint, total size and three bounded byte samples before continuing the existing job. |
 
-See the [user guide](docs/USER_GUIDE.md), [release notes](docs/RELEASE_NOTES.md)
-and the release's `SHA256SUMS.txt`. This release is unsigned.
+These are source-level capabilities, not a claim that every path has passed live acceptance testing. Ordinary automatic browser capture remains limited to eligible HTTP/HTTPS GET downloads without observed credentials. When the user explicitly arms address refresh, the extension can pass short-lived headers from the matching browser GET. Private browsing, uploads and streaming media remain outside automatic handoff.
 
-## Features
+## Refresh an expired link
 
-- HTTP/HTTPS downloads with two simultaneous transfers.
-- Pause/resume, per-download speed limits, progress/speed/ETA and cancellation.
-- Compact native dialogs, a [download context menu](docs/download-context-menu.md),
-  and a [completion dialog](docs/completion-dialog.md) with file-opening actions.
-- Duplicate-link choices, numbered copies and guarded file replacement.
-- Chrome capture through an extension, native host and secured local bridge.
-- Tray/background operation, hidden login startup and single-instance launches.
+Pause the download or select a failed or restored held job with saved bytes. Right-click it and choose **Refresh download address**. Paste a fresh HTTP/HTTPS link, or choose **Wait for browser download** and start the same download again in the browser. Rusty asks which browser capture to use before it takes over. If the original browser capture included a source page, the dialog can open it.
 
-The published v0.1.0 release has session-only history and does not include named
-queues or restart recovery. Move/Rename, segmentation, address refresh and automatic
-updates are not included. Chrome capture covers
-supported public GET downloads; private/authenticated/streaming downloads remain
-with the browser. Preferences use LocalAppData, including portable execution.
+Rusty checks the owned partial and requests exact byte ranges from the replacement URL. It compares the response's total size and up to 64 KiB from the beginning, middle and end of the saved bytes. A failed check leaves the saved partial in place; a declined or failed browser handoff stays in the browser. This sampling is a practical identity check, not a full comparison of unseen bytes. Protected browser headers stay in memory and must be captured again after an app restart. See [address refresh](docs/refresh-download-address.md) for behavior and limits.
 
-## Unreleased source: queues and Windows icons
+## Current limits
 
-The `codex/queues-and-system-icons` source adds named manual queues, category
-hierarchies and Windows-associated file icons. **Download Later** saves to Main
-download queue; **Tasks → Queues** manages selected queues and their order.
-Creating a queue opens a compact Scheduler with Schedule and Files in the queue
-tabs. Its sidebar menu provides Start/Stop/Edit/Schedule/Delete/Create controls.
-Optional startup, one-time or weekday starts and stop times run through the engine.
-Automatic options default off; missed starts are skipped.
-Queue state and checkpoint metadata use Windows current-user encryption under
-LocalAppData. After restart, unfinished entries remain held. Credentials must be
-entered again; unsafe continuation requires an explicit restart confirmation.
-Ordinary unqueued downloads keep their session lifecycle.
+- Unfinished jobs are held after restart, but this is recovery state rather than a permanent download history. Completed and explicitly cancelled ordinary jobs are cleaned from that state.
+- Continuing saved bytes requires exact HTTP ranges and a known total. A changed file, missing range support or expired authorization can stop the download while retaining its partial.
+- Address refresh is limited to HTTP/HTTPS GET. It has source and JavaScript test coverage, but this change has not been compiled or exercised in a live Windows/browser session yet.
+- The browser profiles beyond Chrome and the newer queue/configuration UI still need live desktop/browser acceptance checks. Firefox distribution also needs its separate signing step.
+- There is no automatic updater or code-signing certificate. Rusty needs an awake Windows session to run.
 
-See the [queue and recovery guide](docs/queues-and-system-icons.md). These source
-changes have not been compiled or exercised in the desktop app. They are not part
-of the published v0.1.0 installer.
+## Try the published build
 
-## Unreleased source: compact configuration
+The [v0.1.0 Windows installer](https://github.com/dilukshann7/rusty_idm/releases/download/v0.1.0/RustyDownloadManager-0.1.0-windows-x64-setup.exe) is an **older experimental snapshot**, not a build of all the features listed above. The release also provides a portable archive and checksums. It is unsigned.
 
-The feature branch also adds four native Options pages, shared capture rules for
-Chrome/Brave/Edge/Firefox, category folders, optional clipboard capture, held URL
-batches, queue selection, provisional File Info transfers and external scanner
-integration. New automatic features default off. See the
-[configuration guide](docs/configuration.md) for setup, behavior and deferred
-runtime checks. These source changes are not in the published installer and
-have not been compiled or launched during this implementation.
+The v0.1.0 build supports basic transfers, tray operation and optional Chrome capture. It does **not** include named queues, restart recovery, the newer Options pages or the additional browser profiles. Read the [v0.1.0 user guide](docs/USER_GUIDE.md) and [release notes](docs/RELEASE_NOTES.md) for instructions and limits that apply to that build.
 
-## Source and release build
+## Work with the source
 
-The workspace contains `engine`, `win32`, `browser-bridge` and `native-host` crates.
-Dependencies are pinned in Cargo.lock. Original branding is reproducible with
-`scripts/generate-branding.ps1`; toolbar artwork has a separate generator.
+The workspace has four Rust crates:
 
-With Rust MSVC, the Windows SDK resource compiler, Python and Inno Setup available,
-`scripts/build-release.ps1 -Compiler <path-to-ISCC.exe>` builds the static-CRT
-optimized binaries, stages required files/licenses and produces setup/portable/
-extension artifacts with SHA-256 checksums. It does not launch the app, run the
-installer or run test suites. Generated release files live under ignored `dist/`.
+| Path | Purpose |
+| --- | --- |
+| `crates/engine` | Transfers, queue state, scheduling and file safety. |
+| `crates/win32` | Native Windows interface and app lifecycle. |
+| `crates/browser-bridge` | Browser handoff protocol and local transport. |
+| `crates/native-host` | Native-messaging host used by browser extensions. |
 
-See [development](docs/DEVELOPMENT.md), [Chrome integration](docs/chrome-integration.md)
-and [validation](docs/VALIDATION.md) for source structure and verification boundaries.
-MIT license; see [third-party notices](THIRD_PARTY.md).
+Windows 10/11 x64, the Rust MSVC toolchain and the Windows SDK are needed for the desktop app. Python 3, Node.js and Inno Setup are used by the source checks or release packaging. Dependencies are pinned in `Cargo.lock`.
+
+See [development](docs/DEVELOPMENT.md) for the repository layout and build instructions, [Chrome integration](docs/chrome-integration.md) for extension setup, and [validation](docs/VALIDATION.md) for what has and has not been exercised. The current [configuration](docs/configuration.md) and [queue](docs/queues-and-system-icons.md) guides describe newer source work.
+
+## License
+
+MIT. See [third-party notices](THIRD_PARTY.md).

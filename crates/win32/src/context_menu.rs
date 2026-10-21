@@ -59,6 +59,7 @@ pub fn show(
                 job.destination.parent().is_some_and(|path| path.is_dir()),
             ),
             (REDOWNLOAD, can_redownload(job)),
+            (REFRESH_ADDRESS, job.refreshable && (matches!(job.state, rusty_engine::JobState::Paused | rusty_engine::JobState::Failed) || job.state == rusty_engine::JobState::Waiting && job.deferred)),
             (START, actions.start),
             (STOP, actions.stop),
             (REMOVE, actions.remove),

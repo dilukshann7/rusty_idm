@@ -23,7 +23,7 @@ async function desktopPolicy(force = false) {
       if (reply.status !== 'policy' || reply.browser !== BROWSER) { policy = null; return null; }
       const changed = !policy || policy.revision !== reply.policy.revision;
       const reconnect = policy && policy.restart_generation !== reply.policy.restart_generation;
-      policy = reply.policy; policyAt = Date.now();
+      policy = { ...reply.policy, refresh_armed: reply.refresh_armed === true }; policyAt = Date.now();
       if (changed) await ensureMenu(); if (reconnect) native.failPort(); return policy;
     } catch { policy = null; return null; }
     finally { policyFlight = null; }
@@ -86,13 +86,16 @@ chrome.downloads.onCreated.addListener(item => {
   void (async () => {
     await loadPreferences();
     const referrerDigest = item.referrer ? await fingerprintReferrer(item.referrer) : null;
-    if (!await desktopPolicy()) return;
+    if (!await desktopPolicy(true)) return;
     const evidence = await observations.list();
-    const result = classifyDownload(item, evidence, { ...preferences, referrerDigest }, Date.now());
+    const result = classifyDownload(item, evidence, { ...preferences, referrerDigest, refreshArmed: policy.refresh_armed }, Date.now());
     if (!result.eligible) return;
     const intent = modifiers(evidence.find(o => o.requestId === result.observationId));
     if (intent.prevented || !allowed(policy, BROWSER, item, intent.forced)) return;
+    const context = observations.takeContext(result.observationId);
     Object.assign(result.request, { forced: intent.forced, original_url: item.url, policy_revision: policy.revision, browser: BROWSER });
+    if (supportedUrl(item.referrer)) result.request.source_page = item.referrer;
+    if (policy.refresh_armed && context.length) result.request.request_context = context;
     await observations.consume(result.observationId);
     const id = crypto.randomUUID(); activeIds.add(id); let outcome;
     try { outcome = await handoff(item.id, { ...result.request, id }, browser, native, ledger); } finally { activeIds.delete(id); }

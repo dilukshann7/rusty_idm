@@ -15,7 +15,7 @@ export async function fallback(record, browser, native, ledger, { keepAttention 
   } catch { await ledger.put({ ...record, phase: 'fallback_pending', attention: 'browser_resume_failed' }); return 'needs_attention'; }
 }
 export async function finishAccepted(record, reply, browser, native, ledger) {
-  record = { ...record, phase: 'accepted', receipt: { job_id: reply.job_id, created_new: reply.created_new } };
+  record = { ...record, ...await ledger.get(record.id), phase: 'accepted', receipt: { job_id: reply.job_id, created_new: reply.created_new } };
   await ledger.put(record);
   // An immutable replay receipt may outlive an owned-job abort; confirm current status.
   const status = await nativeStatus(native, record.id);

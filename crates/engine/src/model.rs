@@ -1,5 +1,6 @@
 use std::{fmt, path::PathBuf, time::SystemTime};
 use url::Url;
+use rusty_browser_bridge::protocol::RequestHop;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct JobId(pub u64);
@@ -94,6 +95,10 @@ pub struct DownloadRequest {
     pub deferred: bool,
     pub category: Option<String>,
     pub description: String,
+    /// Browser page that initiated the download, if captured.
+    pub source_page: Option<String>,
+    /// Short-lived browser request headers; never serialized in queue state.
+    pub(crate) request_context: Vec<RequestHop>,
     pub(crate) authorization: Option<Authorization>,
     /// Set only after the caller explicitly chooses an additional copy.
     pub allow_duplicate: bool,
@@ -153,6 +158,8 @@ pub struct JobSnapshot {
     pub received: u64,
     pub total: Option<u64>,
     pub resume_capable: bool,
+    /// A verified saved partial can be checked against a fresh address.
+    pub refreshable: bool,
     /// Per-download bytes/sec; None means unlimited.
     pub speed_limit: Option<u64>,
     pub bytes_per_second: u64,
@@ -358,6 +365,8 @@ pub fn validate_request(
         deferred: false,
         category: None,
         description: String::new(),
+        source_page: None,
+        request_context: Vec::new(),
         authorization: None,
         allow_duplicate: false,
         recovery: None,
