@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn restored_history_does_not_open_progress_windows_and_unknown_dates_are_explicit() {
+    let mut snapshot = job();
+    snapshot.state = JobState::Failed;
+    snapshot.restored = true;
+    let mut tracker = AutoOpenTracker::default();
+    assert!(!tracker.should_open(&snapshot));
+    snapshot.state = JobState::Completed;
+    assert!(!tracker.should_open(&snapshot));
+    let text = format_transfer(&snapshot);
+    assert!(text.details.contains("Added: Unknown"));
+    assert!(text.details.contains("Finished: Unknown"));
+    snapshot.restored = false;
+    snapshot.state = JobState::Running;
+    snapshot.last_try = Some(SystemTime::UNIX_EPOCH + Duration::from_secs(2));
+    assert!(tracker.should_open(&snapshot));
+}
+
+#[test]
 fn paused_status_preserves_percentage_and_reports_resume_capability() {
     let mut snapshot = job();
     snapshot.state = JobState::Paused;
@@ -38,7 +56,10 @@ fn job() -> JobSnapshot {
         speed_limit: None,
         bytes_per_second: 1_048_576,
         eta_seconds: Some(0),
+        created_at: None,
+        finished_at: None,
         last_try: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1)),
+        retry: None,
         error: None,
         deferred: false,
         category: None,
@@ -56,6 +77,29 @@ fn status_fields_match_the_reference_precision_without_overflow() {
     big.received = u64::MAX;
     big.total = Some(u64::MAX);
     assert!(format_transfer(&big).downloaded.ends_with("( 100.00 % )"));
+}
+#[test]
+fn pending_recovery_shows_attempt_and_last_error_without_claiming_terminal_failure() {
+    let mut snapshot = job();
+    snapshot.state = JobState::Waiting;
+    snapshot.retry = Some(rusty_engine::RetryStatus {
+        attempt: 1,
+        max_retries: 3,
+        next_retry_at: None,
+    });
+    snapshot.error = Some(rusty_engine::JobError::transient(
+        rusty_engine::ErrorKind::Network,
+        "Connection interrupted",
+    ));
+    let view = format_transfer(&snapshot);
+    assert_eq!(view.status, "Retry 1/3 paused");
+    assert!(view.details.contains("Connection interrupted"));
+    assert_eq!(view.rate, "0 Bytes/sec");
+    assert_eq!(pause_action(&snapshot), Some(false));
+    snapshot.retry.as_mut().unwrap().next_retry_at = Some(SystemTime::now());
+    assert_eq!(pause_action(&snapshot), Some(true));
+    snapshot.retry = None;
+    assert_eq!(pause_action(&snapshot), None);
 }
 #[test]
 fn unknown_length_does_not_invent_percentage_or_eta_and_empty_completion_is_truthful() {

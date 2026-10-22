@@ -11,7 +11,7 @@ Approved implementation scope (2026-10-19).
 
 ## Deferred validation
 
-Builds, tests, fixture servers, application launches and publishing require a separate explicit request. Source review covers category overrides and filters, Shell icon ownership, queue ordering and concurrency, stop/completion races, browser acknowledgement, restart-held recovery, credentials, invalid ranges, partial tampering, interrupted finalization and storage failure. Existing settings remain compatible; ordinary unqueued transfers do not gain complete persisted history.
+Builds, tests, fixture servers, application launches and publishing require a separate explicit request. Source review covers category overrides and filters, Shell icon ownership, queue ordering and concurrency, stop/completion races, browser acknowledgement, restart-held recovery, credentials, invalid ranges, partial tampering, interrupted finalization and storage failure. Current source adds [permanent history](permanent-history.md) for ordinary completed/failed transfers; this older queue change originally covered recovery only.
 
 ## Using the controls
 
@@ -19,7 +19,7 @@ Builds, tests, fixture servers, application launches and publishing require a se
 - Download Later saves a held entry in Main download queue. Start Download remains immediate.
 - Select a queue in the sidebar, then use Queues > Start or Stop. The status bar reports held/running/stopping, active/completed/total counts and parallelism. Completed members remain listed; order and membership appear in Description.
 - Queues > Create/Rename/Delete manages names; Main is permanent and only empty custom queues can be deleted. Select a row to Move Up/Down. Right-click Add to queue or Delete from queue changes membership after the entry is paused.
-- Direct Start/Resume starts the selected entry. Failed entries require an explicit action; running queues continue past them.
+- Direct Start/Resume starts the selected entry. Temporary HTTP(S) failures can enter [automatic recovery](automatic-recovery.md); running queues continue other files during retry delays. Exhausted or permanent failures require an explicit action.
 - On restored entries, right-click Supply credentials when required. Confirm required restart explicitly discards verified saved bytes. A modified partial is preserved separately and its path remains in the recovery record/Properties.
 
 ## Storage and ownership
@@ -36,7 +36,7 @@ A checkpoint syncs bytes before storing file identity, durable length, prefix an
 | Shell icons | Change HTML default app, embedded EXE icons, missing file fallback, association invalidation, DPI rebuild, row replacement |
 | Scheduling | Saved order, one/two per queue and two globally, direct Resume, immediate Stop, pause acknowledgement and completion race |
 | Membership | One queue per entry, paused requirement, reordering, unassign held with checkpoint, permanent Main, delete-empty guard |
-| Failures | Continue to next entry, no automatic retry, storage failure holds queue, recovered failed entries held |
+| Failures | Continue other entries during retry delays, bounded retries, Stop blocks retries, storage failure holds queue, exhausted failures held |
 | Browser | Persist before acknowledgement, storage rejection, expired lease rollback, duplicate actions use same scheduler |
 | Recovery | Restart-held, credentials absent, valid range, changed validators, ignored ranges, truncated/tampered/missing partial |
 | Finalization | Before/after original move, before/after partial commit, original restoration, destination race and ambiguous files |
@@ -52,7 +52,7 @@ The Scheduler has a queue tree, an ordered file list, one/two simultaneous downl
 
 Schedules can start a queue when Rusty starts, once on a date, or weekly on selected weekdays (all seven means daily). An optional stop time pauses the queue. These options default off. Times are Windows local time, shown with 24-hour minute precision. Rusty must be running and Windows awake: a missed start is skipped, while an already-armed stop overdue after sleep is applied on wake. Overnight stop windows are supported. Stop deadlines use absolute instants: a repeated daylight-saving hour selects the next actual occurrence, and a nonexistent stop minute is skipped to its next valid day. Starting an already-running queue does not postpone its stop.
 
-Timed starts process eligible entries through the existing queue order and global limits. Completed/failed entries are not automatically redownloaded/retried. Missing credentials and recovery/restart requirements still block their entries. Occurrences are recorded before admission; clock rollback and repeated daylight-saving minutes cannot replay the same occurrence. Stop now keeps future start settings; disable the start setting to prevent future timed runs. A due stop takes precedence over an automatic start in the same local minute.
+Timed starts process eligible entries through the existing queue order and global limits. Completed entries and terminal failures are not automatically restarted; pending transient recovery resumes through the normal limits. Missing credentials and recovery/restart requirements still block their entries. Occurrences are recorded before admission; clock rollback and repeated daylight-saving minutes cannot replay the same occurrence. Stop now keeps future start settings; disable the start setting to prevent future timed runs. A due stop takes precedence over an automatic start in the same local minute.
 
 Schema-1 queue definitions migrate in memory to schema 2 with scheduling disabled. The next accepted mutation saves schema 2 to the same encrypted `queues.v1.dpapi` container; IDs, checkpoint and journal records are preserved. Unsupported/corrupt storage remains preserved and blocked.
 

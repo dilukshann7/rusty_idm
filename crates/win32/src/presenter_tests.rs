@@ -24,7 +24,10 @@ fn snapshot(id: u64, filename: &str, state: JobState) -> JobSnapshot {
         speed_limit: None,
         bytes_per_second: 0,
         eta_seconds: None,
+        created_at: None,
+        finished_at: None,
         last_try: None,
+        retry: None,
         error: None,
     }
 }
@@ -36,6 +39,36 @@ fn paused_download_can_resume_stop_and_stop_all() {
     assert!(actions.start && actions.stop && actions.stop_all);
     assert!(!actions.retry);
     assert!(view.active());
+}
+#[test]
+fn recovery_text_counts_down_and_keeps_start_and_stop_available() {
+    let now = std::time::SystemTime::UNIX_EPOCH;
+    let mut job = snapshot(1, "retry.bin", JobState::Waiting);
+    job.retry = Some(rusty_engine::RetryStatus {
+        attempt: 2,
+        max_retries: 3,
+        next_retry_at: Some(now + std::time::Duration::from_millis(4100)),
+    });
+    job.error = Some(rusty_engine::JobError::transient(
+        rusty_engine::ErrorKind::Network,
+        "Disconnected",
+    ));
+    assert_eq!(retry_status(&job, now).unwrap(), "Retry 2/3 in 5 sec");
+    assert_eq!(
+        retry_status(&job, now + std::time::Duration::from_secs(5)).unwrap(),
+        "Retry 2/3 waiting for a connection"
+    );
+    job.deferred = true;
+    assert_eq!(retry_status(&job, now).unwrap(), "Retry 2/3 paused");
+    assert!(format_snapshot(&job)
+        .columns
+        .iter()
+        .any(|column| column.contains("Disconnected")));
+    let mut view = ViewModel::default();
+    view.apply(Event::JobChanged(job));
+    let actions = view.actions(Some(JobId(1)));
+    assert!(actions.start && actions.stop && actions.remove);
+    assert!(!actions.retry);
 }
 #[test]
 fn filters_preserve_identity_and_classify_case_insensitively() {

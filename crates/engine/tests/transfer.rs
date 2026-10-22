@@ -57,11 +57,13 @@ async fn http_failure_truncation_encoding_and_redirect_limit_leave_no_output() {
             ReplacementPolicy::Deny,
         )
         .unwrap();
-        assert!(
-            transfer(request, CancellationToken::new(), Arc::new(|_| {}))
-                .await
-                .is_err(),
-            "{path}"
+        let error = transfer(request, CancellationToken::new(), Arc::new(|_| {}))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.retryable,
+            matches!(path, "/503" | "/broken"),
+            "{path}: {error}"
         );
         assert!(!target.exists());
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);

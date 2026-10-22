@@ -80,6 +80,10 @@ set Windows creation time; it never replaces the normal resume validators.
   Browser captures keep Rusty's fixed User-Agent.
 - Modification-time tolerance still requires file identity, recorded byte hashes
   and strict server Range/If-Range validation.
+- **Connection → Automatic recovery** sets retries (0–100, default 3) and a fixed
+  delay (1–3600 seconds, default 5) for newly added HTTP(S) downloads. Zero retries
+  disables recovery. Queues continue other files while retries wait. See
+  [automatic recovery](automatic-recovery.md) for continuation guards and controls.
 - Virus checking invokes the chosen `.exe` directly, with one argument per line
   and a standalone `{file}` argument. There is no shell command string. At most
   two checks run concurrently; each is bounded to ten minutes. Open/Open with
@@ -87,8 +91,9 @@ set Windows creation time; it never replaces the normal resume validators.
   the downloaded file and requires explicit confirmation before opening it.
 
 Queued entries and retained recovery records use versioned current-user-encrypted
-storage. No passwords are persisted. Ordinary unqueued downloads retain their
-existing session/exit lifecycle; this does not add full permanent history.
+storage. No passwords are persisted. Current source also retains ordinary
+completed/failed downloads as [permanent history](permanent-history.md), with
+dates and categories, until explicitly deleted.
 
 ## Verification boundary
 

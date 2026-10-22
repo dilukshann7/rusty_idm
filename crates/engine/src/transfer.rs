@@ -358,7 +358,8 @@ async fn stream(
     output: &mut OutputFile,
 ) -> Result<TransferOutcome, JobError> {
     // System proxy discovery is reqwest's system-proxy feature; no custom proxy,
-    // referer, credentials logging, certificate bypass or application retries.
+    // referer, credentials logging, certificate bypass or transport-local retries.
+    // Automatic recovery is scheduled by the engine actor after checkpointing.
     request
         .options
         .validate()
@@ -482,7 +483,9 @@ async fn stream(
                 biased;
                 _ = cancel.cancelled() => return Ok(TransferOutcome::Cancelled),
                 _ = control.pause_requested() => continue 'connect,
-                response = tokio::time::timeout(Duration::from_secs(30), builder.send()) => response.ok().and_then(Result::ok).ok_or_else(|| JobError::new(ErrorKind::Network, "Connection failed, timed out, or exceeded the redirect limit. Check the URL, network and TLS certificate."))?,
+                response = tokio::time::timeout(Duration::from_secs(30), builder.send()) => response
+                    .map_err(|_| JobError::transient(ErrorKind::Network, "Connection timed out."))?
+                    .map_err(|error| JobError::request(&error, "Connection failed, timed out, or exceeded the redirect limit. Check the URL, network and TLS certificate."))?,
             }
         };
         if !request.request_context.is_empty()
@@ -497,8 +500,8 @@ async fn stream(
         if !response.status().is_success()
             || (response.status() == reqwest::StatusCode::PARTIAL_CONTENT && !resume)
         {
-            return Err(JobError::new(
-                ErrorKind::Http,
+            return Err(JobError::http(
+                response.status().as_u16(),
                 format!(
                     "Server returned HTTP {}. A complete response is required.",
                     response.status().as_u16()
@@ -585,7 +588,7 @@ async fn stream(
                     _=cancel.cancelled()=>return Ok(TransferOutcome::Cancelled),
                     _=control.pause_requested()=>continue 'connect,
                     _=tokio::time::sleep_until(checkpoint_at+Duration::from_secs(5)), if control.recovery().is_some()=>{output.checkpoint().await?;checkpoint_at=tokio::time::Instant::now();},
-                    chunk=tokio::time::timeout_at(read_deadline,response.chunk())=>break chunk.map_err(|_|JobError::new(ErrorKind::Network,"The response made no progress for 30 seconds."))?.map_err(|_|JobError::new(ErrorKind::Network,"The response was interrupted."))?,
+                    chunk=tokio::time::timeout_at(read_deadline,response.chunk())=>break chunk.map_err(|_|JobError::transient(ErrorKind::Network,"The response made no progress for 30 seconds."))?.map_err(|_|JobError::transient(ErrorKind::Network,"The response was interrupted."))?,
                 }
             };
             let Some(chunk) = chunk else {
@@ -634,7 +637,7 @@ async fn stream(
             }
         }
         if total.is_some_and(|total| received != total) {
-            return Err(JobError::new(
+            return Err(JobError::transient(
                 ErrorKind::LengthMismatch,
                 "The response ended before its declared length.",
             ));

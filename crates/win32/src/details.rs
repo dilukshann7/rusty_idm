@@ -41,6 +41,7 @@ struct Detail {
     hwnd: Cell<HWND>,
     stop: Cell<bool>,
     pause: Cell<Option<bool>>,
+    pause_action: Cell<Option<bool>>,
     limit: Cell<Option<Option<u64>>>,
     state: Cell<JobState>,
     limit_initialized: Cell<bool>,
@@ -103,6 +104,7 @@ impl DetailsWindows {
                 hwnd: Cell::new(HWND::default()),
                 stop: Cell::new(false),
                 pause: Cell::new(None),
+                pause_action: Cell::new(None),
                 limit: Cell::new(None),
                 state: Cell::new(snapshot.state),
                 limit_initialized: Cell::new(false),
@@ -221,6 +223,8 @@ impl DetailsWindows {
             );
         }
         let active = snapshot.state.is_active() && snapshot.state != JobState::Cancelling;
+        let pause_action = crate::transfer_view::pause_action(snapshot);
+        detail.pause_action.set(pause_action);
         for id in [LIMIT_ENABLED, LIMIT_APPLY] {
             if let Ok(control) = item(hwnd, id) {
                 unsafe {
@@ -232,18 +236,15 @@ impl DetailsWindows {
         set_value(
             hwnd,
             DETAIL_PAUSE,
-            match snapshot.state {
-                JobState::Paused => "&Resume",
-                JobState::Pausing => "Pausing...",
+            match (snapshot.state, pause_action) {
+                (_, Some(false)) => "&Resume",
+                (JobState::Pausing, _) => "Pausing...",
                 _ => "&Pause",
             },
         );
         if let Ok(button) = item(hwnd, DETAIL_PAUSE) {
             unsafe {
-                let _ = EnableWindow(
-                    button,
-                    matches!(snapshot.state, JobState::Running | JobState::Paused),
-                );
+                let _ = EnableWindow(button, pause_action.is_some());
             }
         }
         detail.cancellable.set(active);
@@ -483,11 +484,10 @@ unsafe fn detail_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             }
             WM_COMMAND => match (wparam.0 & 0xffff) as i32 {
                 DETAIL_PAUSE => {
-                    match detail.state.get() {
-                        JobState::Running => detail.pause.set(Some(true)),
-                        JobState::Paused => detail.pause.set(Some(false)),
-                        _ => return 1,
-                    }
+                    let Some(pause) = detail.pause_action.get() else {
+                        return 1;
+                    };
+                    detail.pause.set(Some(pause));
                     wake_owner(detail);
                     return 1;
                 }

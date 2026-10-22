@@ -67,7 +67,14 @@ Properties; Properties can be opened again after completion.
 Unfinished jobs are held for review after restart. Select a held job to resume
 it if its saved bytes and server response can be verified. A changed response,
 missing range support or altered partial may require a fresh download address
-or an explicit restart from zero. Completed downloads are not permanent history.
+or an explicit restart from zero. Completed and failed downloads now remain in
+the list across restarts until explicitly deleted. The Last Try column is
+preserved; Transfer Details shows Added, Last Try and Finished dates in local
+time. Older unknown dates remain Unknown. Delete and Delete Completed remove
+history records without deleting completed destination files. History holds up
+to 10,000 entries within the shared 16 MiB encrypted storage limit; at capacity,
+delete records before adding more. See [permanent history](permanent-history.md)
+for migration, recovery and storage-failure behavior.
 
 ## Connections per file
 

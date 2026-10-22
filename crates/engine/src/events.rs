@@ -200,7 +200,10 @@ mod tests {
             speed_limit: None,
             bytes_per_second: 0,
             eta_seconds: None,
+            created_at: None,
+            finished_at: None,
             last_try: None,
+            retry: None,
             error: None,
         }
     }

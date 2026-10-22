@@ -9,6 +9,12 @@ pub struct AutoOpenTracker {
 }
 impl AutoOpenTracker {
     pub fn should_open(&mut self, job: &JobSnapshot) -> bool {
+        if job.restored {
+            if let Some(attempt) = job.last_try {
+                self.attempts.insert(job.id, attempt);
+            }
+            return false;
+        }
         let Some(attempt) = job.last_try else {
             return false;
         };
@@ -31,6 +37,18 @@ pub struct TransferText {
     pub rate: String,
     pub time_left: String,
     pub details: String,
+}
+/// The detail button requests Pause (true), Resume (false), or stays disabled.
+pub fn pause_action(job: &JobSnapshot) -> Option<bool> {
+    match job.state {
+        JobState::Running => Some(true),
+        JobState::Paused => Some(false),
+        JobState::Waiting => job
+            .retry
+            .as_ref()
+            .map(|retry| retry.next_retry_at.is_some()),
+        _ => None,
+    }
 }
 pub fn format_transfer(job: &JobSnapshot) -> TransferText {
     let percent = match job.total {
@@ -63,6 +81,7 @@ pub fn format_transfer(job: &JobSnapshot) -> TransferText {
         },
     }
     .to_owned();
+    let status = crate::presenter::retry_status(job, SystemTime::now()).unwrap_or(status);
     let size = job.total.map(amount).unwrap_or_else(|| "Unknown".into());
     let downloaded = match percent {
         Some(p) => format!("{}  ( {}.{:02} % )", amount(job.received), p / 100, p % 100),
@@ -109,8 +128,14 @@ pub fn format_transfer(job: &JobSnapshot) -> TransferText {
         .map(|p| format!("\r\nPreserved recovery file: {}", p.display()))
         .collect::<String>();
     let error = format!("{error}{retained}");
+    let date = |value: Option<SystemTime>| {
+        value
+            .map(crate::presenter::local_time)
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "Unknown".into())
+    };
     let details = format!(
-        "File: {}\r\nSave as: {}\r\nTotal: {}\r\nConnections: 1\r\nResume capability: {}\r\nSpeed limit: {}\r\n{}{}",
+        "File: {}\r\nSave as: {}\r\nTotal: {}\r\nConnections: 1\r\nResume capability: {}\r\nSpeed limit: {}\r\nAdded: {}\r\nLast Try: {}\r\nFinished: {}\r\n{}{}",
         job.filename,
         job.destination.display(),
         job.total
@@ -118,6 +143,9 @@ pub fn format_transfer(job: &JobSnapshot) -> TransferText {
             .unwrap_or_else(|| "Unknown".into()),
         if job.resume_capable { "Yes" } else { "No (resume restarts from beginning)" },
         job.speed_limit.map(|n| format!("{}/sec", amount(n))).unwrap_or_else(|| "Unlimited".into()),
+        date(job.created_at),
+        date(job.last_try),
+        date(job.finished_at),
         job.description,
         error
     );

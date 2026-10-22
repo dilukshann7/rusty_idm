@@ -806,7 +806,7 @@ pub async fn controlled_transfer(
     .await
     {
         Ok(preview) => preview,
-        Err(error) if control.token().is_cancelled() => return Ok(TransferOutcome::Cancelled),
+        Err(_) if control.token().is_cancelled() => return Ok(TransferOutcome::Cancelled),
         Err(error) => return Err(error),
     };
     if !selection.matches(&current) {

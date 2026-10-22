@@ -150,10 +150,21 @@ async fn fetch(
     if let Some(auth) = &request.authorization {
         builder = builder.basic_auth(&auth.login, Some(&auth.password));
     }
-    tokio::time::timeout(Duration::from_secs(30), builder.send())
+    let response = tokio::time::timeout(Duration::from_secs(30), builder.send())
         .await
-        .map_err(|_| JobError::new(ErrorKind::Network, "Range connection timed out."))?
-        .map_err(|_| JobError::new(ErrorKind::Network, "Range connection failed."))
+        .map_err(|_| JobError::transient(ErrorKind::Network, "Range connection timed out."))?
+        .map_err(|error| JobError::request(&error, "Range connection failed."))?;
+    let error = JobError::http(
+        response.status().as_u16(),
+        format!(
+            "Server returned HTTP {} for a range.",
+            response.status().as_u16()
+        ),
+    );
+    if error.retryable {
+        return Err(error);
+    }
+    Ok(response)
 }
 fn identity(response: &Response) -> bool {
     response
@@ -162,24 +173,39 @@ fn identity(response: &Response) -> bool {
         .iter()
         .all(|h| h.to_str().is_ok_and(|s| s.eq_ignore_ascii_case("identity")))
 }
-async fn probe(client: &Client, request: &DownloadRequest) -> Option<Probe> {
-    let mut response = fetch(client, request, 0, 0, None).await.ok()?;
+async fn probe(client: &Client, request: &DownloadRequest) -> Result<Option<Probe>, JobError> {
+    let mut response = fetch(client, request, 0, 0, None).await?;
+    if !response.status().is_success() {
+        let error = JobError::http(
+            response.status().as_u16(),
+            format!(
+                "Server returned HTTP {} during range probing.",
+                response.status().as_u16()
+            ),
+        );
+        return if error.retryable {
+            Err(error)
+        } else {
+            Ok(None)
+        };
+    }
     if response.status() != StatusCode::PARTIAL_CONTENT
         || !identity(&response)
         || response.content_length() != Some(1)
     {
-        return None;
+        return Ok(None);
     }
     let total = response
         .headers()
-        .get(CONTENT_RANGE)?
-        .to_str()
-        .ok()?
-        .strip_prefix("bytes 0-0/")?
-        .parse::<u64>()
-        .ok()?;
+        .get(CONTENT_RANGE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("bytes 0-0/"))
+        .and_then(|value| value.parse::<u64>().ok());
+    let Some(total) = total else {
+        return Ok(None);
+    };
     if total < 2 * MIN_RANGE {
-        return None;
+        return Ok(None);
     }
     let last_modified = response
         .headers()
@@ -189,18 +215,31 @@ async fn probe(client: &Client, request: &DownloadRequest) -> Option<Probe> {
         .map(str::to_owned);
     let validator = refresh::strong_etag(response.headers())
         .map(Validator::Etag)
-        .or_else(|| last_modified.clone().map(Validator::Modified))?;
+        .or_else(|| last_modified.clone().map(Validator::Modified));
+    let Some(validator) = validator else {
+        return Ok(None);
+    };
     let final_url = response.url().as_str().to_owned();
-    let bytes = response.chunk().await.ok()??;
-    if bytes.len() != 1 || response.chunk().await.ok()?.is_some() {
-        return None;
+    let bytes = tokio::time::timeout(Duration::from_secs(30), response.chunk())
+        .await
+        .map_err(|_| JobError::transient(ErrorKind::Network, "Range probe timed out."))?
+        .map_err(|_| JobError::transient(ErrorKind::Network, "Range probe was interrupted."))?
+        .ok_or_else(|| {
+            JobError::transient(ErrorKind::LengthMismatch, "Range probe ended early.")
+        })?;
+    let trailing = tokio::time::timeout(Duration::from_secs(30), response.chunk())
+        .await
+        .map_err(|_| JobError::transient(ErrorKind::Network, "Range probe timed out."))?
+        .map_err(|_| JobError::transient(ErrorKind::Network, "Range probe was interrupted."))?;
+    if bytes.len() != 1 || trailing.is_some() {
+        return Ok(None);
     }
-    Some(Probe {
+    Ok(Some(Probe {
         total,
         final_url,
         validator,
         last_modified,
-    })
+    }))
 }
 fn valid_response(response: &Response, probe: &Probe, start: u64, end: u64) -> bool {
     response.status() == StatusCode::PARTIAL_CONTENT
@@ -299,6 +338,15 @@ async fn worker_inner(
         _ = stop.cancelled() => return Ok(()),
         result = fetch(&client, &request, start, end, Some(probe.validator.value())) => result?,
     };
+    if !response.status().is_success() {
+        return Err(JobError::http(
+            response.status().as_u16(),
+            format!(
+                "Server returned HTTP {} for a range.",
+                response.status().as_u16()
+            ),
+        ));
+    }
     if !valid_response(&response, &probe, start, end) {
         return Err(mismatch(
             "The server changed the file or returned an invalid range. Saved bytes were preserved.",
@@ -327,8 +375,8 @@ async fn worker_inner(
             _ = stop.cancelled() => return Ok(()),
             changed = endpoint.changed(), if !acknowledged => { if changed.is_err() { return Ok(()); } continue; },
             result = tokio::time::timeout(Duration::from_secs(30), response.chunk()) =>
-                result.map_err(|_| JobError::new(ErrorKind::Network, "A range made no progress for 30 seconds."))?
-                    .map_err(|_| JobError::new(ErrorKind::Network, "A range connection was interrupted."))?,
+                result.map_err(|_| JobError::transient(ErrorKind::Network, "A range made no progress for 30 seconds."))?
+                    .map_err(|_| JobError::transient(ErrorKind::Network, "A range connection was interrupted."))?,
         };
         let Some(chunk) = chunk else {
             break;
@@ -343,7 +391,7 @@ async fn worker_inner(
         position += chunk.len() as u64;
     }
     if position != end + 1 {
-        return Err(JobError::new(
+        return Err(JobError::transient(
             ErrorKind::LengthMismatch,
             "A range ended before its declared length.",
         ));
@@ -435,7 +483,7 @@ pub(super) async fn run(
         tokio::select! { biased;
             _ = control.token.cancelled() => return Ok(Some(TransferOutcome::Cancelled)),
             _ = control.pause_requested() => continue,
-            result = probe(&client, request) => break result,
+            result = probe(&client, request) => break result?,
         }
     };
     let Some(probe) = probed else {
@@ -861,15 +909,25 @@ async fn verify_saved(
                 return Err(mismatch("Saved-byte recheck returned a changed range."));
             }
             let mut actual = Vec::with_capacity(size);
-            while let Some(chunk) = response
-                .chunk()
+            while let Some(chunk) = tokio::time::timeout(Duration::from_secs(30), response.chunk())
                 .await
-                .map_err(|_| mismatch("Saved-byte recheck was interrupted."))?
+                .map_err(|_| {
+                    JobError::transient(ErrorKind::Network, "Saved-byte recheck timed out.")
+                })?
+                .map_err(|_| {
+                    JobError::transient(ErrorKind::Network, "Saved-byte recheck was interrupted.")
+                })?
             {
                 if actual.len() + chunk.len() > size {
                     return Err(mismatch("Saved-byte recheck exceeded its range."));
                 }
                 actual.extend_from_slice(&chunk);
+            }
+            if actual.len() < size {
+                return Err(JobError::transient(
+                    ErrorKind::LengthMismatch,
+                    "Saved-byte recheck ended early.",
+                ));
             }
             if actual != expected {
                 return Err(mismatch(
