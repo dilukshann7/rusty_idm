@@ -50,6 +50,13 @@ pub fn item(dialog: HWND, id: i32) -> windows::core::Result<HWND> {
 /// Called on the GUI thread for an explicit browser handoff or activation.
 pub fn bring_to_front(hwnd: HWND) {
     unsafe {
+        // A File Info dialog cannot surface correctly while its root owner is
+        // minimized. Restore it before showing the owned dialog (also used by
+        // the modeless provisional File Info form).
+        let owner = GetAncestor(hwnd, GA_ROOTOWNER);
+        if !owner.is_invalid() && owner != hwnd && IsIconic(owner).as_bool() {
+            let _ = ShowWindow(owner, SW_RESTORE);
+        }
         let _ = ShowWindow(
             hwnd,
             if IsIconic(hwnd).as_bool() {

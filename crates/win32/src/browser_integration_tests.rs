@@ -96,12 +96,52 @@ fn same_capture_id_shows_one_dialog_and_closing_revokes_pending() {
         .dispatch(Operation::Capture(request.clone()), tx)
         .unwrap();
     assert_eq!(rx.recv().unwrap().result, ReplyStatus::Pending);
+    assert!(
+        controller.take_activation(),
+        "explicit capture activates immediately"
+    );
     let (tx, _rx) = mpsc::sync_channel(4);
     router.dispatch(Operation::Capture(request), tx).unwrap();
+    assert!(
+        !controller.take_activation(),
+        "replayed capture does not activate again"
+    );
     let inbox = controller.drain();
     assert_eq!(inbox.len(), 1);
     controller.close();
     assert_ne!(inbox[0].lease.state(), LeaseState::Pending);
+    drop(router);
+    drop(controller);
+    engine.try_send(rusty_engine::Command::Shutdown).unwrap();
+    engine.join().unwrap();
+}
+
+#[test]
+fn metadata_queries_and_rejected_media_submissions_do_not_activate() {
+    let engine = rusty_engine::spawn_engine_in_memory(Arc::new(|| {}));
+    let controller = BrowserController::new(engine.client(), Arc::new(|| {}));
+    let router = controller.router();
+    for operation in [
+        Operation::Ping,
+        Operation::Policy(BrowserKind::Chrome),
+        Operation::MediaInspect {
+            id: target_id(),
+            request: MediaInspectRequest {
+                url: "https://www.youtube.com/watch?v=abcdefghijk".into(),
+                kind: MediaKind::Youtube,
+                browser: BrowserKind::Chrome,
+            },
+        },
+        Operation::MediaSubmit {
+            id: target_id(),
+            request: media_request(),
+        },
+    ] {
+        let (tx, rx) = mpsc::sync_channel(4);
+        router.dispatch(operation, tx).unwrap();
+        let _ = rx.recv().unwrap();
+        assert!(!controller.take_activation());
+    }
     drop(router);
     drop(controller);
     engine.try_send(rusty_engine::Command::Shutdown).unwrap();
