@@ -86,6 +86,15 @@ exact byte ranges and supplies a consistent strong ETag or Last-Modified value.
 Other responses continue through one stream. The limit of two active files is
 unchanged.
 
+Open **Show details** in a transfer window to see each segment's byte range,
+progress bar, connection status and speed. **Connections: N active (limit M)**
+counts logical data-transfer requests, not physical TCP sockets or metadata
+probes. Completed segments remain listed while other segments finish. Speeds
+exclude saved bytes and local file assembly; paused or finished transfers show
+zero active connections and zero speed. Unknown-length responses use an
+indeterminate progress bar. Connection details are session-only: restored history
+and media backends without worker telemetry show **Connections: Unavailable**.
+
 Segmented downloads save later byte ranges in separate temporary files beside
 the main partial. Keep all recovery files together if you move them for manual
 inspection. Rusty verifies each saved range before resuming and checks adjacent

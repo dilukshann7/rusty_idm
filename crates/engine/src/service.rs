@@ -35,6 +35,8 @@ use speed::SpeedMeter;
 mod recovery_support;
 #[path = "service_refresh.rs"]
 mod refresh_support;
+#[path = "service_telemetry.rs"]
+mod telemetry;
 
 #[cfg(test)]
 #[path = "service_history_tests.rs"]
@@ -277,6 +279,7 @@ fn spawn(
 }
 
 struct Job {
+    transfer_meter: telemetry::TransferMeter,
     retry: recovery_support::RetryRuntime,
     request: DownloadRequest,
     retired_history: Option<crate::storage::Recovery>,
@@ -677,7 +680,7 @@ async fn actor(
                 let (task_id, result) = match result.expect("nonempty tasks") { Ok((id, result)) => (id, result), Err(error) => (error.id(), Err(JobError::new(ErrorKind::Io, "The transfer worker stopped unexpectedly."))) };
                 let Some(id) = task_jobs.remove(&task_id) else { continue; };
                 if let Some(job) = jobs.get_mut(&id) {
-                    if let Some(p) = progress.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) { job.snapshot.received = p.received; job.snapshot.total = p.total; job.snapshot.resume_capable = p.resume_capable; }
+                    if let Some(p) = progress.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) { job.snapshot.received = p.received; job.snapshot.total = p.total; job.snapshot.resume_capable = p.resume_capable; if let Some(details) = p.details { job.transfer_meter.update(details, Instant::now()); } }
                     match result {
                         Ok(TransferOutcome::Completed { bytes }) if job.snapshot.state != JobState::Cancelling => { job.snapshot.received = bytes; job.snapshot.total = Some(bytes); job.snapshot.state = JobState::Completed; },
                         Ok(TransferOutcome::Completed { .. }) => job.snapshot.state = JobState::Cancelled,
@@ -709,6 +712,7 @@ async fn actor(
                         let result = refresh_support::checkpoint(job).map(|_| job.request.source_page.clone());
                         let _ = reply.send(result);
                     }
+                    job.transfer_meter.finish(Instant::now(), job.snapshot.state);
                     job.snapshot.bytes_per_second = 0; job.snapshot.eta_seconds = None;
                     if job.restart && !shutdown && !closing.load(Ordering::Acquire) && !has_retained_partial(job) {
                         // Restart is serialized after cleanup, including a late
@@ -777,7 +781,7 @@ async fn actor(
                         continue;
                     }
                     if !matches!(job.snapshot.state, JobState::Running | JobState::Pausing) { continue; }
-                    let update = updates.get(id).copied().unwrap_or(TransferProgress { received: job.snapshot.received, total: job.snapshot.total, resume_capable: job.snapshot.resume_capable, paused: false });
+                    let update = updates.get(id).cloned().unwrap_or(TransferProgress { received: job.snapshot.received, total: job.snapshot.total, resume_capable: job.snapshot.resume_capable, paused: false, details: None });
                     if job.request.options.confirmation_required && update.paused && job.snapshot.state==JobState::Running {job.snapshot.state=JobState::Paused;}
                     if job.snapshot.state == JobState::Pausing && update.paused {
                         job.snapshot.state = JobState::Paused;
@@ -785,6 +789,7 @@ async fn actor(
                     }
                     job.snapshot.received = update.received; job.snapshot.total = update.total;
                     job.snapshot.resume_capable = update.resume_capable;
+                    if let Some(details) = update.details { job.transfer_meter.update(details, Instant::now()); }
                     if job.snapshot.state == JobState::Paused {
                         job.snapshot.refreshable = job.request.recovery.as_ref().and_then(|r| r.checkpoint()).is_some_and(|c| c.received() > 0 && c.total.is_some_and(|total| c.received() < total));
                     }
@@ -853,6 +858,10 @@ async fn actor(
                 job.snapshot.last_try = Some(SystemTime::now());
             }
             job.speed_meter.reset(Instant::now(), job.snapshot.received);
+            if !job.started {
+                job.transfer_meter = Default::default();
+                job.snapshot.transfer_details = None;
+            }
             publish_job(job, &bus);
             if queues.store.has_pending_history() {
                 job.snapshot.state = JobState::Waiting;
@@ -872,10 +881,12 @@ async fn actor(
             job.started = true;
             let updates = progress.clone();
             let sink: ProgressSink = Arc::new(move |p| {
-                updates
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert(id, p);
+                let mut pending = updates.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(previous) = pending.get_mut(&id) {
+                    previous.coalesce(p);
+                } else {
+                    pending.insert(id, p);
+                }
             });
             let future = executor.execute(job.request.clone(), job.cancel.clone(), sink);
             let task = tasks.spawn(future);
@@ -889,6 +900,23 @@ fn reject(bus: &EventBus, message: &str) {
     });
 }
 fn publish_job(job: &mut Job, bus: &EventBus) {
+    job.snapshot.transfer_details = job
+        .transfer_meter
+        .snapshot(Instant::now(), job.snapshot.state);
+    if let Some(details) = &job.snapshot.transfer_details {
+        job.snapshot.bytes_per_second = details
+            .segments
+            .iter()
+            .fold(0u64, |sum, row| sum.saturating_add(row.bytes_per_second));
+        job.snapshot.eta_seconds = if job.snapshot.state == JobState::Running {
+            job.snapshot
+                .total
+                .and_then(|total| total.checked_sub(job.snapshot.received))
+                .and_then(|remaining| remaining.checked_div(job.snapshot.bytes_per_second))
+        } else {
+            None
+        };
+    }
     if !job.snapshot.restored {
         if let Some(recovery) = &job.request.recovery {
             if let Some(saved) = recovery.store.history(recovery.entry) {
@@ -1042,6 +1070,8 @@ fn reset_job(job: &mut Job, replacement: ReplacementPolicy) -> Result<(), JobErr
     job.snapshot.bytes_per_second = 0;
     job.snapshot.eta_seconds = None;
     job.speed_meter.reset(Instant::now(), 0);
+    job.transfer_meter = Default::default();
+    job.snapshot.transfer_details = None;
     job.snapshot.deferred = false;
     job.request.deferred = false;
     job.request.replacement = replacement;
@@ -1238,6 +1268,7 @@ fn admit(
         refreshable: false,
         speed_limit: None,
         bytes_per_second: 0,
+        transfer_details: None,
         eta_seconds: None,
         created_at: request.recovery.as_ref().and_then(|r| {
             r.store
@@ -1259,6 +1290,7 @@ fn admit(
     jobs.insert(
         id,
         Job {
+            transfer_meter: Default::default(),
             retry: Default::default(),
             request,
             retired_history: None,

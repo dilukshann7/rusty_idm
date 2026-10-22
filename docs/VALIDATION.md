@@ -1,5 +1,27 @@
 # Validation
 
+## Accurate transfer details and local integration (2026-10-22)
+
+The authorized focused test run passed 34 tests: three telemetry-meter tests,
+one progress-coalescing test, 11 segmented-transfer tests, five single-stream
+tests, four transfer-details lifecycle tests and 10 transfer-view presenter tests.
+This compiles the current engine and native UI test targets; it does not establish
+live desktop behavior or full history/recovery acceptance.
+
+`interrupted_ranges_resume_checkpoints_and_publish_exact_bytes` fails with
+`RestartRequired: A saved range file changed. All bytes were preserved.` The
+same failure was reproduced on the untouched pre-telemetry source baseline.
+It was excluded from the final focused run; the range-file safety checks were
+preserved. Automatic recovery of interrupted segmented transfers therefore
+remains a known acceptance gap.
+
+Source checks passed for 107 Rust files, workspace manifests/lock, resources,
+assets, document links, and JavaScript/PowerShell syntax before local integration.
+Feature review found no remaining actionable findings after fixing telemetry
+coalescing and retry-wait worker states. No full Rust test suite, release build,
+application launch, dev server, packaging or publishing was performed. Native
+table appearance, scrolling and accessibility still need desktop verification.
+
 ## Automatic recovery source change (2026-10-22)
 
 The [automatic recovery](automatic-recovery.md) change has source-only validation.

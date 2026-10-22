@@ -124,6 +124,7 @@ impl OutputFile {
                         total: Some(source.durable),
                         resume_capable: true,
                         paused: true,
+                        details: None,
                     });
                 }
                 if !control.wait_until_resumed_output(self).await? {
@@ -135,6 +136,7 @@ impl OutputFile {
                         total: Some(source.durable),
                         resume_capable: true,
                         paused: false,
+                        details: None,
                     });
                 }
                 self.file

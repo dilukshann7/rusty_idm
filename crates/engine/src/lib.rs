@@ -13,6 +13,7 @@ pub mod service;
 mod storage;
 pub mod submissions;
 pub mod transfer;
+mod transfer_details;
 
 pub use events::Event;
 pub use model::*;
@@ -24,3 +25,4 @@ pub use service::{
     spawn_engine, spawn_engine_in_memory, Command, CommandError, EngineClient, EngineHandle,
     EngineJoinError,
 };
+pub use transfer_details::*;

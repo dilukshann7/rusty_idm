@@ -212,6 +212,8 @@ pub struct JobSnapshot {
     /// Per-download bytes/sec; None means unlimited.
     pub speed_limit: Option<u64>,
     pub bytes_per_second: u64,
+    /// Live session telemetry; absent for restored history and unsupported backends.
+    pub transfer_details: Option<crate::TransferDetails>,
     pub eta_seconds: Option<u64>,
     pub created_at: Option<SystemTime>,
     pub finished_at: Option<SystemTime>,

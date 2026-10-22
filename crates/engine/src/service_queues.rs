@@ -292,6 +292,7 @@ impl QueueRuntime {
                     }),
                 speed_limit: None,
                 bytes_per_second: 0,
+                transfer_details: None,
                 eta_seconds: None,
                 created_at: entry.history.created_at,
                 finished_at: entry.history.finished_at,
@@ -307,6 +308,7 @@ impl QueueRuntime {
             jobs.insert(
                 id,
                 Job {
+                    transfer_meter: Default::default(),
                     retry: Default::default(),
                     request,
                     retired_history: None,

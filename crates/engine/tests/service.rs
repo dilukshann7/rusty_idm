@@ -36,6 +36,7 @@ impl TransferExecutor for Held {
                 total: None,
                 resume_capable: false,
                 paused: false,
+                details: None,
             });
             cancel.token().cancelled().await;
             // Model cleanup that must finish before admission/removal/shutdown.

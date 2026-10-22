@@ -4,7 +4,7 @@ use crate::{
     output::{self, OutputFile},
     refresh,
     storage::SegmentCheckpoint,
-    DownloadRequest, ErrorKind, JobError,
+    ConnectionProgress, DownloadRequest, ErrorKind, JobError, SegmentProgress, SegmentState,
 };
 use reqwest::{
     header::{ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_RANGE, IF_RANGE, LAST_MODIFIED, RANGE},
@@ -69,6 +69,7 @@ struct Probe {
     last_modified: Option<String>,
 }
 struct Span {
+    telemetry: SegmentProgress,
     start: u64,
     end: u64,
     saved: u64,
@@ -84,10 +85,11 @@ impl Span {
     }
 }
 enum Event {
+    Connected(usize),
     Chunk(usize, Vec<u8>),
     Done(usize),
     Ack(usize, u64, bool),
-    Failed(JobError),
+    Failed(usize, JobError),
 }
 fn mismatch(message: &str) -> JobError {
     JobError::new(ErrorKind::RestartRequired, message)
@@ -314,12 +316,40 @@ fn received(primary: u64, spans: &[Span]) -> u64 {
         sum.saturating_add(s.saved.saturating_sub(primary.saturating_sub(s.start)))
     })
 }
-fn report(progress: &ProgressSink, primary: u64, spans: &[Span], total: u64, paused: bool) {
+fn report(
+    progress: &ProgressSink,
+    primary: u64,
+    spans: &[Span],
+    total: u64,
+    paused: bool,
+    connection_limit: u8,
+) {
     progress(TransferProgress {
         received: received(primary, spans),
         total: Some(total),
         resume_capable: true,
         paused,
+        details: Some(ConnectionProgress {
+            connection_limit,
+            segments: spans
+                .iter()
+                .map(|span| {
+                    let mut row = span.telemetry.clone();
+                    row.start = span.start;
+                    row.end = Some(span.end);
+                    row.received = span.saved;
+                    if span.complete()
+                        && !row.state.is_active()
+                        && row.state != SegmentState::Failed
+                    {
+                        row.state = SegmentState::Completed;
+                    } else if paused && row.state != SegmentState::Completed {
+                        row.state = SegmentState::Paused;
+                    }
+                    row
+                })
+                .collect(),
+        }),
     });
 }
 
@@ -351,6 +381,9 @@ async fn worker_inner(
         return Err(mismatch(
             "The server changed the file or returned an invalid range. Saved bytes were preserved.",
         ));
+    }
+    if !emit(&sender, &stop, Event::Connected(id)).await {
+        return Ok(());
     }
     let mut position = start;
     let mut target = end;
@@ -401,7 +434,7 @@ async fn worker_inner(
 }
 fn launch(
     id: usize,
-    spans: &[Span],
+    spans: &mut [Span],
     client: &Client,
     request: &DownloadRequest,
     probe: &Probe,
@@ -410,7 +443,10 @@ fn launch(
     workers: &mut JoinSet<()>,
     active: &mut BTreeMap<usize, watch::Sender<u64>>,
 ) {
-    let span = &spans[id];
+    let span = &mut spans[id];
+    span.telemetry.generation += 1;
+    span.telemetry.transferred = 0;
+    span.telemetry.state = SegmentState::Connecting;
     let (end_sender, end_receiver) = watch::channel(span.end);
     active.insert(id, end_sender);
     let (client, request, probe, sender, stop) = (
@@ -437,7 +473,7 @@ fn launch(
         )
         .await
         {
-            let _ = emit(&sender, &reporting_stop, Event::Failed(error)).await;
+            let _ = emit(&sender, &reporting_stop, Event::Failed(id, error)).await;
         }
     });
 }
@@ -462,6 +498,16 @@ pub(super) async fn run(
     if request.options.max_connections == 1 && !previously_segmented {
         return Ok(None);
     }
+    progress(TransferProgress {
+        received: saved.as_ref().map_or(0, |c| c.received()),
+        total: saved.as_ref().and_then(|c| c.total),
+        resume_capable: saved.as_ref().is_some_and(|c| c.durable > 0),
+        paused: false,
+        details: Some(ConnectionProgress {
+            connection_limit: request.options.max_connections,
+            segments: vec![],
+        }),
+    });
     let client = client(request)?;
     let probed = loop {
         if control.token.is_cancelled() {
@@ -475,6 +521,7 @@ pub(super) async fn run(
                     .as_ref()
                     .is_some_and(|checkpoint| checkpoint.durable > 0),
                 paused: true,
+                details: None,
             });
             if !control.wait_until_resumed_output(output).await? {
                 return Ok(Some(TransferOutcome::Cancelled));
@@ -518,6 +565,15 @@ pub(super) async fn run(
         segments.sort_by_key(|s| s.start);
         let first_end = segments.first().map_or(probe.total - 1, |s| s.start - 1);
         spans.push(Span {
+            telemetry: SegmentProgress {
+                id: spans.len() as u32,
+                start: 0,
+                end: None,
+                received: 0,
+                transferred: 0,
+                generation: 0,
+                state: SegmentState::Waiting,
+            },
             start: 0,
             end: first_end,
             saved: primary.min(first_end + 1),
@@ -545,6 +601,15 @@ pub(super) async fn run(
                 }
             };
             spans.push(Span {
+                telemetry: SegmentProgress {
+                    id: spans.len() as u32,
+                    start: 0,
+                    end: None,
+                    received: 0,
+                    transferred: 0,
+                    generation: 0,
+                    state: SegmentState::Waiting,
+                },
                 start: s.start,
                 end: s.end,
                 saved: s.saved,
@@ -563,6 +628,15 @@ pub(super) async fn run(
         };
         let (start, end) = ranges[0];
         spans.push(Span {
+            telemetry: SegmentProgress {
+                id: spans.len() as u32,
+                start: 0,
+                end: None,
+                received: 0,
+                transferred: 0,
+                generation: 0,
+                state: SegmentState::Waiting,
+            },
             start,
             end,
             saved: primary,
@@ -573,6 +647,15 @@ pub(super) async fn run(
             let (file, segment) =
                 output::reserve_segment(output.partial_path(), start, end).await?;
             spans.push(Span {
+                telemetry: SegmentProgress {
+                    id: spans.len() as u32,
+                    start: 0,
+                    end: None,
+                    received: 0,
+                    transferred: 0,
+                    generation: 0,
+                    state: SegmentState::Waiting,
+                },
                 start,
                 end,
                 saved: 0,
@@ -588,6 +671,14 @@ pub(super) async fn run(
         Some(probe.total),
         Some(probe.final_url.clone()),
         probe.validator.etag(),
+    );
+    report(
+        &progress,
+        primary,
+        &spans,
+        probe.total,
+        false,
+        request.options.max_connections,
     );
     if primary == probe.total && previously_segmented {
         if matches!(&probe.validator, Validator::Modified(_)) {
@@ -659,7 +750,14 @@ pub(super) async fn run(
             .map_err(|_| JobError::new(ErrorKind::Io, "Cannot position saved range bytes."))?;
     }
     let mut primary_len = primary;
-    report(&progress, primary_len, &spans, probe.total, false);
+    report(
+        &progress,
+        primary_len,
+        &spans,
+        probe.total,
+        false,
+        request.options.max_connections,
+    );
     while spans.iter().any(|s| !s.complete()) {
         if control.token.is_cancelled() {
             save(output, &spans, &probe.validator, vec![]).await?;
@@ -667,7 +765,14 @@ pub(super) async fn run(
         }
         if control.is_paused() {
             save(output, &spans, &probe.validator, vec![]).await?;
-            report(&progress, primary_len, &spans, probe.total, true);
+            report(
+                &progress,
+                primary_len,
+                &spans,
+                probe.total,
+                true,
+                request.options.max_connections,
+            );
             if !control.wait_until_resumed_output(output).await? {
                 return Ok(Some(TransferOutcome::Cancelled));
             }
@@ -680,7 +785,7 @@ pub(super) async fn run(
             if !spans[id].complete() && active.len() < request.options.max_connections as usize {
                 launch(
                     id,
-                    &spans,
+                    &mut spans,
                     &client,
                     request,
                     &probe,
@@ -691,6 +796,14 @@ pub(super) async fn run(
                 );
             }
         }
+        report(
+            &progress,
+            primary_len,
+            &spans,
+            probe.total,
+            false,
+            request.options.max_connections,
+        );
         let mut pending_split: Option<(usize, u64, u64)> = None;
         let mut checkpoint_at = tokio::time::Instant::now();
         loop {
@@ -705,8 +818,11 @@ pub(super) async fn run(
                 }
                 _ = control.pause_requested() => {
                     quiesce(&stop, &mut workers).await;
+                    for span in &mut spans {
+                        if span.telemetry.state.is_active() { span.telemetry.state = SegmentState::Paused; }
+                    }
                     save(output, &spans, &probe.validator, vec![]).await?;
-                    report(&progress, primary_len, &spans, probe.total, true);
+                    report(&progress, primary_len, &spans, probe.total, true, request.options.max_connections);
                     if !control.wait_until_resumed_output(output).await? { return Ok(Some(TransferOutcome::Cancelled)); }
                     break;
                 }
@@ -725,6 +841,10 @@ pub(super) async fn run(
                     }
                 }
                 event = receiver.recv() => match event {
+                    Some(Event::Connected(id)) => {
+                        spans[id].telemetry.state = SegmentState::Receiving;
+                        report(&progress, primary_len, &spans, probe.total, false, request.options.max_connections);
+                    }
                     Some(Event::Chunk(id, bytes)) => {
                         if spans[id].saved.checked_add(bytes.len() as u64).is_none_or(|n| n > spans[id].end - spans[id].start + 1) {
                             quiesce(&stop, &mut workers).await;
@@ -740,12 +860,18 @@ pub(super) async fn run(
                             else { spans[id].file.as_mut().expect("sidecar").write_all(&bytes[at..end]).await
                                 .map_err(|_| JobError::new(ErrorKind::Io, "Writing a range file failed."))?; }
                             spans[id].saved += (end-at) as u64;
+                            spans[id].telemetry.transferred = spans[id].telemetry.transferred.saturating_add((end-at) as u64);
                             at = end;
-                            report(&progress, primary_len, &spans, probe.total, false);
+                            report(&progress, primary_len, &spans, probe.total, false, request.options.max_connections);
                         }
                     }
-                    Some(Event::Failed(error)) => {
+                    Some(Event::Failed(id, error)) => {
                         quiesce(&stop, &mut workers).await;
+                        for (index, span) in spans.iter_mut().enumerate() {
+                            if index == id { span.telemetry.state = SegmentState::Failed; }
+                            else if span.telemetry.state.is_active() { span.telemetry.state = SegmentState::Cancelled; }
+                        }
+                        report(&progress, primary_len, &spans, probe.total, false, request.options.max_connections);
                         save(output, &spans, &probe.validator, vec![]).await?;
                         return Err(error);
                     }
@@ -755,10 +881,14 @@ pub(super) async fn run(
                             if waiting == id { pending_split = None; }
                         }
                         if !spans[id].complete() {
+                            spans[id].telemetry.state = SegmentState::Failed;
+                            report(&progress, primary_len, &spans, probe.total, false, request.options.max_connections);
                             quiesce(&stop, &mut workers).await;
                             save(output, &spans, &probe.validator, vec![]).await?;
                             return Err(JobError::new(ErrorKind::LengthMismatch, "A range ended before all bytes were saved."));
                         }
+                        spans[id].telemetry.state = SegmentState::Completed;
+                        report(&progress, primary_len, &spans, probe.total, false, request.options.max_connections);
                         if pending_split.is_none() && spans.len() < MAX_SEGMENTS
                             && active.len() < request.options.max_connections as usize {
                             let candidate = active.keys().copied().max_by_key(|i| spans[*i].remaining());
@@ -778,11 +908,14 @@ pub(super) async fn run(
                             if candidate == id && proposed == split_end && accepted {
                                 spans[id].end = split_end;
                                 let (file, segment) = output::reserve_segment(output.partial_path(), split_end + 1, old_end).await?;
-                                spans.push(Span { start: split_end + 1, end: old_end, saved: 0,
+                                spans.push(Span {
+                telemetry: SegmentProgress { id: spans.len() as u32, start: 0, end: None, received: 0,
+                    transferred: 0, generation: 0, state: SegmentState::Waiting }, start: split_end + 1, end: old_end, saved: 0,
                                     file: Some(file), path: Some(segment.partial) });
                                 save(output, &spans, &probe.validator, vec![]).await?;
                                 let next = spans.len() - 1;
-                                launch(next, &spans, &client, request, &probe, &sender, &stop, &mut workers, &mut active);
+                                launch(next, &mut spans, &client, request, &probe, &sender, &stop, &mut workers, &mut active);
+                                report(&progress, primary_len, &spans, probe.total, false, request.options.max_connections);
                             }
                         }
                     }
@@ -811,9 +944,17 @@ pub(super) async fn run(
             return Ok(Some(TransferOutcome::Cancelled));
         }
     }
-    assemble(output, &mut spans, control, &probe, &progress, primary_len)
-        .await
-        .map(Some)
+    assemble(
+        output,
+        &mut spans,
+        control,
+        &probe,
+        &progress,
+        primary_len,
+        request.options.max_connections,
+    )
+    .await
+    .map(Some)
 }
 
 async fn verify_saved_controlled(
@@ -832,7 +973,14 @@ async fn verify_saved_controlled(
         }
         if control.is_paused() {
             save(output, spans, &probe.validator, vec![]).await?;
-            report(progress, output.length().await?, spans, probe.total, true);
+            report(
+                progress,
+                output.length().await?,
+                spans,
+                probe.total,
+                true,
+                request.options.max_connections,
+            );
             if !control.wait_until_resumed_output(output).await? {
                 return Ok(false);
             }
@@ -1013,6 +1161,7 @@ async fn assemble(
     probe: &Probe,
     progress: &ProgressSink,
     mut primary: u64,
+    connection_limit: u8,
 ) -> Result<TransferOutcome, JobError> {
     let cleanup: Vec<PathBuf> = spans
         .iter()
@@ -1038,7 +1187,14 @@ async fn assemble(
                 }
                 if control.is_paused() {
                     save(output, spans, &probe.validator, cleanup.clone()).await?;
-                    report(progress, primary, spans, probe.total, true);
+                    report(
+                        progress,
+                        primary,
+                        spans,
+                        probe.total,
+                        true,
+                        connection_limit,
+                    );
                     if !control.wait_until_resumed_output(output).await? {
                         return Ok(TransferOutcome::Cancelled);
                     }
@@ -1059,7 +1215,14 @@ async fn assemble(
                 left -= size as u64;
             }
             save(output, spans, &probe.validator, cleanup.clone()).await?;
-            report(progress, primary, spans, probe.total, false);
+            report(
+                progress,
+                primary,
+                spans,
+                probe.total,
+                false,
+                connection_limit,
+            );
         }
     }
     if primary != probe.total {

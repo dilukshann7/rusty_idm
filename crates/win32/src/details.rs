@@ -36,6 +36,7 @@ const STATUS_FIELDS: [i32; 13] = [
     RESUME_LABEL,
 ];
 struct Detail {
+    segments: crate::segment_list::SegmentList,
     id: JobId,
     owner: HWND,
     hwnd: Cell<HWND>,
@@ -99,6 +100,7 @@ impl DetailsWindows {
             }
         } else {
             let detail = Box::new(Detail {
+                segments: Default::default(),
                 id: snapshot.id,
                 owner,
                 hwnd: Cell::new(HWND::default()),
@@ -162,6 +164,9 @@ impl DetailsWindows {
             return;
         }
         let view = format_transfer(snapshot);
+        detail
+            .segments
+            .update(hwnd, snapshot, detail.expanded.get());
         if platform::text(hwnd) != view.title {
             set_text(hwnd, &view.title);
         }
@@ -376,7 +381,7 @@ fn expand(hwnd: HWND, expanded: bool) -> windows::core::Result<()> {
             left: 0,
             top: 0,
             right: 380,
-            bottom: if expanded { 228 } else { 145 },
+            bottom: if expanded { 348 } else { 145 },
         };
         MapDialogRect(hwnd, &mut target)?;
         let mut outer = RECT::default();
@@ -394,6 +399,8 @@ fn expand(hwnd: HWND, expanded: bool) -> windows::core::Result<()> {
         )?;
     }
     visible(hwnd, DETAILS_TEXT, expanded);
+    visible(hwnd, SEGMENT_LABEL, expanded);
+    visible(hwnd, SEGMENT_LIST, expanded);
     set_value(
         hwnd,
         DETAIL_TOGGLE,
@@ -449,6 +456,9 @@ unsafe fn detail_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             detail.hwnd.set(hwnd);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, lparam.0);
             visible(hwnd, DETAILS_TEXT, false);
+            visible(hwnd, SEGMENT_LABEL, false);
+            visible(hwnd, SEGMENT_LIST, false);
+            detail.segments.initialize(hwnd);
             if let Ok(tabs) = item(hwnd, STATUS_TABS) {
                 for (index, title) in ["Download status", "Speed Limiter", "Options on completion"]
                     .iter()
@@ -476,6 +486,10 @@ unsafe fn detail_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
         let detail = &*pointer;
         match msg {
             WM_NOTIFY if lparam.0 != 0 => {
+                if let Some(result) = detail.segments.custom_draw(lparam) {
+                    SetWindowLongPtrW(hwnd, WINDOW_LONG_PTR_INDEX(DWLP_MSGRESULT as i32), result);
+                    return 1;
+                }
                 let header = &*(lparam.0 as *const NMHDR);
                 if header.idFrom == STATUS_TABS as usize && header.code == TCN_SELCHANGE {
                     select_page(hwnd);
@@ -552,7 +566,10 @@ unsafe fn detail_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
                 DETAIL_TOGGLE => {
                     let expanded = !detail.expanded.get();
                     match expand(hwnd, expanded) {
-                        Ok(()) => detail.expanded.set(expanded),
+                        Ok(()) => {
+                            detail.expanded.set(expanded);
+                            detail.segments.set_expanded(hwnd, expanded);
+                        }
                         Err(_) => {
                             platform::message(
                                 Some(hwnd),
@@ -572,6 +589,10 @@ unsafe fn detail_inner(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> 
             },
             WM_CLOSE => {
                 destroy(hwnd);
+                return 1;
+            }
+            WM_TIMER if wparam.0 == SEGMENT_TIMER => {
+                detail.segments.animate(hwnd);
                 return 1;
             }
             WM_CTLCOLORSTATIC | WM_CTLCOLORBTN if lparam.0 != 0 => {

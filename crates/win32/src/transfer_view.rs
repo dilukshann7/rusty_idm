@@ -1,4 +1,4 @@
-use rusty_engine::{JobId, JobSnapshot, JobState};
+use rusty_engine::{JobId, JobSnapshot, JobState, SegmentState};
 use std::{collections::BTreeMap, time::SystemTime};
 
 /// Tracks attempts separately from HWNDs so closing a window does not reopen it
@@ -135,12 +135,15 @@ pub fn format_transfer(job: &JobSnapshot) -> TransferText {
             .unwrap_or_else(|| "Unknown".into())
     };
     let details = format!(
-        "File: {}\r\nSave as: {}\r\nTotal: {}\r\nConnections: 1\r\nResume capability: {}\r\nSpeed limit: {}\r\nAdded: {}\r\nLast Try: {}\r\nFinished: {}\r\n{}{}",
+        "File: {}\r\nSave as: {}\r\nTotal: {}\r\n{}\r\nResume capability: {}\r\nSpeed limit: {}\r\nAdded: {}\r\nLast Try: {}\r\nFinished: {}\r\n{}{}",
         job.filename,
         job.destination.display(),
         job.total
             .map(|n| format!("{n} bytes"))
             .unwrap_or_else(|| "Unknown".into()),
+        job.transfer_details.as_ref().map(|details| format!("Connections: {} active (limit {})",
+            if job.state == JobState::Running { details.active_connections } else { 0 },
+            details.connection_limit)).unwrap_or_else(|| "Connections: Unavailable".into()),
         if job.resume_capable { "Yes" } else { "No (resume restarts from beginning)" },
         job.speed_limit.map(|n| format!("{}/sec", amount(n))).unwrap_or_else(|| "Unlimited".into()),
         date(job.created_at),
@@ -158,6 +161,122 @@ pub fn format_transfer(job: &JobSnapshot) -> TransferText {
         rate,
         time_left,
         details,
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SegmentRow {
+    pub id: u32,
+    pub cells: [String; 5],
+    /// Hundredths of a percent; None draws an indeterminate native progress bar.
+    pub progress: Option<u32>,
+    pub state: SegmentState,
+}
+
+pub fn format_segments(job: &JobSnapshot) -> Vec<SegmentRow> {
+    let Some(details) = &job.transfer_details else {
+        return vec![];
+    };
+    let mut rows: Vec<_> = details
+        .segments
+        .iter()
+        .map(|segment| {
+            let state = match job.state {
+                JobState::Completed => SegmentState::Completed,
+                JobState::Paused | JobState::Pausing if segment.state.is_active() => {
+                    SegmentState::Paused
+                }
+                JobState::Cancelled | JobState::Cancelling if segment.state.is_active() => {
+                    SegmentState::Cancelled
+                }
+                _ => segment.state,
+            };
+            let progress = if state == SegmentState::Completed {
+                Some(10_000)
+            } else {
+                segment
+                    .end
+                    .and_then(|end| (end as u128).checked_sub(segment.start as u128))
+                    .map(|length| {
+                        ((segment.received as u128 * 10_000) / (length + 1)).min(10_000) as u32
+                    })
+            };
+            let status = match state {
+                SegmentState::Waiting => "Waiting",
+                SegmentState::Connecting => "Connecting",
+                SegmentState::Receiving => "Receiving",
+                SegmentState::Paused => "Paused",
+                SegmentState::Completed => "Complete",
+                SegmentState::Failed => "Failed",
+                SegmentState::Cancelled => "Stopped",
+            };
+            let speed = if job.state == JobState::Running && state == SegmentState::Receiving {
+                segment.bytes_per_second
+            } else {
+                0
+            };
+            SegmentRow {
+                id: segment.id,
+                cells: [
+                    (u64::from(segment.id) + 1).to_string(),
+                    if job.total == Some(0) {
+                        "Empty".into()
+                    } else {
+                        segment
+                            .end
+                            .map(|end| format!("{}–{end}", segment.start))
+                            .unwrap_or_else(|| format!("{}–Unknown", segment.start))
+                    },
+                    progress
+                        .map(|p| format!("{}.{:02} %", p / 100, p % 100))
+                        .unwrap_or_else(|| "Unknown".into()),
+                    status.into(),
+                    format!("{}/sec", amount(speed)),
+                ],
+                progress,
+                state,
+            }
+        })
+        .collect();
+    rows.sort_by_key(|row| row.id);
+    rows
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SegmentChange {
+    Remove(usize),
+    Insert(usize),
+    SetCell { row: usize, column: usize },
+}
+
+/// Computes incremental native-list operations without replacing existing rows.
+#[derive(Default)]
+pub struct SegmentTableRows {
+    pub rows: Vec<SegmentRow>,
+}
+impl SegmentTableRows {
+    pub fn sync(&mut self, next: Vec<SegmentRow>) -> Vec<SegmentChange> {
+        let mut changes = Vec::new();
+        for index in (0..self.rows.len()).rev() {
+            if !next.iter().any(|row| row.id == self.rows[index].id) {
+                self.rows.remove(index);
+                changes.push(SegmentChange::Remove(index));
+            }
+        }
+        for (index, row) in next.iter().enumerate() {
+            let inserted = self.rows.get(index).is_none_or(|old| old.id != row.id);
+            if inserted {
+                self.rows.insert(index, row.clone());
+                changes.push(SegmentChange::Insert(index));
+            }
+            for column in 0..5 {
+                if inserted || self.rows[index].cells[column] != row.cells[column] {
+                    changes.push(SegmentChange::SetCell { row: index, column });
+                }
+            }
+            self.rows[index] = row.clone();
+        }
+        changes
     }
 }
 fn amount(bytes: u64) -> String {

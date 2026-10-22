@@ -23,6 +23,7 @@ fn snapshot(id: u64, filename: &str, state: JobState) -> JobSnapshot {
         refreshable: false,
         speed_limit: None,
         bytes_per_second: 0,
+        transfer_details: None,
         eta_seconds: None,
         created_at: None,
         finished_at: None,
