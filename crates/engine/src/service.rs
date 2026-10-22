@@ -31,8 +31,16 @@ use queue_support::QueueRuntime;
 #[path = "service_speed.rs"]
 mod speed;
 use speed::SpeedMeter;
+#[path = "service_recovery.rs"]
+mod recovery_support;
 #[path = "service_refresh.rs"]
 mod refresh_support;
+#[path = "service_telemetry.rs"]
+mod telemetry;
+
+#[cfg(test)]
+#[path = "service_history_tests.rs"]
+mod history_tests;
 
 pub enum Command {
     PrepareRefresh(
@@ -271,7 +279,10 @@ fn spawn(
 }
 
 struct Job {
+    transfer_meter: telemetry::TransferMeter,
+    retry: recovery_support::RetryRuntime,
     request: DownloadRequest,
+    retired_history: Option<crate::storage::Recovery>,
     snapshot: JobSnapshot,
     cancel: TransferControl,
     remove: bool,
@@ -320,9 +331,28 @@ async fn actor(
     queues.restore(&mut jobs, &mut next_id, &bus);
     let mut receipts: HashMap<RequestId, Record> = HashMap::new();
     let mut shutdown = false;
+    let mut history_retry = Instant::now();
+    let mut history_error: Option<String> = None;
     let mut tick = tokio::time::interval(Duration::from_millis(100));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
+        if queues.store.has_pending_history()
+            && (shutdown || history_retry.elapsed() >= Duration::from_secs(5))
+        {
+            history_retry = Instant::now();
+            match queues.store.flush_history() {
+                Ok(()) => history_error = None,
+                Err(error) => {
+                    if history_error.as_ref() != Some(&error) {
+                        reject(
+                            &bus,
+                            &format!("Download history has unsaved changes. {error}"),
+                        );
+                        history_error = Some(error);
+                    }
+                }
+            }
+        }
         // The GUI's WM_ENDSESSION callback can only signal, never borrow its
         // AppState or join this thread. Observe that signal independently of
         // the bounded command queue; the tick bounds an idle actor's wakeup.
@@ -337,6 +367,12 @@ async fn actor(
             waiting.clear();
         }
         if shutdown && tasks.is_empty() {
+            if let Err(error) = queues.store.flush_history() {
+                reject(
+                    &bus,
+                    &format!("Download history still has unsaved changes at shutdown. {error}"),
+                );
+            }
             refresh_tasks.abort_all();
             bus.publish(Event::ShutdownComplete);
             break;
@@ -397,7 +433,7 @@ async fn actor(
                                                 crate::output::discard_checkpoint(recovery).map_err(|_|SubmissionError::RecoveryRequired)?;
                                                 job.snapshot.recovery_paths = recovery.store.snapshot().entries.get(&recovery.entry).map(|entry|entry.retained_files.clone()).unwrap_or_default();
                                             }
-                                            reset_job(job,replacement.clone());waiting.retain(|j|j!=id);waiting.push_back(*id);bus.publish(Event::JobChanged(job.snapshot.clone()));(*id,false)
+                                            reset_job(job,replacement.clone()).map_err(|error|{reject(&bus,&error.message);SubmissionError::InvalidAction})?;waiting.retain(|j|j!=id);waiting.push_back(*id);publish_job(job, &bus);(*id,false)
                                         },
                                         SubmissionAction::Restart(id)=> {
                                             let job=jobs.get(id).ok_or(SubmissionError::NotFound)?;
@@ -412,7 +448,7 @@ async fn actor(
                                                     crate::output::discard_checkpoint(recovery).map_err(|_|SubmissionError::RecoveryRequired)?;
                                                     job.snapshot.recovery_paths = recovery.store.snapshot().entries.get(&recovery.entry).map(|entry|entry.retained_files.clone()).unwrap_or_default();
                                                 }
-                                                let replacement=job.request.replacement.clone(); reset_job(job,replacement); waiting.retain(|j|j!=id); waiting.push_back(*id); bus.publish(Event::JobChanged(job.snapshot.clone()));
+                                                let replacement=job.request.replacement.clone(); reset_job(job,replacement).map_err(|error|{reject(&bus,&error.message);SubmissionError::InvalidAction})?; waiting.retain(|j|j!=id); waiting.push_back(*id); publish_job(job, &bus);
                                             } else { job.restart=true; job.resume_after_pause=false; cancel_job(job,&bus); }
                                             (*id,false)
                                         }
@@ -471,7 +507,7 @@ async fn actor(
                             Some(job) if job.snapshot.state == JobState::Paused && job.started => {
                                 job.cancel.preserve_on_exit();
                                 job.snapshot.state = JobState::Pausing;
-                                bus.publish(Event::JobChanged(job.snapshot.clone()));
+                                publish_job(job, &bus);
                                 prepare_replies.insert(id, reply);
                             }
                             Some(job) => {
@@ -502,7 +538,7 @@ async fn actor(
                     },
                     Some(Command::Submit(request)) => {
                         if closing.load(Ordering::Acquire) { reject(&bus, "The engine is shutting down."); continue; }
-                        if admit(request,&mut jobs,&mut waiting,&mut next_id,&bus,&queues,false).is_err() { reject(&bus,"Download admission rejected. Check duplicates, entry limits and save path."); }
+                        if admit(request,&mut jobs,&mut waiting,&mut next_id,&bus,&queues,false).is_err() { reject(&bus,"Download admission rejected. Check duplicates and save path. If history is full (10,000 entries or 16 MiB), use Delete or Delete Completed and try again."); }
                     },
                     Some(Command::ConfirmInfo(id)) => {
                         if let Some(job)=jobs.get_mut(&id) {
@@ -513,37 +549,44 @@ async fn actor(
                             if job.snapshot.readiness==EntryReadiness::ConfirmationRequired {job.snapshot.readiness=EntryReadiness::Ready;}
                             job.cancel.confirm();
                             if job.snapshot.queue_id.is_none() && matches!(job.snapshot.state,JobState::Paused|JobState::Waiting){job.snapshot.state=JobState::Waiting;job.snapshot.deferred=false;job.request.deferred=false;waiting.push_back(id);}
-                            bus.publish(Event::JobChanged(job.snapshot.clone()));
+                            publish_job(job, &bus);
                         }
                     },
                     Some(Command::Start(id)) => {
                         if closing.load(Ordering::Acquire) { reject(&bus, "The engine is shutting down."); continue; }
                         if let Some(job) = jobs.get_mut(&id) {
-                            if job.snapshot.state != JobState::Waiting || !job.snapshot.deferred { reject(&bus, "Only a download saved for later can be started."); continue; }
+                            if job.snapshot.state != JobState::Waiting || (!job.snapshot.deferred && job.snapshot.retry.is_none()) { reject(&bus, "Only a download saved for later or waiting for recovery can be started."); continue; }
+                            recovery_support::start_now(job);
                             job.user_held = false;
                             job.snapshot.deferred = false; job.request.deferred = false;
-                            waiting.push_back(id); bus.publish(Event::JobChanged(job.snapshot.clone()));
+                            waiting.push_back(id); publish_job(job, &bus);
                         }
                     },
                     Some(Command::Cancel(id)) => { if let Some(job) = jobs.get_mut(&id) { job.restart = false; job.resume_after_pause = false; cancel_job(job, &bus); } },
                     Some(Command::Pause(id)) => {
                         if let Some(job) = jobs.get_mut(&id) {
                             job.user_held = true;
-                            if job.snapshot.state == JobState::Waiting {waiting.retain(|queued|*queued!=id);job.snapshot.deferred=true;job.request.deferred=true;bus.publish(Event::JobChanged(job.snapshot.clone()));}
+                            if let Some(status) = &mut job.snapshot.retry { job.retry.pause(Instant::now(), status); }
+                            if job.snapshot.state == JobState::Waiting {waiting.retain(|queued|*queued!=id);job.snapshot.deferred=true;job.request.deferred=true;publish_job(job, &bus);}
                             if job.snapshot.state == JobState::Running && job.cancel.try_pause() {
                                 job.snapshot.state = JobState::Pausing;
                                 job.snapshot.bytes_per_second = 0; job.snapshot.eta_seconds = None;
-                                bus.publish(Event::JobChanged(job.snapshot.clone()));
+                                publish_job(job, &bus);
                             }
                         }
                     },
                     Some(Command::Resume(id)) => {
                         if let Some(job) = jobs.get_mut(&id) {
                             job.user_held = false;
+                            if let Some(status) = &mut job.snapshot.retry {
+                                job.retry.resume(Instant::now(), SystemTime::now(), status);
+                                publish_job(job, &bus);
+                                continue;
+                            }
                             if job.snapshot.state == JobState::Paused {
                                 job.snapshot.state = JobState::Waiting;
                                 waiting.push_back(id);
-                                bus.publish(Event::JobChanged(job.snapshot.clone()));
+                                publish_job(job, &bus);
                             }
                         }
                     },
@@ -576,7 +619,7 @@ async fn actor(
                         if let Some(job) = jobs.get_mut(&id) {
                             if !job.snapshot.state.is_terminal() && job.snapshot.state != JobState::Cancelling {
                                 job.cancel.set_speed_limit(limit); job.snapshot.speed_limit = limit;
-                                bus.publish(Event::JobChanged(job.snapshot.clone()));
+                                publish_job(job, &bus);
                             }
                         }
                     },
@@ -585,6 +628,8 @@ async fn actor(
                         // Decide on the actor's current states, so a concurrent
                         // restart cannot turn a toolbar cleanup into cancellation.
                         let completed:Vec<_>=jobs.iter().filter(|(id,job)|job.snapshot.state==JobState::Completed&&!has_retained_partial(job)&&!bus.terminal_pending(**id)).map(|(id,_)|*id).collect();
+                        let entries: Vec<_> = completed.iter().filter_map(|id|jobs[id].snapshot.entry_id).collect();
+                        if let Err(error) = queues.remove_entries(&entries) { reject(&bus, &error); continue; }
                         for id in completed{jobs.remove(&id);waiting.retain(|queued|*queued!=id);bus.publish(Event::JobRemoved(id));}
                     },
                     Some(Command::Remove(id)) => {
@@ -597,18 +642,26 @@ async fn actor(
                             if let Some(recovery) = &job.request.recovery {
                                 if let Err(error) = crate::output::discard_checkpoint(recovery) {
                                     job.snapshot.error = Some(error);
-                                    bus.publish(Event::JobChanged(job.snapshot.clone()));
+                                    publish_job(job, &bus);
                                     continue;
                                 }
                                 job.snapshot.recovery_paths = recovery.store.snapshot().entries.get(&recovery.entry).map(|entry| entry.retained_files.clone()).unwrap_or_default();
                                 if !job.snapshot.recovery_paths.is_empty() {
                                     reject(&bus, "The saved partial changed. Its recovery path was preserved; inspect it before removing this entry.");
-                                    bus.publish(Event::JobChanged(job.snapshot.clone()));
+                                    publish_job(job, &bus);
                                     continue;
                                 }
                             }
                         }
-                        if let Some(job) = jobs.get_mut(&id) { job.restart = false; job.resume_after_pause = false; if job.snapshot.state.is_terminal() { jobs.remove(&id); bus.publish(Event::JobRemoved(id)); } else { job.remove = true; cancel_job(job, &bus); if job.snapshot.state.is_terminal() { jobs.remove(&id); bus.publish(Event::JobRemoved(id)); } } }
+                        if let Some(job) = jobs.get_mut(&id) {
+                            job.restart = false; job.resume_after_pause = false;
+                            if !job.snapshot.state.is_terminal() { job.remove = true; cancel_job(job, &bus); }
+                            if job.snapshot.state.is_terminal() {
+                                let entries: Vec<_> = job.snapshot.entry_id.into_iter().collect();
+                                if let Err(error) = queues.remove_entries(&entries) { job.remove=false; reject(&bus,&error); continue; }
+                                jobs.remove(&id); bus.publish(Event::JobRemoved(id));
+                            }
+                        }
                     },
                     Some(Command::Retry(id)) => {
                         if jobs.get(&id).is_some_and(|j|j.snapshot.readiness!=EntryReadiness::Ready){reject(&bus,"Supply credentials or confirm the required restart before retrying.");continue;}
@@ -627,7 +680,7 @@ async fn actor(
                 let (task_id, result) = match result.expect("nonempty tasks") { Ok((id, result)) => (id, result), Err(error) => (error.id(), Err(JobError::new(ErrorKind::Io, "The transfer worker stopped unexpectedly."))) };
                 let Some(id) = task_jobs.remove(&task_id) else { continue; };
                 if let Some(job) = jobs.get_mut(&id) {
-                    if let Some(p) = progress.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) { job.snapshot.received = p.received; job.snapshot.total = p.total; job.snapshot.resume_capable = p.resume_capable; }
+                    if let Some(p) = progress.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) { job.snapshot.received = p.received; job.snapshot.total = p.total; job.snapshot.resume_capable = p.resume_capable; if let Some(details) = p.details { job.transfer_meter.update(details, Instant::now()); } }
                     match result {
                         Ok(TransferOutcome::Completed { bytes }) if job.snapshot.state != JobState::Cancelling => { job.snapshot.received = bytes; job.snapshot.total = Some(bytes); job.snapshot.state = JobState::Completed; },
                         Ok(TransferOutcome::Completed { .. }) => job.snapshot.state = JobState::Cancelled,
@@ -659,6 +712,7 @@ async fn actor(
                         let result = refresh_support::checkpoint(job).map(|_| job.request.source_page.clone());
                         let _ = reply.send(result);
                     }
+                    job.transfer_meter.finish(Instant::now(), job.snapshot.state);
                     job.snapshot.bytes_per_second = 0; job.snapshot.eta_seconds = None;
                     if job.restart && !shutdown && !closing.load(Ordering::Acquire) && !has_retained_partial(job) {
                         // Restart is serialized after cleanup, including a late
@@ -666,9 +720,18 @@ async fn actor(
                         if restart_job(job, &bus) { waiting.push_back(id); }
                         continue;
                     }
+                    if !shutdown && !closing.load(Ordering::Acquire) {
+                        recovery_support::schedule(job, Instant::now(), SystemTime::now());
+                    }
                     job.restart = false;
-                    bus.publish(Event::JobChanged(job.snapshot.clone()));
-                    if job.remove && !has_retained_partial(job) { jobs.remove(&id); bus.publish(Event::JobRemoved(id)); }
+                    publish_job(job, &bus);
+                    if job.remove && !has_retained_partial(job) {
+                        let entries: Vec<_> = job.snapshot.entry_id.into_iter().collect();
+                        match queues.remove_entries(&entries) {
+                            Ok(()) => { jobs.remove(&id); bus.publish(Event::JobRemoved(id)); }
+                            Err(error) => { job.remove=false; reject(&bus,&error); }
+                        }
+                    }
                     else { job.remove = false; }
                 }
             },
@@ -718,7 +781,7 @@ async fn actor(
                         continue;
                     }
                     if !matches!(job.snapshot.state, JobState::Running | JobState::Pausing) { continue; }
-                    let update = updates.get(id).copied().unwrap_or(TransferProgress { received: job.snapshot.received, total: job.snapshot.total, resume_capable: job.snapshot.resume_capable, paused: false });
+                    let update = updates.get(id).cloned().unwrap_or(TransferProgress { received: job.snapshot.received, total: job.snapshot.total, resume_capable: job.snapshot.resume_capable, paused: false, details: None });
                     if job.request.options.confirmation_required && update.paused && job.snapshot.state==JobState::Running {job.snapshot.state=JobState::Paused;}
                     if job.snapshot.state == JobState::Pausing && update.paused {
                         job.snapshot.state = JobState::Paused;
@@ -726,23 +789,33 @@ async fn actor(
                     }
                     job.snapshot.received = update.received; job.snapshot.total = update.total;
                     job.snapshot.resume_capable = update.resume_capable;
+                    if let Some(details) = update.details { job.transfer_meter.update(details, Instant::now()); }
                     if job.snapshot.state == JobState::Paused {
                         job.snapshot.refreshable = job.request.recovery.as_ref().and_then(|r| r.checkpoint()).is_some_and(|c| c.received() > 0 && c.total.is_some_and(|total| c.received() < total));
                     }
                     job.snapshot.bytes_per_second = if job.snapshot.state == JobState::Running { job.speed_meter.sample(Instant::now(), update.received) } else { 0 };
                     job.snapshot.eta_seconds = update.total.and_then(|t| t.checked_sub(update.received)).and_then(|remaining| remaining.checked_div(job.snapshot.bytes_per_second));
-                    bus.publish(Event::JobChanged(job.snapshot.clone()));
+                    publish_job(job, &bus);
                 }
             },
         }
         if !shutdown {
             queues.clock_tick(&mut jobs, &mut waiting, &bus);
+            recovery_support::pump(
+                &mut jobs,
+                &mut waiting,
+                &queues,
+                &bus,
+                Instant::now(),
+                SystemTime::now(),
+            );
             queues.pump(&mut jobs, &mut waiting, &bus);
         }
         queues.reconcile(&mut jobs, &bus);
         queues.publish(&jobs, &bus);
         // Queued cancellations cannot admit work; cleanup must release the task slot.
         while !shutdown
+            && !queues.store.has_pending_history()
             && !closing.load(Ordering::Acquire)
             && jobs
                 .values()
@@ -757,7 +830,9 @@ async fn actor(
         {
             let Some(position) = waiting.iter().position(|id| {
                 jobs.get(id).is_some_and(|j| {
-                    j.snapshot.readiness == EntryReadiness::Ready && queues.slot_available(j, &jobs)
+                    j.snapshot.readiness == EntryReadiness::Ready
+                        && queues.slot_available(j, &jobs)
+                        && recovery_support::ready(j, &queues, Instant::now())
                 })
             }) else {
                 break;
@@ -775,11 +850,27 @@ async fn actor(
             }
             job.snapshot.restored = false;
             job.snapshot.state = JobState::Running;
+            if job.snapshot.retry.take().is_some() {
+                job.retry.admitted();
+                job.snapshot.error = None;
+            }
             if !job.started {
                 job.snapshot.last_try = Some(SystemTime::now());
             }
             job.speed_meter.reset(Instant::now(), job.snapshot.received);
-            bus.publish(Event::JobChanged(job.snapshot.clone()));
+            if !job.started {
+                job.transfer_meter = Default::default();
+                job.snapshot.transfer_details = None;
+            }
+            publish_job(job, &bus);
+            if queues.store.has_pending_history() {
+                job.snapshot.state = JobState::Waiting;
+                job.snapshot.deferred = true;
+                job.request.deferred = true;
+                job.user_held = true;
+                publish_job(job, &bus);
+                continue;
+            }
             if job.started {
                 job.cancel.try_resume();
                 continue;
@@ -790,10 +881,12 @@ async fn actor(
             job.started = true;
             let updates = progress.clone();
             let sink: ProgressSink = Arc::new(move |p| {
-                updates
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert(id, p);
+                let mut pending = updates.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(previous) = pending.get_mut(&id) {
+                    previous.coalesce(p);
+                } else {
+                    pending.insert(id, p);
+                }
             });
             let future = executor.execute(job.request.clone(), job.cancel.clone(), sink);
             let task = tasks.spawn(future);
@@ -805,6 +898,63 @@ fn reject(bus: &EventBus, message: &str) {
     bus.publish(Event::CommandRejected {
         message: message.into(),
     });
+}
+fn publish_job(job: &mut Job, bus: &EventBus) {
+    job.snapshot.transfer_details = job
+        .transfer_meter
+        .snapshot(Instant::now(), job.snapshot.state);
+    if let Some(details) = &job.snapshot.transfer_details {
+        job.snapshot.bytes_per_second = details
+            .segments
+            .iter()
+            .fold(0u64, |sum, row| sum.saturating_add(row.bytes_per_second));
+        job.snapshot.eta_seconds = if job.snapshot.state == JobState::Running {
+            job.snapshot
+                .total
+                .and_then(|total| total.checked_sub(job.snapshot.received))
+                .and_then(|remaining| remaining.checked_div(job.snapshot.bytes_per_second))
+        } else {
+            None
+        };
+    }
+    if !job.snapshot.restored {
+        if let Some(recovery) = &job.request.recovery {
+            if let Some(saved) = recovery.store.history(recovery.entry) {
+                let terminal = matches!(job.snapshot.state, JobState::Completed | JobState::Failed);
+                if terminal && job.snapshot.finished_at.is_none() {
+                    let outcome = if job.snapshot.state == JobState::Completed {
+                        crate::history::HistoryOutcome::Completed
+                    } else {
+                        crate::history::HistoryOutcome::Failed
+                    };
+                    job.snapshot.finished_at = (saved.outcome == Some(outcome))
+                        .then_some(saved.finished_at)
+                        .flatten()
+                        .or_else(|| Some(SystemTime::now()));
+                } else if !terminal {
+                    job.snapshot.finished_at = None;
+                }
+                let history = crate::history::HistoryMetadata::from_snapshot(&job.snapshot);
+                // Running byte counters belong to durable checkpoints. History
+                // writes only lifecycle changes, not each progress notification.
+                if (terminal
+                    || saved.last_try != history.last_try
+                    || (saved.outcome.is_some()
+                        && job.snapshot.state == JobState::Waiting
+                        && !job.started))
+                    && saved != history
+                {
+                    if let Err(error) = recovery.save_history(history) {
+                        reject(
+                            bus,
+                            &format!("Download history has unsaved changes. {}", error.message),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    bus.publish(Event::JobChanged(job.snapshot.clone()));
 }
 fn has_retained_partial(job: &Job) -> bool {
     if !job.snapshot.recovery_paths.is_empty() {
@@ -887,17 +1037,41 @@ fn same_destination(a: &std::path::Path, b: &std::path::Path) -> bool {
     a.to_string_lossy().replace('/', "\\").to_lowercase()
         == b.to_string_lossy().replace('/', "\\").to_lowercase()
 }
-fn reset_job(job: &mut Job, replacement: ReplacementPolicy) {
+fn restore_retired_history(job: &mut Job) -> Result<(), JobError> {
+    if let Some(recovery) = job.retired_history.as_ref() {
+        recovery
+            .store
+            .update(|state| {
+                if !state.entries.contains_key(&recovery.entry) {
+                    let mut entry = queue_support::stored(recovery.entry, &job.request);
+                    entry.history.created_at = job.snapshot.created_at;
+                    state.entries.insert(recovery.entry, entry);
+                }
+                Ok(())
+            })
+            .map_err(crate::storage::storage_error)?;
+        job.snapshot.entry_id = Some(recovery.entry);
+        job.request.recovery = job.retired_history.take();
+    }
+    Ok(())
+}
+fn reset_job(job: &mut Job, replacement: ReplacementPolicy) -> Result<(), JobError> {
+    restore_retired_history(job)?;
+    recovery_support::clear(job);
+    job.snapshot.restored = false;
     job.snapshot.state = JobState::Waiting;
     job.snapshot.received = 0;
     job.snapshot.total = None;
     job.snapshot.error = None;
     job.snapshot.last_try = None;
+    job.snapshot.finished_at = None;
     job.snapshot.resume_capable = false;
     job.snapshot.refreshable = false;
     job.snapshot.bytes_per_second = 0;
     job.snapshot.eta_seconds = None;
     job.speed_meter.reset(Instant::now(), 0);
+    job.transfer_meter = Default::default();
+    job.snapshot.transfer_details = None;
     job.snapshot.deferred = false;
     job.request.deferred = false;
     job.request.replacement = replacement;
@@ -908,17 +1082,22 @@ fn reset_job(job: &mut Job, replacement: ReplacementPolicy) {
     job.resume_after_pause = false;
     job.remove = false;
     job.user_held = false;
+    Ok(())
 }
 fn restart_job(job: &mut Job, bus: &EventBus) -> bool {
     restart_job_inner(job, bus, false)
 }
 fn restart_job_inner(job: &mut Job, bus: &EventBus, keep_media_stage: bool) -> bool {
     job.restart = false;
+    if let Err(error) = restore_retired_history(job) {
+        reject(bus, &error.message);
+        return false;
+    }
     if let Some(recovery) = &job.request.recovery {
         if let Err(error) = crate::output::discard_checkpoint(recovery) {
             job.snapshot.error = Some(error);
             job.snapshot.state = JobState::Failed;
-            bus.publish(Event::JobChanged(job.snapshot.clone()));
+            publish_job(job, &bus);
             return false;
         }
         job.snapshot.recovery_paths = recovery
@@ -936,7 +1115,7 @@ fn restart_job_inner(job: &mut Job, bus: &EventBus, keep_media_stage: bool) -> b
             job.snapshot.state = JobState::Failed;
             job.snapshot.error = Some(JobError::new(ErrorKind::Cleanup,
                 "The old partial changed and was preserved. Inspect its recovery path before restarting."));
-            bus.publish(Event::JobChanged(job.snapshot.clone()));
+            publish_job(job, &bus);
             return false;
         }
     }
@@ -948,23 +1127,27 @@ fn restart_job_inner(job: &mut Job, bus: &EventBus, keep_media_stage: bool) -> b
                 ErrorKind::DestinationConflict,
                 "The destination now exists. Choose a new filename or approve replacement again.",
             ));
-            bus.publish(Event::JobChanged(job.snapshot.clone()));
+            publish_job(job, &bus);
             false
         }
         Ok(None) => {
-            reset_job(job, ReplacementPolicy::Deny);
-            bus.publish(Event::JobChanged(job.snapshot.clone()));
+            if let Err(error) = reset_job(job, ReplacementPolicy::Deny) {
+                reject(bus, &error.message);
+                return false;
+            }
+            publish_job(job, &bus);
             true
         }
         Err(error) => {
             job.snapshot.state = JobState::Failed;
             job.snapshot.error = Some(error);
-            bus.publish(Event::JobChanged(job.snapshot.clone()));
+            publish_job(job, &bus);
             false
         }
     }
 }
 fn shutdown_job(job: &mut Job, bus: &EventBus) {
+    recovery_support::clear(job);
     // Ordinary downloads now have the same held recovery path as queued jobs.
     let retained = job.request.recovery.is_some();
     if retained {
@@ -978,13 +1161,18 @@ fn shutdown_job(job: &mut Job, bus: &EventBus) {
     }
 }
 fn cancel_job(job: &mut Job, bus: &EventBus) {
+    let recovering = job.snapshot.retry.is_some();
+    recovery_support::clear(job);
+    if recovering {
+        job.snapshot.error = None;
+    }
     match job.snapshot.state {
         JobState::Waiting if !job.started => {
             if let Some(recovery) = &job.request.recovery {
                 if let Err(error) = crate::output::discard_checkpoint(recovery) {
                     job.snapshot.state = JobState::Failed;
                     job.snapshot.error = Some(error);
-                    bus.publish(Event::JobChanged(job.snapshot.clone()));
+                    publish_job(job, &bus);
                     return;
                 }
             }
@@ -1000,7 +1188,7 @@ fn cancel_job(job: &mut Job, bus: &EventBus) {
     }
     job.snapshot.bytes_per_second = 0;
     job.snapshot.eta_seconds = None;
-    bus.publish(Event::JobChanged(job.snapshot.clone()));
+    publish_job(job, &bus);
 }
 
 fn admit(
@@ -1013,7 +1201,12 @@ fn admit(
     pending_admission: bool,
 ) -> Result<JobId, SubmissionError> {
     let mut request = request;
-    if jobs.len() + bus.removed_pending() >= 1000 {
+    if jobs.len() + bus.removed_pending() >= crate::history::MAX_HISTORY_ENTRIES {
+        reject(bus, crate::history::HISTORY_FULL);
+        return Err(SubmissionError::InvalidAction);
+    }
+    if queues.store.has_pending_history() {
+        reject(bus, "Download history has unsaved changes. Retry after storage becomes available, or delete history entries to free capacity.");
         return Err(SubmissionError::InvalidAction);
     }
     if !request.allow_duplicate && jobs.values().any(|job| job.request.same_source(&request)) {
@@ -1039,12 +1232,15 @@ fn admit(
         return Err(SubmissionError::InvalidAction);
     }
     // Every transfer needs a durable checkpoint so ordinary failures can
-    // retain their owned partial for address refresh. Ephemeral entries are
-    // removed after successful completion or explicit cancellation.
+    // retain their owned partial for address refresh. Completed and failed
+    // records remain history; ordinary explicit cancellations are ephemeral.
     let entry_id = Some(
         queues
             .admit(&mut request, pending_admission)
-            .map_err(|_| SubmissionError::InvalidAction)?,
+            .map_err(|error| {
+                reject(bus, &error);
+                SubmissionError::InvalidAction
+            })?,
     );
     bus.register_request(id, &request);
     let snapshot = JobSnapshot {
@@ -1072,8 +1268,18 @@ fn admit(
         refreshable: false,
         speed_limit: None,
         bytes_per_second: 0,
+        transfer_details: None,
         eta_seconds: None,
+        created_at: request.recovery.as_ref().and_then(|r| {
+            r.store
+                .snapshot()
+                .entries
+                .get(&r.entry)
+                .and_then(|e| e.history.created_at)
+        }),
+        finished_at: None,
         last_try: None,
+        retry: None,
         error: None,
         deferred: request.deferred,
         category: request.category.clone(),
@@ -1084,7 +1290,10 @@ fn admit(
     jobs.insert(
         id,
         Job {
+            transfer_meter: Default::default(),
+            retry: Default::default(),
             request,
+            retired_history: None,
             snapshot,
             cancel: TransferControl::new(CancellationToken::new()),
             remove: false,
@@ -1110,6 +1319,15 @@ fn activate_external(
         return Err(SubmissionError::RecoveryRequired);
     }
     job.user_held = false;
+    if job.snapshot.retry.is_some() {
+        recovery_support::start_now(job);
+        job.snapshot.deferred = false;
+        job.request.deferred = false;
+        waiting.retain(|id| *id != job.snapshot.id);
+        waiting.push_back(job.snapshot.id);
+        publish_job(job, bus);
+        return Ok(());
+    }
     match job.snapshot.state {
         JobState::Paused => {
             job.snapshot.state = JobState::Waiting;
@@ -1140,13 +1358,16 @@ fn activate_external(
             if bus.terminal_pending(job.snapshot.id) {
                 return Err(SubmissionError::Busy);
             }
-            reset_job(job, ReplacementPolicy::Deny);
+            reset_job(job, ReplacementPolicy::Deny).map_err(|error| {
+                reject(bus, &error.message);
+                SubmissionError::InvalidAction
+            })?;
             waiting.push_back(job.snapshot.id);
         }
         JobState::Cancelling => return Err(SubmissionError::Busy),
         _ => {}
     }
-    bus.publish(Event::JobChanged(job.snapshot.clone()));
+    publish_job(job, &bus);
     Ok(())
 }
 

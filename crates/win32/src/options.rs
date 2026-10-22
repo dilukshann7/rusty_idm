@@ -262,6 +262,18 @@ impl Pages {
             usize::from(c.max_connections.saturating_sub(1)),
         );
         pages.dependencies();
+        ui::put(
+            connection,
+            CFG_RETRY_COUNT,
+            &c.retry_policy.max_retries.to_string(),
+        );
+        ui::limit(connection, CFG_RETRY_COUNT, 3);
+        ui::put(
+            connection,
+            CFG_RETRY_DELAY,
+            &c.retry_policy.delay_seconds.to_string(),
+        );
+        ui::limit(connection, CFG_RETRY_DELAY, 4);
         pages.show(h, 0)?;
         Ok(pages)
     }
@@ -443,6 +455,20 @@ impl Pages {
         c.max_connections = ui::selection(connection, CFG_CONNECTION_COUNT)
             .and_then(|n| u8::try_from(n + 1).ok())
             .unwrap_or(0);
+        c.retry_policy.max_retries = ui::value(connection, CFG_RETRY_COUNT)
+            .trim()
+            .parse()
+            .map_err(|_| (4, "Automatic retries must be between 0 and 100.".to_owned()))?;
+        c.retry_policy.delay_seconds = ui::value(connection, CFG_RETRY_DELAY)
+            .trim()
+            .parse()
+            .map_err(|_| {
+                (
+                    4,
+                    "Retry delay must be between 1 and 3600 seconds.".to_owned(),
+                )
+            })?;
+        c.retry_policy.validate().map_err(|error| (4, error))?;
         settings.show_completion_dialog = ui::checked(downloads, CFG_COMPLETE);
         settings.duplicate_choice = match ui::selection(downloads, CFG_DUPLICATES) {
             Some(1) => Some(crate::duplicates::DuplicateChoice::Numbered),
@@ -801,5 +827,5 @@ const HELP:[&str;5]=[
     "File types are extensions separated by spaces. Excluded sites are exact hosts or *.subdomain patterns. Excluded addresses are exact public HTTP(S) URLs, optionally ending with * for a prefix. These filters affect automatic capture and clipboard URLs; explicit Add URL/context-menu actions remain available.",
     "General catches otherwise unmatched types. Category folders affect future suggestions; manually edited paths are preserved. Remember folder updates only enabled categories. Changing the temporary directory leaves existing recovery files in their recorded locations. Copies into another final directory are journaled and verified before replacement.",
     "Turning off the start dialog uses the category folder and duplicate preference, but required overwrite/credential/recovery decisions still prompt. Immediate File Info downloads receive into a provisional partial until confirmed. Download Later holds in the selected queue. Ignoring modification time never bypasses identity, byte hashes or strict server resume validators. Virus checking runs only the configured executable with a standalone {file} argument.",
-    "Connections per file can be set from 1 to 16. The default is 8. Servers must support exact byte ranges and a stable validator; otherwise Rusty uses a single connection. The choice applies to downloads added after saving Options."
+    "Connections per file can be set from 1 to 16. The default is 8. Servers must support exact byte ranges and a stable validator; otherwise Rusty uses a single connection. Automatic recovery defaults to 3 retries with a fixed 5-second delay; 0 retries disables it. Queues continue other files during delays. Recovery preserves saved bytes and stops when safe continuation requires your attention. These choices apply to downloads added after saving Options."
 ];

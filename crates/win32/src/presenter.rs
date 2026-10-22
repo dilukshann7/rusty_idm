@@ -130,6 +130,7 @@ impl ViewModel {
         ActionAvailability {
             start: job.is_some_and(|s| {
                 s.readiness == rusty_engine::EntryReadiness::ConfirmationRequired
+                    || (s.readiness == rusty_engine::EntryReadiness::Ready && s.retry.is_some())
                     || (s.state == JobState::Waiting && s.deferred)
                     || s.state == JobState::Paused
                     || (s.state == JobState::Failed
@@ -160,6 +161,7 @@ impl ViewModel {
         let lines: Vec<_> = self
             .jobs
             .values()
+            .filter(|job| job.retry.is_none())
             .filter_map(|job| {
                 let error = job.error.as_ref()?;
                 if error.retained_partial.is_none() && error.retained_original.is_none() {
@@ -221,6 +223,7 @@ pub fn format_snapshot(job: &JobSnapshot) -> RowText {
             state => format!("{state:?}"),
         },
     };
+    let state = retry_status(job, std::time::SystemTime::now()).unwrap_or(state);
     let description = job
         .error
         .as_ref()
@@ -267,6 +270,24 @@ pub fn format_snapshot(job: &JobSnapshot) -> RowText {
         ],
     }
 }
+/// Shared retry text for the native list and transfer dialog.
+pub(crate) fn retry_status(job: &JobSnapshot, now: std::time::SystemTime) -> Option<String> {
+    if job.readiness != rusty_engine::EntryReadiness::Ready {
+        return None;
+    }
+    let retry = job.retry.as_ref()?;
+    let prefix = format!("Retry {}/{}", retry.attempt, retry.max_retries);
+    if job.deferred || retry.next_retry_at.is_none() {
+        return Some(format!("{prefix} paused"));
+    }
+    let remaining = retry.next_retry_at?.duration_since(now).unwrap_or_default();
+    let seconds = remaining.as_secs() + u64::from(remaining.subsec_nanos() != 0);
+    Some(if seconds == 0 {
+        format!("{prefix} waiting for a connection")
+    } else {
+        format!("{prefix} in {seconds} sec")
+    })
+}
 pub fn format_bytes(bytes: u64) -> String {
     if bytes < 1024 {
         return format!("{bytes} B");
@@ -291,7 +312,7 @@ fn format_duration(seconds: u64) -> String {
     )
 }
 #[cfg(windows)]
-fn local_time(time: std::time::SystemTime) -> String {
+pub(crate) fn local_time(time: std::time::SystemTime) -> String {
     use windows::Win32::{
         Foundation::{FILETIME, SYSTEMTIME},
         System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime},
@@ -323,7 +344,7 @@ fn local_time(time: std::time::SystemTime) -> String {
     )
 }
 #[cfg(not(windows))]
-fn local_time(_: std::time::SystemTime) -> String {
+pub(crate) fn local_time(_: std::time::SystemTime) -> String {
     String::new()
 }
 

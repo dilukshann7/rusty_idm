@@ -26,6 +26,11 @@ enum Mode {
     ChangedValidator,
     Dynamic,
     LastModified,
+    TransientProbe,
+    InterruptedRanges,
+    ChangedAfterDrop,
+    IgnoredAfterDrop,
+    RejectedProbe,
 }
 
 fn byte_at(offset: u64) -> u8 {
@@ -34,6 +39,8 @@ fn byte_at(offset: u64) -> u8 {
 
 #[derive(Default)]
 struct Counts {
+    probes: AtomicUsize,
+    dropped: AtomicBool,
     workers: AtomicUsize,
     peak: AtomicUsize,
     ranged_workers: AtomicUsize,
@@ -53,6 +60,8 @@ fn respond(mut stream: TcpStream, counts: Arc<Counts>, size: u64, mode: Mode) {
         (0, size - 1)
     } else if let Some(pair) = range {
         pair
+    } else if matches!(mode, Mode::RejectedProbe) {
+        (0, size - 1)
     } else {
         return;
     };
@@ -60,6 +69,22 @@ fn respond(mut stream: TcpStream, counts: Arc<Counts>, size: u64, mode: Mode) {
         return;
     }
     let is_probe = range == Some((0, 0));
+    if is_probe {
+        let previous = counts.probes.fetch_add(1, Ordering::SeqCst);
+        if matches!(mode, Mode::RejectedProbe) {
+            let _ = stream.write_all(b"HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            return;
+        }
+        if matches!(mode, Mode::TransientProbe) && previous == 0 {
+            let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            return;
+        }
+        if matches!(mode, Mode::IgnoredAfterDrop) && previous > 0 {
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            return;
+        }
+    }
     if !is_probe {
         let active = counts.workers.fetch_add(1, Ordering::SeqCst) + 1;
         counts.peak.fetch_max(active, Ordering::SeqCst);
@@ -67,7 +92,9 @@ fn respond(mut stream: TcpStream, counts: Arc<Counts>, size: u64, mode: Mode) {
             counts.ranged_workers.fetch_add(1, Ordering::SeqCst);
         }
     }
-    let validator = if matches!(mode, Mode::ChangedValidator) && !is_probe {
+    let validator = if (matches!(mode, Mode::ChangedValidator) && !is_probe)
+        || (matches!(mode, Mode::ChangedAfterDrop) && counts.probes.load(Ordering::SeqCst) > 1)
+    {
         "\"large-v2\""
     } else {
         "\"large-v1\""
@@ -77,7 +104,7 @@ fn respond(mut stream: TcpStream, counts: Arc<Counts>, size: u64, mode: Mode) {
     } else {
         format!("ETag: {validator}")
     };
-    if matches!(mode, Mode::IgnoreRanges) {
+    if matches!(mode, Mode::IgnoreRanges | Mode::RejectedProbe) {
         let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {size}\r\n{validator_header}\r\nConnection: close\r\n\r\n");
     } else {
         let declared_start = if matches!(mode, Mode::Malformed) && start > 0 {
@@ -91,6 +118,12 @@ fn respond(mut stream: TcpStream, counts: Arc<Counts>, size: u64, mode: Mode) {
         );
     }
     let mut offset = start;
+    let interrupt = !is_probe
+        && matches!(
+            mode,
+            Mode::InterruptedRanges | Mode::ChangedAfterDrop | Mode::IgnoredAfterDrop
+        )
+        && !counts.dropped.swap(true, Ordering::SeqCst);
     let mut chunk = [0u8; 32 * 1024];
     while offset <= end {
         let len = (end - offset + 1).min(chunk.len() as u64) as usize;
@@ -101,6 +134,9 @@ fn respond(mut stream: TcpStream, counts: Arc<Counts>, size: u64, mode: Mode) {
             break;
         }
         offset += len as u64;
+        if interrupt && offset - start >= 256 * 1024 {
+            break;
+        }
         if matches!(mode, Mode::Dynamic) && start == 0 && !is_probe {
             thread::sleep(Duration::from_millis(4));
         } else if !is_probe && !matches!(mode, Mode::Dynamic) {
@@ -158,17 +194,28 @@ impl Drop for Server {
 }
 
 fn download(server: &Server, target: std::path::PathBuf, max_connections: u8) -> JobSnapshot {
+    download_observed(server, target, max_connections).0
+}
+
+fn download_observed(
+    server: &Server,
+    target: std::path::PathBuf,
+    max_connections: u8,
+) -> (JobSnapshot, Vec<JobSnapshot>) {
     let mut request =
         validate_request(&server.url, target.clone(), ReplacementPolicy::Deny).unwrap();
     request.options.max_connections = max_connections;
+    request.options.retry_policy.delay_seconds = 1;
     request.options.temporary_directory = Some(target.parent().unwrap().to_path_buf());
     let engine = spawn_engine_in_memory(Arc::new(|| {}));
     engine.try_send(Command::Submit(request)).unwrap();
     let deadline = Instant::now() + Duration::from_secs(20);
+    let mut snapshots = vec![];
     let outcome = loop {
         let mut result = None;
         for event in engine.drain_events() {
             if let Event::JobChanged(job) = event {
+                snapshots.push(job.clone());
                 if job.state.is_terminal() {
                     result = Some(job);
                 }
@@ -182,7 +229,7 @@ fn download(server: &Server, target: std::path::PathBuf, max_connections: u8) ->
     };
     engine.try_send(Command::Shutdown).unwrap();
     engine.join().unwrap();
-    outcome
+    (outcome, snapshots)
 }
 
 #[test]
@@ -190,7 +237,7 @@ fn downloads_one_file_through_concurrent_ranges() {
     let server = Server::new(SIZE, Mode::Exact);
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("large.bin");
-    let completed = download(&server, target.clone(), 4);
+    let (completed, snapshots) = download_observed(&server, target.clone(), 4);
     assert_eq!(
         completed.state,
         JobState::Completed,
@@ -206,6 +253,73 @@ fn downloads_one_file_through_concurrent_ranges() {
         .all(|(index, byte)| *byte == byte_at(index as u64)));
     assert!(server.counts.peak.load(Ordering::SeqCst) >= 2);
     assert!(server.counts.ranged_workers.load(Ordering::SeqCst) >= 1);
+    assert!(snapshots.iter().any(|job| job
+        .transfer_details
+        .as_ref()
+        .is_some_and(|d| d.active_connections >= 2)));
+    let details = completed
+        .transfer_details
+        .as_ref()
+        .expect("completed segment telemetry");
+    assert_eq!(details.connection_limit, 4);
+    assert_eq!(details.active_connections, 0);
+    assert_eq!(
+        details.segments.iter().map(|s| s.received).sum::<u64>(),
+        SIZE
+    );
+    assert!(details
+        .segments
+        .iter()
+        .all(|s| s.state == rusty_engine::SegmentState::Completed && s.bytes_per_second == 0));
+}
+
+#[test]
+fn transient_probe_failure_retries_instead_of_falling_back_or_becoming_restart_required() {
+    let server = Server::new(SIZE, Mode::TransientProbe);
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("probe-retry.bin");
+    let done = download(&server, target.clone(), 4);
+    assert_eq!(done.state, JobState::Completed, "{:?}", done.error);
+    assert!(server.counts.probes.load(Ordering::SeqCst) >= 2);
+    assert!(server.counts.ranged_workers.load(Ordering::SeqCst) > 0);
+    assert_eq!(
+        std::fs::read(target).unwrap(),
+        (0..SIZE).map(byte_at).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn interrupted_ranges_resume_checkpoints_and_publish_exact_bytes() {
+    let server = Server::new(SIZE, Mode::InterruptedRanges);
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("range-retry.bin");
+    let done = download(&server, target.clone(), 4);
+    assert_eq!(done.state, JobState::Completed, "{:?}", done.error);
+    assert!(server.counts.dropped.load(Ordering::SeqCst));
+    assert!(server.counts.probes.load(Ordering::SeqCst) >= 2);
+    assert_eq!(
+        std::fs::read(target).unwrap(),
+        (0..SIZE).map(byte_at).collect::<Vec<_>>()
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn recovery_stops_when_ranges_are_ignored_or_the_validator_changes() {
+    for mode in [Mode::ChangedAfterDrop, Mode::IgnoredAfterDrop] {
+        let server = Server::new(SIZE, mode);
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("unsafe-retry.bin");
+        let failed = download(&server, target.clone(), 4);
+        assert_eq!(failed.state, JobState::Failed);
+        assert_eq!(
+            failed.error.unwrap().kind,
+            rusty_engine::ErrorKind::RestartRequired
+        );
+        assert_eq!(server.counts.probes.load(Ordering::SeqCst), 2);
+        assert!(!target.exists());
+        assert!(std::fs::read_dir(dir.path()).unwrap().next().is_some());
+    }
 }
 
 #[test]
@@ -215,6 +329,16 @@ fn malformed_worker_range_preserves_partial_without_publishing() {
     let target = dir.path().join("bad.bin");
     let failed = download(&server, target.clone(), 4);
     assert_eq!(failed.state, JobState::Failed);
+    let details = failed
+        .transfer_details
+        .as_ref()
+        .expect("failed-worker telemetry");
+    assert_eq!(details.active_connections, 0);
+    assert!(details
+        .segments
+        .iter()
+        .any(|s| s.id > 0 && s.state == rusty_engine::SegmentState::Failed));
+    assert!(details.segments.iter().all(|s| s.bytes_per_second == 0));
     assert!(!target.exists());
     assert!(std::fs::read_dir(dir.path()).unwrap().next().is_some());
 }
@@ -235,7 +359,7 @@ fn ignored_ranges_use_the_single_stream_fallback() {
     let server = Server::new(SIZE, Mode::IgnoreRanges);
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("fallback.bin");
-    let done = download(&server, target.clone(), 4);
+    let (done, snapshots) = download_observed(&server, target.clone(), 4);
     assert_eq!(done.state, JobState::Completed, "{:?}", done.error);
     let bytes = std::fs::read(target).unwrap();
     assert_eq!(bytes.len(), SIZE as usize);
@@ -244,6 +368,28 @@ fn ignored_ranges_use_the_single_stream_fallback() {
         .enumerate()
         .all(|(index, byte)| *byte == byte_at(index as u64)));
     assert_eq!(server.counts.ranged_workers.load(Ordering::SeqCst), 0);
+    assert!(snapshots
+        .iter()
+        .filter_map(|s| s.transfer_details.as_ref())
+        .all(|d| d.active_connections <= 1));
+    let details = done.transfer_details.as_ref().expect("fallback telemetry");
+    assert_eq!(details.segments.len(), 1);
+    assert_eq!(details.segments[0].received, SIZE);
+    assert_eq!(details.active_connections, 0);
+}
+
+#[test]
+fn an_initial_rejected_probe_still_falls_back_to_a_full_request() {
+    let server = Server::new(SIZE, Mode::RejectedProbe);
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("rejected-probe.bin");
+    let done = download(&server, target.clone(), 4);
+    assert_eq!(done.state, JobState::Completed, "{:?}", done.error);
+    assert_eq!(server.counts.probes.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        std::fs::read(target).unwrap(),
+        (0..SIZE).map(byte_at).collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -252,7 +398,7 @@ fn idle_connection_splits_a_slow_active_remainder() {
     let server = Server::new(size, Mode::Dynamic);
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("split.bin");
-    let done = download(&server, target.clone(), 2);
+    let (done, snapshots) = download_observed(&server, target.clone(), 2);
     assert_eq!(done.state, JobState::Completed, "{:?}", done.error);
     assert_eq!(done.received, size);
     let bytes = std::fs::read(target).unwrap();
@@ -262,6 +408,33 @@ fn idle_connection_splits_a_slow_active_remainder() {
         .enumerate()
         .all(|(index, byte)| *byte == byte_at(index as u64)));
     assert!(server.counts.ranged_workers.load(Ordering::SeqCst) >= 2);
+    let details = done.transfer_details.as_ref().expect("split telemetry");
+    assert!(details.segments.len() > 2);
+    assert_eq!(
+        details.segments.iter().map(|s| s.received).sum::<u64>(),
+        size
+    );
+    let mut ordered = details.segments.clone();
+    ordered.sort_by_key(|s| s.start);
+    assert_eq!(ordered[0].start, 0);
+    assert_eq!(ordered.last().unwrap().end, Some(size - 1));
+    assert!(ordered
+        .windows(2)
+        .all(|pair| pair[0].end.unwrap() + 1 == pair[1].start));
+    for job in snapshots {
+        if let Some(view) = job.transfer_details {
+            assert!(view.active_connections <= 2);
+            for row in view.segments {
+                let final_row = details
+                    .segments
+                    .iter()
+                    .find(|s| s.id == row.id)
+                    .expect("stable segment ID");
+                assert_eq!(final_row.start, row.start);
+                assert!(row.received <= final_row.received);
+            }
+        }
+    }
 }
 
 #[test]
@@ -292,6 +465,12 @@ fn paused_ranges_resume_into_the_same_verified_file() {
                 }
                 if job.id == JobId(1) && job.state == JobState::Paused && !paused {
                     paused = true;
+                    let details = job.transfer_details.as_ref().expect("paused telemetry");
+                    assert_eq!(details.active_connections, 0);
+                    assert!(details
+                        .segments
+                        .iter()
+                        .all(|s| s.bytes_per_second == 0 && !s.state.is_active()));
                     assert!(!target.exists());
                     assert!(std::fs::read_dir(dir.path()).unwrap().any(|entry| {
                         entry

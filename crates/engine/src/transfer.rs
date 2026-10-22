@@ -13,12 +13,22 @@ use tokio_util::sync::CancellationToken;
 #[path = "transfer_segmented.rs"]
 mod segmented;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct TransferProgress {
     pub received: u64,
     pub total: Option<u64>,
     pub resume_capable: bool,
     pub paused: bool,
+    /// None carries no new worker telemetry, preserving the last available details.
+    pub details: Option<crate::ConnectionProgress>,
+}
+impl TransferProgress {
+    pub(crate) fn coalesce(&mut self, mut newer: Self) {
+        if newer.details.is_none() {
+            newer.details = self.details.take();
+        }
+        *self = newer;
+    }
 }
 pub type ProgressSink = Arc<dyn Fn(TransferProgress) + Send + Sync>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,6 +99,7 @@ impl TransferControl {
             total: Some(bytes),
             resume_capable: true,
             paused: true,
+            details: None,
         });
         loop {
             if self.token.is_cancelled() {
@@ -252,6 +263,40 @@ impl TransferControl {
 mod tests {
     use super::*;
     #[test]
+    fn aggregate_only_progress_retains_the_latest_worker_details() {
+        let mut latest = TransferProgress {
+            received: 10,
+            total: Some(100),
+            resume_capable: true,
+            paused: false,
+            details: Some(crate::ConnectionProgress {
+                connection_limit: 8,
+                segments: vec![],
+            }),
+        };
+        latest.coalesce(TransferProgress {
+            received: 100,
+            total: Some(100),
+            resume_capable: true,
+            paused: true,
+            details: None,
+        });
+        assert_eq!(latest.received, 100);
+        assert!(latest.paused);
+        assert_eq!(latest.details.as_ref().unwrap().connection_limit, 8);
+        latest.coalesce(TransferProgress {
+            received: 0,
+            total: None,
+            resume_capable: false,
+            paused: false,
+            details: Some(crate::ConnectionProgress {
+                connection_limit: 1,
+                segments: vec![],
+            }),
+        });
+        assert_eq!(latest.details.as_ref().unwrap().connection_limit, 1);
+    }
+    #[test]
     fn cancellation_before_commit_prevents_file_operation() {
         let control = TransferControl::new(CancellationToken::new());
         assert!(control.try_cancel());
@@ -358,7 +403,8 @@ async fn stream(
     output: &mut OutputFile,
 ) -> Result<TransferOutcome, JobError> {
     // System proxy discovery is reqwest's system-proxy feature; no custom proxy,
-    // referer, credentials logging, certificate bypass or application retries.
+    // referer, credentials logging, certificate bypass or transport-local retries.
+    // Automatic recovery is scheduled by the engine actor after checkpointing.
     request
         .options
         .validate()
@@ -387,6 +433,22 @@ async fn stream(
         .and_then(|s| url::Url::parse(s).ok());
     let mut refresh_pending = saved.as_ref().is_some_and(|c| c.refresh_pending);
     let mut strict = request.recovery.is_some();
+    let mut segment = crate::SegmentProgress {
+        id: 0,
+        start: 0,
+        end: total.and_then(|n| n.checked_sub(1)),
+        received,
+        transferred: 0,
+        generation: 0,
+        state: crate::SegmentState::Waiting,
+    };
+    stream_report(
+        &progress,
+        &segment,
+        request.options.max_connections,
+        total,
+        validator.is_some(),
+    );
     if received > 0 && (total.is_none() || representation_url.is_none()) {
         return Err(JobError::new(
             ErrorKind::RestartRequired,
@@ -400,12 +462,14 @@ async fn stream(
         strict |= control.recovery().is_some();
         if control.settings.borrow().paused {
             output.checkpoint().await?;
-            progress(TransferProgress {
-                received,
+            segment.state = crate::SegmentState::Paused;
+            stream_report(
+                &progress,
+                &segment,
+                request.options.max_connections,
                 total,
-                resume_capable: validator.is_some(),
-                paused: true,
-            });
+                validator.is_some(),
+            );
             if !control.wait_until_resumed_output(output).await? {
                 return Ok(TransferOutcome::Cancelled);
             }
@@ -415,6 +479,14 @@ async fn stream(
         }
         // A fully received known-length body needs no request after an EOF pause.
         if total == Some(received) {
+            segment.state = crate::SegmentState::Completed;
+            stream_report(
+                &progress,
+                &segment,
+                request.options.max_connections,
+                total,
+                validator.is_some(),
+            );
             return Ok(TransferOutcome::Completed { bytes: received });
         }
         if received > 0 && total.is_none() {
@@ -452,6 +524,17 @@ async fn stream(
             output.checkpoint().await?;
         }
         let resume = received > 0 && total.is_some();
+        segment.received = received;
+        segment.generation += 1;
+        segment.transferred = 0;
+        segment.state = crate::SegmentState::Connecting;
+        stream_report(
+            &progress,
+            &segment,
+            request.options.max_connections,
+            total,
+            validator.is_some(),
+        );
         let mut builder = client
             .get(request.url.clone())
             .header(reqwest::header::ACCEPT_ENCODING, "identity");
@@ -482,7 +565,9 @@ async fn stream(
                 biased;
                 _ = cancel.cancelled() => return Ok(TransferOutcome::Cancelled),
                 _ = control.pause_requested() => continue 'connect,
-                response = tokio::time::timeout(Duration::from_secs(30), builder.send()) => response.ok().and_then(Result::ok).ok_or_else(|| JobError::new(ErrorKind::Network, "Connection failed, timed out, or exceeded the redirect limit. Check the URL, network and TLS certificate."))?,
+                response = tokio::time::timeout(Duration::from_secs(30), builder.send()) => response
+                    .map_err(|_| JobError::transient(ErrorKind::Network, "Connection timed out."))?
+                    .map_err(|error| JobError::request(&error, "Connection failed, timed out, or exceeded the redirect limit. Check the URL, network and TLS certificate."))?,
             }
         };
         if !request.request_context.is_empty()
@@ -497,8 +582,8 @@ async fn stream(
         if !response.status().is_success()
             || (response.status() == reqwest::StatusCode::PARTIAL_CONTENT && !resume)
         {
-            return Err(JobError::new(
-                ErrorKind::Http,
+            return Err(JobError::http(
+                response.status().as_u16(),
                 format!(
                     "Server returned HTTP {}. A complete response is required.",
                     response.status().as_u16()
@@ -571,12 +656,16 @@ async fn stream(
         );
         output.checkpoint().await?;
         let mut checkpoint_at = tokio::time::Instant::now();
-        progress(TransferProgress {
-            received,
+        segment.state = crate::SegmentState::Receiving;
+        segment.received = received;
+        segment.end = total.and_then(|n| n.checked_sub(1));
+        stream_report(
+            &progress,
+            &segment,
+            request.options.max_connections,
             total,
-            resume_capable: validator.is_some(),
-            paused: false,
-        });
+            validator.is_some(),
+        );
         loop {
             let read_deadline = tokio::time::Instant::now() + Duration::from_secs(30);
             let chunk = loop {
@@ -585,7 +674,7 @@ async fn stream(
                     _=cancel.cancelled()=>return Ok(TransferOutcome::Cancelled),
                     _=control.pause_requested()=>continue 'connect,
                     _=tokio::time::sleep_until(checkpoint_at+Duration::from_secs(5)), if control.recovery().is_some()=>{output.checkpoint().await?;checkpoint_at=tokio::time::Instant::now();},
-                    chunk=tokio::time::timeout_at(read_deadline,response.chunk())=>break chunk.map_err(|_|JobError::new(ErrorKind::Network,"The response made no progress for 30 seconds."))?.map_err(|_|JobError::new(ErrorKind::Network,"The response was interrupted."))?,
+                    chunk=tokio::time::timeout_at(read_deadline,response.chunk())=>break chunk.map_err(|_|JobError::transient(ErrorKind::Network,"The response made no progress for 30 seconds."))?.map_err(|_|JobError::transient(ErrorKind::Network,"The response was interrupted."))?,
                 }
             };
             let Some(chunk) = chunk else {
@@ -620,21 +709,24 @@ async fn stream(
                 }
                 output.write(&chunk[offset..end]).await?;
                 received += (end - offset) as u64;
+                segment.transferred = segment.transferred.saturating_add((end - offset) as u64);
                 if checkpoint_at.elapsed() >= Duration::from_secs(5) {
                     output.checkpoint().await?;
                     checkpoint_at = tokio::time::Instant::now();
                 }
                 offset = end;
-                progress(TransferProgress {
-                    received,
+                segment.received = received;
+                stream_report(
+                    &progress,
+                    &segment,
+                    request.options.max_connections,
                     total,
-                    resume_capable: validator.is_some(),
-                    paused: false,
-                });
+                    validator.is_some(),
+                );
             }
         }
         if total.is_some_and(|total| received != total) {
-            return Err(JobError::new(
+            return Err(JobError::transient(
                 ErrorKind::LengthMismatch,
                 "The response ended before its declared length.",
             ));
@@ -642,8 +734,35 @@ async fn stream(
         if control.settings.borrow().paused {
             continue 'connect;
         }
+        segment.state = crate::SegmentState::Completed;
+        stream_report(
+            &progress,
+            &segment,
+            request.options.max_connections,
+            total,
+            validator.is_some(),
+        );
         return Ok(TransferOutcome::Completed { bytes: received });
     }
+}
+
+fn stream_report(
+    progress: &ProgressSink,
+    segment: &crate::SegmentProgress,
+    connection_limit: u8,
+    total: Option<u64>,
+    resume_capable: bool,
+) {
+    progress(TransferProgress {
+        received: segment.received,
+        total,
+        resume_capable,
+        paused: segment.state == crate::SegmentState::Paused,
+        details: Some(crate::ConnectionProgress {
+            connection_limit,
+            segments: vec![segment.clone()],
+        }),
+    });
 }
 
 fn strong_etag(headers: &HeaderMap) -> Option<String> {

@@ -99,6 +99,7 @@ pub struct Configuration {
     pub ignore_modified_time: bool,
     pub user_agent: String,
     pub max_connections: u8,
+    pub retry_policy: rusty_engine::RetryPolicy,
     pub progress: ProgressPreferences,
     pub scanner: ScannerPreferences,
 }
@@ -123,6 +124,7 @@ impl Default for Configuration {
             ignore_modified_time: false,
             user_agent: "RustyDownloadManager/0.2.1".into(),
             max_connections: 8,
+            retry_policy: Default::default(),
             progress: Default::default(),
             scanner: Default::default(),
         }
@@ -180,6 +182,7 @@ impl Configuration {
                 "RustyDownloadManager/0.2.1".into()
             },
             max_connections: self.max_connections,
+            retry_policy: self.retry_policy,
             temporary_directory: self.temporary_folder(),
             server_creation_time: self.server_creation_time,
             ignore_modified_time: self.ignore_modified_time,
@@ -243,6 +246,28 @@ mod connection_tests {
         assert_eq!(restored.download_options(true).max_connections, 12);
         assert_eq!(restored.download_options(false).max_connections, 12);
         restored.max_connections = 17;
+        assert!(restored.validate_fields().is_err());
+    }
+    #[test]
+    fn retry_preferences_default_for_legacy_settings_and_apply_to_all_new_requests() {
+        let mut saved = serde_json::to_value(Configuration::default()).unwrap();
+        saved.as_object_mut().unwrap().remove("retry_policy");
+        let mut restored: Configuration = serde_json::from_value(saved).unwrap();
+        assert_eq!(restored.retry_policy, rusty_engine::RetryPolicy::default());
+        restored.retry_policy = rusty_engine::RetryPolicy {
+            max_retries: 7,
+            delay_seconds: 11,
+        };
+        for manual in [false, true] {
+            assert_eq!(
+                restored.download_options(manual).retry_policy,
+                restored.retry_policy
+            );
+        }
+        let saved = serde_json::to_string(&restored).unwrap();
+        let roundtrip: Configuration = serde_json::from_str(&saved).unwrap();
+        assert_eq!(roundtrip.retry_policy, restored.retry_policy);
+        restored.retry_policy.delay_seconds = 0;
         assert!(restored.validate_fields().is_err());
     }
 }

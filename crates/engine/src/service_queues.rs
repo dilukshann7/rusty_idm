@@ -88,6 +88,20 @@ impl QueueRuntime {
             Ok(())
         })
     }
+    pub fn remove_entries(&self, entries: &[EntryId]) -> Result<(), String> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        self.store.update(|state| {
+            for entry in entries {
+                state.entries.remove(entry);
+            }
+            for queue in state.queues.values_mut() {
+                queue.entries.retain(|entry| !entries.contains(entry));
+            }
+            Ok(())
+        })
+    }
     pub fn restore(&mut self, jobs: &mut BTreeMap<JobId, Job>, next: &mut u64, bus: &EventBus) {
         if let Some(problem) = self.store.problem() {
             reject(bus, problem);
@@ -151,7 +165,11 @@ impl QueueRuntime {
             } else {
                 EntryReadiness::Ready
             };
-            let mut error = None;
+            let mut error = entry
+                .history
+                .error
+                .as_ref()
+                .map(|failure| failure.to_error());
             if entry.admission_pending {
                 readiness = EntryReadiness::RecoveryRequired;
                 error=Some(JobError::new(ErrorKind::Storage,"An unacknowledged admission was preserved after a storage interruption. The browser may still own its download. Remove this held entry before adding it again."));
@@ -181,6 +199,15 @@ impl QueueRuntime {
                     }
                 }
             }
+            // Recovery can finish publication and update its byte count/dates.
+            // Build the restored row from that result, not the earlier snapshot.
+            let recovered = self.store.snapshot().entries.get(&entry.id).cloned();
+            let entry = recovered.as_ref().unwrap_or(entry);
+            for path in &entry.retained_files {
+                if !retained_files.contains(path) {
+                    retained_files.push(path.clone());
+                }
+            }
             if !completed
                 && entry.media.is_none()
                 && entry.checkpoint.as_ref().is_some_and(|c| {
@@ -202,6 +229,10 @@ impl QueueRuntime {
                     "This protected download needs a fresh browser capture after restart. Use Refresh download address to keep the saved bytes."));
             }
             let id = JobId(*next);
+            if completed && readiness != EntryReadiness::RecoveryRequired {
+                readiness = EntryReadiness::Ready;
+                error = None;
+            }
             *next += 1;
             let queue_id = state
                 .queues
@@ -209,9 +240,12 @@ impl QueueRuntime {
                 .find(|q| q.entries.contains(&entry.id))
                 .map(|q| q.id);
             request.queue = queue_id;
-            let received = entry
-                .completed_bytes
-                .unwrap_or_else(|| entry.checkpoint.as_ref().map_or(0, |c| c.received()));
+            let received = entry.completed_bytes.unwrap_or_else(|| {
+                entry
+                    .checkpoint
+                    .as_ref()
+                    .map_or(entry.history.received, |c| c.received())
+            });
             let snapshot = JobSnapshot {
                 id,
                 entry_id: Some(entry.id),
@@ -230,6 +264,10 @@ impl QueueRuntime {
                 destination: entry.destination.clone(),
                 state: if completed {
                     JobState::Completed
+                } else if entry.history.outcome == Some(crate::history::HistoryOutcome::Failed)
+                    && !entry.admission_pending
+                {
+                    JobState::Failed
                 } else {
                     JobState::Waiting
                 },
@@ -237,7 +275,11 @@ impl QueueRuntime {
                 total: if completed {
                     Some(received)
                 } else {
-                    entry.checkpoint.as_ref().and_then(|c| c.total)
+                    entry
+                        .checkpoint
+                        .as_ref()
+                        .and_then(|c| c.total)
+                        .or(entry.history.total)
                 },
                 resume_capable: entry.media.is_some()
                     || entry
@@ -250,8 +292,12 @@ impl QueueRuntime {
                     }),
                 speed_limit: None,
                 bytes_per_second: 0,
+                transfer_details: None,
                 eta_seconds: None,
-                last_try: None,
+                created_at: entry.history.created_at,
+                finished_at: entry.history.finished_at,
+                last_try: entry.history.last_try,
+                retry: None,
                 error,
                 deferred: true,
                 category: entry.category.clone(),
@@ -262,7 +308,10 @@ impl QueueRuntime {
             jobs.insert(
                 id,
                 Job {
+                    transfer_meter: Default::default(),
+                    retry: Default::default(),
                     request,
+                    retired_history: None,
                     snapshot,
                     cancel: TransferControl::new(CancellationToken::new()),
                     remove: false,
@@ -287,7 +336,7 @@ impl QueueRuntime {
                 jobs.iter()
                     .find(|(_, j)| {
                         j.snapshot.entry_id == Some(e.id)
-                            && matches!(j.snapshot.state, JobState::Completed | JobState::Cancelled)
+                            && j.snapshot.state == JobState::Cancelled
                             && j.snapshot.recovery_paths.is_empty()
                             && j.snapshot.error.is_none()
                     })
@@ -307,32 +356,11 @@ impl QueueRuntime {
         {
             for (id, _) in ephemeral {
                 if let Some(job) = jobs.get_mut(&id) {
-                    job.request.recovery = None;
+                    job.retired_history = job.request.recovery.take();
                     job.snapshot.entry_id = None;
-                    bus.publish(Event::JobChanged(job.snapshot.clone()));
+                    publish_job(job, &bus);
                 }
             }
-        }
-        let state = self.store.snapshot();
-        let removed: Vec<_> = state
-            .entries
-            .keys()
-            .filter(|id| !jobs.values().any(|j| j.snapshot.entry_id == Some(**id)))
-            .copied()
-            .collect();
-        if removed.is_empty() {
-            return;
-        }
-        if let Err(error) = self.store.update(|s| {
-            for id in removed {
-                s.entries.remove(&id);
-                for q in s.queues.values_mut() {
-                    q.entries.retain(|e| *e != id);
-                }
-            }
-            Ok(())
-        }) {
-            reject(bus, &error);
         }
     }
     pub fn slot_available(&self, job: &Job, jobs: &BTreeMap<JobId, Job>) -> bool {
@@ -355,6 +383,11 @@ impl QueueRuntime {
             })
             .count()
             < limit
+    }
+    pub(super) fn retry_allowed(&self, job: &Job) -> bool {
+        job.snapshot
+            .queue_id
+            .is_none_or(|id| self.running.contains(&id) && !self.stopping.contains(&id))
     }
     fn hold(
         &mut self,
@@ -382,7 +415,7 @@ impl QueueRuntime {
             }
             job.snapshot.deferred = true;
             job.request.deferred = true;
-            bus.publish(Event::JobChanged(job.snapshot.clone()));
+            publish_job(job, &bus);
         }
     }
     pub fn pump(
@@ -452,6 +485,7 @@ impl QueueRuntime {
                     continue;
                 };
                 if job.user_held
+                    || job.snapshot.retry.is_some()
                     || job.snapshot.readiness != EntryReadiness::Ready
                     || !matches!(job.snapshot.state, JobState::Waiting | JobState::Paused)
                     || waiting.contains(&job.snapshot.id)
@@ -463,7 +497,7 @@ impl QueueRuntime {
                 job.request.deferred = false;
                 waiting.push_back(job.snapshot.id);
                 count += 1;
-                bus.publish(Event::JobChanged(job.snapshot.clone()));
+                publish_job(job, &bus);
             }
         }
     }
@@ -580,6 +614,7 @@ impl QueueRuntime {
                 }
                 Command::AssignQueue(id, target) => {
                     let job = jobs.get_mut(&id).ok_or("Download no longer exists.")?;
+                    restore_retired_history(job).map_err(|error| error.message)?;
                     if matches!(
                         job.snapshot.state,
                         JobState::Running | JobState::Pausing | JobState::Cancelling
@@ -627,11 +662,11 @@ impl QueueRuntime {
                         if let Err(error)=job.cancel.wait_checkpoint().await {
                             job.snapshot.error=Some(error.clone());
                             job.snapshot.readiness=EntryReadiness::RecoveryRequired;
-                            bus.publish(Event::JobChanged(job.snapshot.clone()));
+                            publish_job(job, &bus);
                             return Err(error.message);
                         }
                     }
-                    bus.publish(Event::JobChanged(job.snapshot.clone()));
+                    publish_job(job, &bus);
                 }
                 Command::MoveQueueEntry(id, up) => {
                     let job = jobs.get(&id).ok_or("Download no longer exists.")?;
@@ -681,7 +716,7 @@ impl QueueRuntime {
                         EntryReadiness::Ready
                     };
                     bus.register_request(id, &job.request);
-                    bus.publish(Event::JobChanged(job.snapshot.clone()));
+                    publish_job(job, &bus);
                 }
                 Command::ConfirmRestart(id) => {
                     let job = jobs.get_mut(&id).ok_or("Download no longer exists.")?;
@@ -700,7 +735,7 @@ impl QueueRuntime {
                         .map(ReplacementPolicy::Approved)
                         .unwrap_or(ReplacementPolicy::Deny);
                     let replacement = job.request.replacement.clone();
-                    reset_job(job, replacement);
+                    reset_job(job, replacement).map_err(|error| error.message)?;
                     job.snapshot.readiness = EntryReadiness::Ready;
                     job.snapshot.recovery_paths = self
                         .store
@@ -710,7 +745,7 @@ impl QueueRuntime {
                         .map(|e| e.retained_files.clone())
                         .unwrap_or_default();
                     waiting.push_back(id);
-                    bus.publish(Event::JobChanged(job.snapshot.clone()));
+                    publish_job(job, &bus);
                 }
                 Command::SetCategory(id, category) => {
                     let job = jobs.get_mut(&id).ok_or("Download no longer exists.")?;
@@ -728,7 +763,7 @@ impl QueueRuntime {
                     }
                     job.request.category = category.clone();
                     job.snapshot.category = category;
-                    bus.publish(Event::JobChanged(job.snapshot.clone()));
+                    publish_job(job, &bus);
                 }
                 _ => {}
             }
@@ -746,8 +781,12 @@ fn check_name(name: &str) -> Result<(), String> {
         Ok(())
     }
 }
-fn stored(id: EntryId, r: &DownloadRequest) -> StoredEntry {
+pub(super) fn stored(id: EntryId, r: &DownloadRequest) -> StoredEntry {
     StoredEntry {
+        history: crate::history::HistoryMetadata {
+            created_at: Some(SystemTime::now()),
+            ..Default::default()
+        },
         media: r.media.clone(),
         source_page: r.source_page.clone(),
         options: r.options.clone(),
@@ -821,7 +860,7 @@ impl QueueRuntime {
                     .push((*id, job.snapshot.category.clone(), after.clone()));
                 job.request.category = after.clone();
                 job.snapshot.category = after;
-                bus.publish(Event::JobChanged(job.snapshot.clone()));
+                publish_job(job, &bus);
             }
         }
         Ok(undo)
@@ -860,7 +899,7 @@ impl QueueRuntime {
                 }
                 job.request.category = before.clone();
                 job.snapshot.category = before;
-                bus.publish(Event::JobChanged(job.snapshot.clone()));
+                publish_job(job, &bus);
             }
         }
         Ok(())

@@ -120,6 +120,9 @@ impl QueueRuntime {
             .filter(|j| j.snapshot.queue_id == Some(id))
         {
             job.user_held = false;
+            if let Some(status) = &mut job.snapshot.retry {
+                job.retry.resume(Instant::now(), SystemTime::now(), status);
+            }
         }
         Ok(())
     }

@@ -36,6 +36,8 @@ class BrowserPackageTests(unittest.TestCase):
                         self.assertIn("service-worker.js", names)
                         self.assertIn("media-discovery.js", names)
                         self.assertIn("content.js", names)
+                        self.assertIn("media-toolbar.js", names)
+                        self.assertIn("media-preview-cache.js", names)
                         self.assertFalse(any(name.startswith("tests/") for name in names))
                         self.assertEqual(json.loads(package.read("manifest.json"))["version"], VERSION)
 

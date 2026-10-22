@@ -253,6 +253,8 @@ BEGIN
     PUSHBUTTON "&Pause", 2205, 235, 126, 50, 14, WS_TABSTOP | WS_DISABLED
     PUSHBUTTON "&Cancel", 2203, 303, 126, 50, 14, WS_TABSTOP
     EDITTEXT 2201, 10, 152, 360, 70, ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_READONLY | WS_VSCROLL | WS_HSCROLL | WS_TABSTOP
+    LTEXT "Segments (logical transfer connections)", 2227, 10, 226, 360, 9
+    CONTROL "Transfer segments", 2228, WC_LISTVIEW, WS_BORDER | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS, 10, 238, 360, 102
 END
 
 204 DIALOGEX 0, 0, 380, 185
@@ -496,7 +498,13 @@ BEGIN
     LTEXT "Connections per file:", -1, 20, 58, 144, 11
     COMBOBOX 3190, 170, 55, 62, 170, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT "1 uses a single connection. Eligible HTTP(S) files use up to the selected count.", -1, 20, 80, 294, 28
-    LTEXT "This setting applies to newly added downloads. Two files can run at once.", -1, 12, 144, 308, 28
+    GROUPBOX "Automatic recovery", -1, 8, 134, 316, 86
+    LTEXT "Retries (0 disables, up to 100):", -1, 20, 153, 184, 11
+    EDITTEXT 3191, 224, 150, 62, 14, ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "Delay between retries (1-3600 seconds):", -1, 20, 177, 200, 11
+    EDITTEXT 3192, 224, 174, 62, 14, ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "Queues continue other files while a download waits for retry.", -1, 20, 198, 294, 16
+    LTEXT "These settings apply to newly added downloads. Two files can run at once.", -1, 12, 232, 308, 24
 END
 
 217 DIALOGEX 0, 0, 296, 176

@@ -1,3 +1,4 @@
+use crate::{RetryPolicy, RetryStatus};
 use rusty_browser_bridge::protocol::RequestHop;
 use std::{fmt, path::PathBuf, time::SystemTime};
 use url::Url;
@@ -49,6 +50,7 @@ pub enum ReplacementPolicy {
 pub struct DownloadOptions {
     pub user_agent: String,
     pub max_connections: u8,
+    pub retry_policy: RetryPolicy,
     pub temporary_directory: Option<PathBuf>,
     pub server_creation_time: bool,
     pub ignore_modified_time: bool,
@@ -59,6 +61,7 @@ impl Default for DownloadOptions {
         Self {
             user_agent: "RustyDownloadManager/0.2.1".into(),
             max_connections: 8,
+            retry_policy: RetryPolicy::default(),
             temporary_directory: None,
             server_creation_time: false,
             ignore_modified_time: false,
@@ -68,6 +71,7 @@ impl Default for DownloadOptions {
 }
 impl DownloadOptions {
     pub fn validate(&self) -> Result<(), String> {
+        self.retry_policy.validate()?;
         if !(1..=16).contains(&self.max_connections) {
             return Err("Connections per file must be between 1 and 16.".into());
         }
@@ -208,8 +212,14 @@ pub struct JobSnapshot {
     /// Per-download bytes/sec; None means unlimited.
     pub speed_limit: Option<u64>,
     pub bytes_per_second: u64,
+    /// Live session telemetry; absent for restored history and unsupported backends.
+    pub transfer_details: Option<crate::TransferDetails>,
     pub eta_seconds: Option<u64>,
+    pub created_at: Option<SystemTime>,
+    pub finished_at: Option<SystemTime>,
     pub last_try: Option<SystemTime>,
+    /// Session-only automatic recovery; absent after admission or final failure.
+    pub retry: Option<RetryStatus>,
     pub error: Option<JobError>,
     pub deferred: bool,
     pub category: Option<String>,
@@ -218,11 +228,14 @@ pub struct JobSnapshot {
 #[derive(Clone, Debug)]
 pub struct JobError {
     pub kind: ErrorKind,
+    /// Explicit transport classification, never inferred from an error message.
+    pub retryable: bool,
+    pub http_status: Option<u16>,
     pub message: String,
     pub retained_partial: Option<PathBuf>,
     pub retained_original: Option<PathBuf>,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ErrorKind {
     InvalidRequest,
     Http,
@@ -240,6 +253,8 @@ impl JobError {
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
+            retryable: false,
+            http_status: None,
             message: message.into(),
             retained_partial: None,
             retained_original: None,
@@ -248,6 +263,30 @@ impl JobError {
     pub fn retained(mut self, path: PathBuf) -> Self {
         self.retained_partial = Some(path);
         self
+    }
+    pub fn transient(kind: ErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            retryable: true,
+            ..Self::new(kind, message)
+        }
+    }
+    pub fn http(status: u16, message: impl Into<String>) -> Self {
+        Self {
+            retryable: matches!(status, 408 | 429 | 500 | 502 | 503 | 504),
+            http_status: Some(status),
+            ..Self::new(ErrorKind::Http, message)
+        }
+    }
+    pub(crate) fn request(error: &reqwest::Error, message: &'static str) -> Self {
+        Self {
+            retryable: !error.is_builder()
+                && !error.is_redirect()
+                && (error.is_timeout()
+                    || error.is_connect()
+                    || error.is_request()
+                    || error.is_body()),
+            ..Self::new(ErrorKind::Network, message)
+        }
     }
     pub fn original_retained(mut self, path: PathBuf) -> Self {
         self.retained_original = Some(path);

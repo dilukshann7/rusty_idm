@@ -6,8 +6,11 @@ $manifest = Get-Content -Raw -LiteralPath (Join-Path $extension 'manifest.json')
 if ($manifest.manifest_version -ne 3 -or $manifest.minimum_chrome_version -ne '120' -or $manifest.background.type -ne 'module' -or $manifest.incognito -ne 'not_allowed') { throw 'Invalid extension platform contract.' }
 $required = @('downloads','nativeMessaging','contextMenus','storage','alarms','webRequest','scripting','webNavigation')
 if (Compare-Object ($required | Sort-Object) (@($manifest.permissions) | Sort-Object)) { throw 'Unexpected extension permissions.' }
-if (Compare-Object (@('http://*/*','https://*/*') | Sort-Object) (@($manifest.optional_host_permissions) | Sort-Object)) { throw 'Unexpected optional host permissions.' }
-if ($manifest.content_scripts -or $manifest.host_permissions -or $manifest.externally_connectable) { throw 'Unexpected extension access.' }
+$optionalOrigins = @($manifest.optional_host_permissions | Where-Object { $_ })
+$requiredOrigins = @($manifest.host_permissions | Where-Object { $_ })
+if (($optionalOrigins.Count -gt 0) -eq ($requiredOrigins.Count -gt 0)) { throw 'Expected exactly one host permission declaration.' }
+if (Compare-Object (@('http://*/*','https://*/*') | Sort-Object) (@($optionalOrigins + $requiredOrigins) | Sort-Object)) { throw 'Unexpected host permissions.' }
+if ($manifest.content_scripts -or $manifest.externally_connectable) { throw 'Unexpected extension access.' }
 foreach ($relative in @($manifest.background.service_worker, $manifest.action.default_popup) + @($manifest.icons.psobject.Properties.Value)) {
     if ($relative -match '^(?:[a-z]+:|[\\/])' -or $relative -match '\.\.' -or -not (Test-Path -LiteralPath (Join-Path $extension $relative) -PathType Leaf)) { throw 'Missing or non-local extension asset.' }
 }

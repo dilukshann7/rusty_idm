@@ -576,6 +576,14 @@ impl OutputFile {
             JobError::new(ErrorKind::Io, "Cannot sync the completed partial file.")
                 .retained(self.partial.clone())
         })?;
+        let completed_bytes = file
+            .metadata()
+            .await
+            .map_err(|_| {
+                JobError::new(ErrorKind::Io, "Cannot inspect the completed partial file.")
+                    .retained(self.partial.clone())
+            })?
+            .len();
         let file = self.file.take().expect("open partial").into_std().await;
         if let Some(at) = self.creation_time {
             set_creation_time(&file, at).map_err(|_| {
@@ -661,7 +669,9 @@ impl OutputFile {
         }
         if committed {
             if let Some(recovery) = &self.recovery {
-                recovery.finish()?;
+                // Publication succeeded. A metadata write failure remains pending
+                // for the actor to report/retry; it cannot undo that success.
+                let _ = recovery.finish(completed_bytes);
             }
         }
         Ok(committed)
@@ -984,8 +994,6 @@ pub(crate) fn discard_checkpoint(recovery: &crate::storage::Recovery) -> Result<
             }
             e.checkpoint = None;
             e.journal = None;
-            e.completed = false;
-            e.completed_bytes = None;
             Ok(())
         })
         .map_err(crate::storage::storage_error)
@@ -1021,7 +1029,7 @@ pub(crate) fn recover_finalization(
                     delete_owned(&original, path).map_err(|_| ambiguous())?;
                 }
             }
-            recovery.finish()?;
+            let _ = recovery.finish(journal.checkpoint.durable);
             return Ok(true);
         }
     }

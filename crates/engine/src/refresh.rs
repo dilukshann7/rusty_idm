@@ -230,12 +230,9 @@ async fn fetch_scoped(
         }
         let response = tokio::time::timeout(Duration::from_secs(30), builder.send())
             .await
-            .map_err(|_| JobError::new(ErrorKind::Network, "Refresh request timed out."))?
-            .map_err(|_| {
-                JobError::new(
-                    ErrorKind::Network,
-                    "Cannot reach the refreshed download address.",
-                )
+            .map_err(|_| JobError::transient(ErrorKind::Network, "Refresh request timed out."))?
+            .map_err(|error| {
+                JobError::request(&error, "Cannot reach the refreshed download address.")
             })?;
         if response.status().is_redirection() {
             let next = response
@@ -258,6 +255,13 @@ async fn fetch_scoped(
             }
             current = next;
             continue;
+        }
+        let error = JobError::http(
+            response.status().as_u16(),
+            format!("Server returned HTTP {}.", response.status().as_u16()),
+        );
+        if error.retryable {
+            return Err(error);
         }
         if !context.is_empty() && (current != *url || hop_index + 1 != context.len()) {
             return Err(mismatch("The browser download no longer reaches its observed final address. Capture it again."));
@@ -342,15 +346,23 @@ pub(crate) async fn verify_remote_samples(
             modified = Some(response_modified);
         }
         let mut actual = Vec::with_capacity(expected.len());
-        while let Some(chunk) = response
-            .chunk()
+        while let Some(chunk) = tokio::time::timeout(Duration::from_secs(30), response.chunk())
             .await
-            .map_err(|_| JobError::new(ErrorKind::Network, "Refresh range was interrupted."))?
+            .map_err(|_| JobError::transient(ErrorKind::Network, "Refresh range timed out."))?
+            .map_err(|_| {
+                JobError::transient(ErrorKind::Network, "Refresh range was interrupted.")
+            })?
         {
             if actual.len() + chunk.len() > expected.len() {
                 return Err(mismatch("The server exceeded the requested byte range."));
             }
             actual.extend_from_slice(&chunk);
+        }
+        if actual.len() < expected.len() {
+            return Err(JobError::transient(
+                ErrorKind::LengthMismatch,
+                "The verification range ended before its declared length.",
+            ));
         }
         if &actual != expected {
             return Err(mismatch(

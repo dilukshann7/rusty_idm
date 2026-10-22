@@ -39,6 +39,24 @@ async fn exact_empty_unknown_and_redirect_bodies() {
             }
         );
         assert_eq!(std::fs::read(&target).unwrap(), expected);
+        let seen = progress.lock().unwrap();
+        assert!(seen.iter().any(|p| p.details.as_ref().is_some_and(|d| d
+            .segments
+            .iter()
+            .any(|s| s.state == rusty_engine::SegmentState::Connecting))));
+        let details = seen
+            .last()
+            .unwrap()
+            .details
+            .as_ref()
+            .expect("single-stream telemetry");
+        assert_eq!(details.segments.len(), 1);
+        assert_eq!(details.segments[0].received, expected.len() as u64);
+        assert_eq!(
+            details.segments[0].state,
+            rusty_engine::SegmentState::Completed
+        );
+        drop(seen);
         if path == "/unknown" {
             assert!(progress.lock().unwrap().iter().all(|p| p.total.is_none()));
         }
@@ -57,11 +75,13 @@ async fn http_failure_truncation_encoding_and_redirect_limit_leave_no_output() {
             ReplacementPolicy::Deny,
         )
         .unwrap();
-        assert!(
-            transfer(request, CancellationToken::new(), Arc::new(|_| {}))
-                .await
-                .is_err(),
-            "{path}"
+        let error = transfer(request, CancellationToken::new(), Arc::new(|_| {}))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.retryable,
+            matches!(path, "/503" | "/broken"),
+            "{path}: {error}"
         );
         assert!(!target.exists());
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);

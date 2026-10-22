@@ -10,6 +10,7 @@ import {
 import { NativeClient } from "./native-client.js";
 import { handoff } from "./handoff.js";
 import { MediaObservations, MediaRequestEvidence, canSubmitPreview } from "./media-discovery.js";
+import { MediaPreviewCache } from "./media-preview-cache.js";
 
 import { SessionLedger, recoverPending } from "./recovery.js";
 
@@ -21,6 +22,7 @@ const observations = new Observations(chrome.storage.session);
 const mediaObservations = new MediaObservations();
 const mediaRequestEvidence = new MediaRequestEvidence();
 const previewOwnership = new Map();
+const mediaPreviews = new MediaPreviewCache();
 const browser = {
   get: async (id) => (await chrome.downloads.search({ id }))[0],
   pause: (id) => chrome.downloads.pause(id),
@@ -49,6 +51,7 @@ async function desktopPolicy(force = false) {
         return null;
       }
       const changed = !policy || policy.revision !== reply.policy.revision;
+      if (changed) mediaPreviews.clear();
       const reconnect =
         policy && policy.restart_generation !== reply.policy.restart_generation;
       policy = { ...reply.policy, refresh_armed: reply.refresh_armed === true };
@@ -95,6 +98,7 @@ chrome.webNavigation.onCommitted.addListener((details) => {
     documents.delete(details.tabId);
     intents.delete(details.tabId);
     mediaObservations.clear(details.tabId);
+    mediaPreviews.clearTab(details.tabId);
     for (const [id, owner] of previewOwnership) if (owner.tabId === details.tabId) previewOwnership.delete(id);
   }
 });
@@ -102,10 +106,12 @@ chrome.tabs.onRemoved.addListener((id) => {
   documents.delete(id);
   intents.delete(id);
   mediaObservations.clear(id);
+  mediaPreviews.clearTab(id);
   for (const [previewId, owner] of previewOwnership) if (owner.tabId === id) previewOwnership.delete(previewId);
 });
 async function syncScripts() {
   const permitted = await chrome.permissions.contains({ origins });
+  const js = ["media-toolbar.js", "content.js"];
   const scripts = await chrome.scripting.getRegisteredContentScripts({
     ids: ["rusty-controls"],
   });
@@ -114,18 +120,23 @@ async function syncScripts() {
       {
         id: "rusty-controls",
         matches: origins,
-        js: ["content.js"],
+          js,
         runAt: "document_start",
         allFrames: false,
         persistAcrossSessions: true,
       },
     ]);
+  // Dynamic registrations survive an extension reload; upgrade the old one-file entry.
+  if (permitted && scripts.length && JSON.stringify(scripts[0].js) !== JSON.stringify(js))
+    await chrome.scripting.updateContentScripts([{ id: "rusty-controls", js }]);
   if (!permitted && scripts.length)
     await chrome.scripting.unregisterContentScripts({
       ids: ["rusty-controls"],
     });
 }
 const native = new NativeClient(chrome.runtime, () => {
+  mediaPreviews.clear();
+  previewOwnership.clear();
   void recover().catch(showFailure);
 });
 function showFailure() {
@@ -354,6 +365,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         const key = sender.documentId || message.documentKey;
         const current = documents.get(sender.tab.id);
         if (!current || current.key !== key) {
+          mediaPreviews.clearTab(sender.tab.id);
           documents.set(sender.tab.id, { key, url: sender.url, at: Date.now() });
           intents.delete(sender.tab.id);
         }
@@ -395,10 +407,15 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
           ? mediaObservations.list(sender.tab.id, document, sender.url).find((item) => item.url === message.url && item.kind === message.kind)
           : null;
         if (!candidate) return { status: "declined", code: "unsupported" };
-        const reply = await native.send({ op: "media_inspect", payload: { url: candidate.url, kind: candidate.kind, browser: BROWSER } });
+        const reply = await mediaPreviews.inspect(sender.tab.id, document.key, candidate, () =>
+          native.send({ op: "media_inspect", payload: { url: candidate.url, kind: candidate.kind, browser: BROWSER } }),
+          { refresh: message.refresh === true });
+        if (documents.get(sender.tab.id)?.key !== document.key || !policy?.panels.enabled || excluded(policy, sender.url))
+          return { status: "declined", code: "expired" };
         if (reply.status === "media_preview") {
           for (const [id, owner] of previewOwnership) if (owner.expires <= Date.now()) previewOwnership.delete(id);
-          if (previewOwnership.size >= 64) previewOwnership.delete(previewOwnership.keys().next().value);
+          if (!previewOwnership.has(reply.preview_id) && previewOwnership.size >= 64)
+            previewOwnership.delete(previewOwnership.keys().next().value);
           previewOwnership.set(reply.preview_id, { tabId: sender.tab.id, key: document.key, expires: reply.expires_at_ms, variants: new Set(reply.variants.map((v) => v.id)) });
         }
         return reply;

@@ -1,5 +1,6 @@
 use rusty_browser_bridge::{
     lease::{CaptureLease, LeaseState},
+    policy::BrowserKind,
     protocol::*,
     windows::*,
 };
@@ -76,7 +77,7 @@ impl State {
                     let _ = waiter.try_send(Reply::new(id.clone(), status.clone()));
                 }
             }
-            entry.current = Some(status);
+            entry.current = Some(status.clone());
         }
         if let Some(entry) = self.media_entries.get_mut(id) {
             if entry.result.is_none() {
@@ -325,8 +326,12 @@ impl Router {
                 },
             );
             let _ = reply.try_send(Reply::media(id.clone(), ReplyStatus::Pending));
+            // Consume the browser's foreground grant while the user-initiated
+            // submission is fresh, before the asynchronous format recheck.
+            state.activate = true;
             (preview, selected, lease)
         };
+        (self.wake)();
         let state = self.state.clone();
         let wake = self.wake.clone();
         thread::spawn(move || {
@@ -517,6 +522,9 @@ impl RequestRouter for Router {
                         at: Instant::now(),
                     },
                 );
+                if capture.source != CaptureSource::Automatic {
+                    state.activate = true;
+                }
                 state.inbox.push_back(IncomingCapture {
                     capture,
                     lease,

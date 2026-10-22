@@ -554,6 +554,7 @@ async fn progress_lines(
                             total,
                             resume_capable: true,
                             paused: false,
+                            details: None,
                         });
                     }
                 }
@@ -614,6 +615,7 @@ async fn run_tool(
                 total: None,
                 resume_capable: true,
                 paused: true,
+                details: None,
             });
             if !control.wait_until_resumed().await {
                 return Ok(TransferOutcome::Cancelled);
@@ -806,7 +808,7 @@ pub async fn controlled_transfer(
     .await
     {
         Ok(preview) => preview,
-        Err(error) if control.token().is_cancelled() => return Ok(TransferOutcome::Cancelled),
+        Err(_) if control.token().is_cancelled() => return Ok(TransferOutcome::Cancelled),
         Err(error) => return Err(error),
     };
     if !selection.matches(&current) {
@@ -866,6 +868,7 @@ pub async fn controlled_transfer(
                 total: Some(total),
                 resume_capable: true,
                 paused: true,
+                details: None,
             });
             if !control.wait_until_resumed_output(&mut output).await? {
                 retain_stage(&request, &stage)?;
@@ -886,6 +889,7 @@ pub async fn controlled_transfer(
             total: Some(total),
             resume_capable: true,
             paused: false,
+            details: None,
         });
     }
     if copied != total {

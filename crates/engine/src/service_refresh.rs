@@ -119,6 +119,7 @@ pub(super) fn commit(
     job.snapshot.state = JobState::Waiting;
     job.snapshot.readiness = EntryReadiness::Ready;
     job.snapshot.error = None;
+    recovery_support::clear(job);
     job.snapshot
         .recovery_paths
         .retain(|p| p != &expected.partial);
@@ -132,6 +133,8 @@ pub(super) fn commit(
     job.snapshot.bytes_per_second = 0;
     job.snapshot.eta_seconds = None;
     job.snapshot.last_try = None;
+    job.snapshot.finished_at = None;
+    job.snapshot.restored = false;
     job.cancel = TransferControl::new(CancellationToken::new());
     job.cancel.set_speed_limit(job.snapshot.speed_limit);
     job.started = false;
@@ -158,6 +161,6 @@ pub(super) fn commit_and_queue(
     if job.snapshot.queue_id.is_none() {
         waiting.push_back(id);
     }
-    bus.publish(Event::JobChanged(job.snapshot.clone()));
+    publish_job(job, &bus);
     Ok(())
 }

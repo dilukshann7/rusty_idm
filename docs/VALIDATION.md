@@ -1,5 +1,71 @@
 # Validation
 
+## Accurate transfer details and local integration (2026-10-22)
+
+The authorized focused test run passed 34 tests: three telemetry-meter tests,
+one progress-coalescing test, 11 segmented-transfer tests, five single-stream
+tests, four transfer-details lifecycle tests and 10 transfer-view presenter tests.
+This compiles the current engine and native UI test targets; it does not establish
+live desktop behavior or full history/recovery acceptance.
+
+`interrupted_ranges_resume_checkpoints_and_publish_exact_bytes` fails with
+`RestartRequired: A saved range file changed. All bytes were preserved.` The
+same failure was reproduced on the untouched pre-telemetry source baseline.
+It was excluded from the final focused run; the range-file safety checks were
+preserved. Automatic recovery of interrupted segmented transfers therefore
+remains a known acceptance gap.
+
+Source checks passed for 107 Rust files, workspace manifests/lock, resources,
+assets, document links, and JavaScript/PowerShell syntax before local integration.
+Feature review found no remaining actionable findings after fixing telemetry
+coalescing and retry-wait worker states. No full Rust test suite, release build,
+application launch, dev server, packaging or publishing was performed. Native
+table appearance, scrolling and accessibility still need desktop verification.
+
+## Automatic recovery source change (2026-10-22)
+
+The [automatic recovery](automatic-recovery.md) change has source-only validation.
+New tests cover policy defaults/bounds, actor retry deadlines and history,
+queue continuation/stop, pause/resume, explicit start, cancellation/removal/exit,
+checkpoint storage failure, HTTP/browser recovery, interrupted segmented transfers,
+changed/ignored ranges, and native settings/status presentation.
+Compilation, executable tests, fixture servers, application launch, and visual
+acceptance remain deferred by request. Earlier results below do not validate
+these new changes.
+
+## Permanent history source change (2026-10-22)
+
+Schema 7 retains completed/failed ordinary downloads, dates, byte counts,
+sanitized failure explanations, categories and existing request metadata.
+Schemas 1–6 migrate on the next successful save. The store supports 10,000
+entries within the existing 16 MiB limit; capacity errors preserve records.
+History deletion is persisted before publishing removal. Successful final file
+publication remains successful when its final history save needs retry.
+
+Regression sources cover lifecycle/restart metadata, duplicate lookup, missing
+files, same-record retries, queued segmented checkpoints, media byte counts,
+protected/quarantined admissions, schema migration, capacity, failed saves,
+deletion/file preservation and suppression of restored progress windows.
+Tests use isolated in-memory/temp stores and a fake executor; they do not
+inspect or modify the user's saved downloads.
+
+Rust formatting/syntax, manifest/resource/document-link and JavaScript/PowerShell
+source checks are the verification boundary for this change. No compilation,
+Rust tests, fixture/dev server, app/browser launch, installer run or publishing
+was performed. The newly added Rust tests have not been compiled or executed.
+
+`scripts/verify-source.ps1` passed for 98 Rust files, workspace manifests/lock,
+resources/assets/document links and browser source syntax. `git diff --check`
+passed. Independent source review found and corrected Cancel → Retry storage
+reattachment and the final retry during atomic shutdown; both have regression
+sources. These results do not establish type checking or runtime behavior.
+
+Deferred acceptance: actual encrypted restart after successful/failed transfers;
+partial recovery and fresh browser capture; completed/missing-file actions;
+local dates and category filters; installer upgrade with schema 1–6 data;
+write failure/retry/shutdown and deletion failures; large-history UI performance.
+Previously discarded history cannot be reconstructed.
+
 ## Broader browser capture and video source checks (2026-10-21)
 
 - `node --test extensions/chrome/tests/*.test.js`: 42 extension tests passed,

@@ -37,6 +37,8 @@ mod refresh_ui;
 #[cfg(windows)]
 mod scheduler;
 #[cfg(windows)]
+mod segment_list;
+#[cfg(windows)]
 mod shell_icons;
 #[cfg(windows)]
 mod tray;

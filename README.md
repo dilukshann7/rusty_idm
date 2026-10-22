@@ -29,7 +29,7 @@ Rusty checks the owned partial and requests exact byte ranges from the replaceme
 
 ## Current limits
 
-- Unfinished jobs are held after restart, but this is recovery state rather than a permanent download history. Completed and explicitly cancelled ordinary jobs are cleaned from that state.
+- Completed and failed downloads remain in permanent history until explicitly deleted. History supports 10,000 entries within the shared 16 MiB encrypted storage limit; new additions stop at capacity. Interrupted downloads remain held after restart. See [permanent history](docs/permanent-history.md).
 - Continuing saved bytes requires exact HTTP ranges and a known total. A changed file, missing range support or expired authorization can stop the download while retaining its partial.
 - Address refresh is limited to HTTP/HTTPS GET. Rust and JavaScript tests cover its key checks; a live Windows/browser handoff still needs acceptance testing.
 - The browser profiles beyond Chrome and the newer queue/configuration UI still need live desktop/browser acceptance checks. Firefox distribution also needs its separate signing step.

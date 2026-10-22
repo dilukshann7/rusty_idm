@@ -67,7 +67,14 @@ Properties; Properties can be opened again after completion.
 Unfinished jobs are held for review after restart. Select a held job to resume
 it if its saved bytes and server response can be verified. A changed response,
 missing range support or altered partial may require a fresh download address
-or an explicit restart from zero. Completed downloads are not permanent history.
+or an explicit restart from zero. Completed and failed downloads now remain in
+the list across restarts until explicitly deleted. The Last Try column is
+preserved; Transfer Details shows Added, Last Try and Finished dates in local
+time. Older unknown dates remain Unknown. Delete and Delete Completed remove
+history records without deleting completed destination files. History holds up
+to 10,000 entries within the shared 16 MiB encrypted storage limit; at capacity,
+delete records before adding more. See [permanent history](permanent-history.md)
+for migration, recovery and storage-failure behavior.
 
 ## Connections per file
 
@@ -78,6 +85,15 @@ uses multiple connections only for a known-size HTTP(S) response that accepts
 exact byte ranges and supplies a consistent strong ETag or Last-Modified value.
 Other responses continue through one stream. The limit of two active files is
 unchanged.
+
+Open **Show details** in a transfer window to see each segment's byte range,
+progress bar, connection status and speed. **Connections: N active (limit M)**
+counts logical data-transfer requests, not physical TCP sockets or metadata
+probes. Completed segments remain listed while other segments finish. Speeds
+exclude saved bytes and local file assembly; paused or finished transfers show
+zero active connections and zero speed. Unknown-length responses use an
+indeterminate progress bar. Connection details are session-only: restored history
+and media backends without worker telemetry show **Connections: Unavailable**.
 
 Segmented downloads save later byte ranges in separate temporary files beside
 the main partial. Keep all recovery files together if you move them for manual
