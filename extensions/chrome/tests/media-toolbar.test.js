@@ -167,7 +167,7 @@ test("formats render as numbered actions with keyboard navigation and trusted-cl
     { id: "720", quality: "720p", container: "webm", audio: "opus", size: null },
   ], id => chosen.push(id));
   const [first, second] = bar.formatList.children;
-  assert.match(first.textContent, /^1\..*Video title.*1080p.*aac.*1\.0 MB/u);
+  assert.match(first.textContent, /^1\. 1080p.*mp4.*aac.*1\.0 MB.*Video title/u);
   assert.match(second.textContent, /size unknown/u);
   await first.fire("keydown", { key: "ArrowDown" });
   assert.equal(second.focused, true);
@@ -178,4 +178,34 @@ test("formats render as numbered actions with keyboard navigation and trusted-cl
   bar.setBusy(true);
   await first.fire("click");
   assert.deepEqual(chosen, ["720"]);
+});
+
+test("all 128 quality choices render in engine order and remain keyboard selectable", async () => {
+  const { bar } = toolbar();
+  const variants = Array.from({ length: 128 }, (_, index) => ({
+    id: `format-${index}`, quality: `${index + 144}p60`, container: index < 64 ? "mp4" : "webm",
+    audio: index < 64 ? "aac" : "opus", size: null,
+  }));
+  const chosen = [];
+  bar.setFormats("Video title", variants, id => chosen.push(id));
+  assert.equal(bar.formatList.children.length, 128);
+  const first = bar.formatList.children[0], last = bar.formatList.children[127];
+  assert.match(first.textContent, /^1\. 144p60.*mp4/u);
+  assert.match(last.textContent, /^128\. 271p60.*webm/u);
+  await first.fire("keydown", { key: "End" });
+  assert.equal(last.focused, true);
+  await last.fire("click");
+  assert.deepEqual(chosen, ["format-127"]);
+  await last.fire("keydown", { key: "ArrowDown" });
+  assert.equal(first.focused, true);
+  bar.setBusy(true);
+  await last.fire("click");
+  assert.deepEqual(chosen, ["format-127"]);
+});
+
+test("an oversized quality list is rejected rather than truncated", () => {
+  const { bar } = toolbar();
+  const variant = { id: "720", quality: "720p", container: "mp4", audio: "aac", size: null };
+  assert.throws(() => bar.setFormats("Video", Array(129).fill(variant), () => {}), /Too many video quality choices/u);
+  assert.equal(bar.formatList.children.length, 0);
 });

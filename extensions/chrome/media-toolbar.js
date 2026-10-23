@@ -257,9 +257,10 @@
     }
     function setFormats(title, variants, onSelect) {
       formatList.replaceChildren();
-      variants.slice(0, 24).forEach((variant, index) => {
+      if (variants.length > 128) throw new RangeError("Too many video quality choices are available.");
+      variants.forEach((variant, index) => {
         const size = variant.size == null ? "size unknown" : `${(variant.size / 1048576).toFixed(1)} MB`;
-        const row = make("button", "format", `${index + 1}. ${title} — ${variant.container} file, quality ${variant.quality}, audio: ${variant.audio}, ${size}`);
+        const row = make("button", "format", `${index + 1}. ${variant.quality} — ${variant.container} file, audio: ${variant.audio}, ${size} — ${title}`);
         row.title = row.textContent;
         row.setAttribute("role", "menuitem");
         row.addEventListener("click", event => {

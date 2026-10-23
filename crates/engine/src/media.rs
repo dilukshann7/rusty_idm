@@ -260,6 +260,107 @@ fn size(f: &Value) -> Option<u64> {
         .or_else(|| f["filesize_approx"].as_u64())
 }
 
+const MAX_MEDIA_VARIANTS: usize = 128;
+
+fn bitrate(f: &Value, field: &str) -> f64 {
+    f[field]
+        .as_f64()
+        .filter(|rate| rate.is_finite() && *rate > 0.0)
+        .or_else(|| {
+            f["tbr"]
+                .as_f64()
+                .filter(|rate| rate.is_finite() && *rate > 0.0)
+        })
+        .unwrap_or(0.0)
+}
+
+fn compatible_audio(video_ext: &str, audio: &Value) -> bool {
+    let extension = audio["ext"].as_str().unwrap_or("");
+    let codec = audio["acodec"].as_str().unwrap_or("");
+    match video_ext {
+        "mp4" => {
+            matches!(extension, "m4a" | "mp4") && (codec == "aac" || codec.starts_with("mp4a"))
+        }
+        "webm" => extension == "webm" && matches!(codec, "opus" | "vorbis"),
+        _ => false,
+    }
+}
+
+fn frame_rate(value: f64) -> Option<u32> {
+    (value.is_finite() && value > 0.0 && value <= 1000.0).then(|| value.round().max(1.0) as u32)
+}
+
+fn quality_key(f: &Value) -> (u32, u32, String) {
+    // YouTube's source label describes its quality tier even for cropped video.
+    // Only accept a complete numeric p-label, not arbitrary format-note text.
+    let note = f["format_note"].as_str().unwrap_or("");
+    let source_label = note
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .find_map(|token| {
+            let (resolution, fps) = token.split_once('p')?;
+            let resolution = resolution
+                .parse::<u32>()
+                .ok()
+                .filter(|n| (1..=16384).contains(n))?;
+            let fps = if fps.is_empty() {
+                None
+            } else {
+                Some(fps.parse::<u32>().ok().filter(|n| (1..=1000).contains(n))?)
+            };
+            Some((resolution, fps))
+        });
+    let height = f["height"].as_u64().filter(|n| (1..=16384).contains(n));
+    let width = f["width"].as_u64().filter(|n| (1..=16384).contains(n));
+    let resolution = source_label
+        .map(|(resolution, _)| resolution)
+        .unwrap_or_else(|| {
+            height
+                .map(|height| height.min(width.unwrap_or(height)) as u32)
+                .unwrap_or(0)
+        });
+    let fps = f["fps"]
+        .as_f64()
+        .and_then(frame_rate)
+        .or_else(|| source_label.and_then(|(_, fps)| fps))
+        .unwrap_or(0);
+    let quality = if resolution == 0 {
+        let note = clean(note, 32);
+        if note.is_empty() {
+            "video".into()
+        } else {
+            note
+        }
+    } else if fps == 0 {
+        format!("{resolution}p")
+    } else {
+        format!("{resolution}p{fps}")
+    };
+    (resolution, fps, quality)
+}
+
+fn container_rank(container: &str) -> u8 {
+    match container {
+        "mp4" => 0,
+        "webm" => 1,
+        _ => 2,
+    }
+}
+
+struct PreviewCandidate {
+    variant: MediaVariant,
+    h264: bool,
+    bitrate: f64,
+}
+impl PreviewCandidate {
+    fn preference(&self, other: &Self) -> std::cmp::Ordering {
+        container_rank(&self.variant.container)
+            .cmp(&container_rank(&other.variant.container))
+            .then_with(|| other.h264.cmp(&self.h264))
+            .then_with(|| other.bitrate.total_cmp(&self.bitrate))
+            .then_with(|| self.variant.id.cmp(&other.variant.id))
+    }
+}
+
 pub fn parse_preview(url: &str, kind: MediaKind, value: &Value) -> Result<MediaPreview, JobError> {
     if !value.is_object()
         || value["entries"].is_array()
@@ -285,7 +386,7 @@ pub fn parse_preview(url: &str, kind: MediaKind, value: &Value) -> Result<MediaP
     let formats = value["formats"]
         .as_array()
         .ok_or_else(|| media_error("No video formats are available."))?;
-    let best_audio = formats
+    let audio_tracks: Vec<_> = formats
         .iter()
         .filter(|f| {
             !has_video(f)
@@ -293,8 +394,19 @@ pub fn parse_preview(url: &str, kind: MediaKind, value: &Value) -> Result<MediaP
                 && f["has_drm"].as_bool() != Some(true)
                 && id(&f["format_id"]).is_some()
         })
-        .max_by_key(|f| f["abr"].as_u64().or_else(|| f["tbr"].as_u64()).unwrap_or(0));
-    let mut variants = Vec::new();
+        .collect();
+    let preferred_audio = |extension: &str| {
+        audio_tracks.iter().copied().max_by(|a, b| {
+            compatible_audio(extension, a)
+                .cmp(&compatible_audio(extension, b))
+                .then_with(|| bitrate(a, "abr").total_cmp(&bitrate(b, "abr")))
+                .then_with(|| b["format_id"].as_str().cmp(&a["format_id"].as_str()))
+        })
+    };
+    let mp4_audio = preferred_audio("mp4");
+    let webm_audio = preferred_audio("webm");
+    let fallback_audio = preferred_audio("");
+    let mut candidates = std::collections::BTreeMap::new();
     for f in formats
         .iter()
         .filter(|f| has_video(f) && f["has_drm"].as_bool() != Some(true))
@@ -303,6 +415,11 @@ pub fn parse_preview(url: &str, kind: MediaKind, value: &Value) -> Result<MediaP
             continue;
         };
         let extension = f["ext"].as_str().unwrap_or("mkv");
+        let best_audio = match extension {
+            "mp4" => mp4_audio,
+            "webm" => webm_audio,
+            _ => fallback_audio,
+        };
         let (selector, container, audio, bytes) = if has_audio(f) {
             (
                 video_id,
@@ -312,11 +429,8 @@ pub fn parse_preview(url: &str, kind: MediaKind, value: &Value) -> Result<MediaP
             )
         } else if let Some(track) = best_audio {
             let audio_id = id(&track["format_id"]).expect("filtered");
-            let audio_ext = track["ext"].as_str().unwrap_or("");
-            let container = if extension == "mp4" && audio_ext == "m4a" {
-                "mp4"
-            } else if extension == "webm" && audio_ext == "webm" {
-                "webm"
+            let container = if compatible_audio(extension, track) {
+                extension
             } else {
                 "mkv"
             };
@@ -332,26 +446,47 @@ pub fn parse_preview(url: &str, kind: MediaKind, value: &Value) -> Result<MediaP
         if selector.len() > 96 || !["mp4", "webm", "mkv"].contains(&container.as_str()) {
             continue;
         }
-        let height = f["height"].as_u64().unwrap_or(0).min(16384);
-        let quality = if height > 0 {
-            format!("{height}p")
-        } else {
-            clean(f["format_note"].as_str().unwrap_or("video"), 32)
-        };
-        if !variants.iter().any(|v: &MediaVariant| v.id == selector) {
-            variants.push(MediaVariant {
+        let (resolution, fps, quality) = quality_key(f);
+        let codec = f["vcodec"].as_str().unwrap_or("");
+        let candidate = PreviewCandidate {
+            variant: MediaVariant {
                 id: selector,
-                quality,
+                quality: quality.clone(),
                 container,
                 audio,
                 size: bytes,
-            });
+            },
+            h264: codec == "h264" || codec.starts_with("avc1") || codec.starts_with("avc3"),
+            bitrate: bitrate(f, "vbr"),
+        };
+        let key = (resolution, fps, quality);
+        match candidates.entry(key) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(candidate);
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                if candidate.preference(entry.get()).is_lt() {
+                    entry.insert(candidate);
+                }
+            }
         }
     }
-    variants.sort_by_key(|v| {
-        std::cmp::Reverse(v.quality.trim_end_matches('p').parse::<u32>().unwrap_or(0))
+    if candidates.len() > MAX_MEDIA_VARIANTS {
+        return Err(media_error("Too many video quality choices are available."));
+    }
+    let mut candidates: Vec<_> = candidates.into_iter().collect();
+    candidates.sort_by_key(|((resolution, fps, quality), candidate)| {
+        (
+            candidate.variant.container != "mp4",
+            std::cmp::Reverse(*resolution),
+            std::cmp::Reverse(*fps),
+            quality.clone(),
+        )
     });
-    variants.truncate(24);
+    let variants: Vec<_> = candidates
+        .into_iter()
+        .map(|(_, candidate)| candidate.variant)
+        .collect();
     if variants.is_empty() {
         return Err(media_error(
             "No supported video and audio format pair is available.",
@@ -370,6 +505,160 @@ pub fn parse_preview(url: &str, kind: MediaKind, value: &Value) -> Result<MediaP
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn preview_formats(formats: Value) -> Result<MediaPreview, JobError> {
+        parse_preview(
+            "https://www.youtube.com/watch?v=abcdefghijk",
+            MediaKind::Youtube,
+            &json!({"id":"abcdefghijk", "title":"Sample", "formats":formats}),
+        )
+    }
+
+    #[test]
+    fn mp4_uses_aac_even_when_opus_has_a_higher_bitrate() {
+        let preview = preview_formats(json!([
+            {"format_id":"aac-low", "ext":"m4a", "vcodec":"none", "acodec":"mp4a.40.2", "abr":128.1, "filesize":100},
+            {"format_id":"aac-best", "ext":"m4a", "vcodec":"none", "acodec":"mp4a.40.2", "abr":128.9, "filesize":110},
+            {"format_id":"opus", "ext":"webm", "vcodec":"none", "acodec":"opus", "abr":160.5, "filesize":200},
+            {"format_id":"video", "ext":"mp4", "vcodec":"avc1", "acodec":"none", "height":720, "filesize":900}
+        ])).unwrap();
+        assert_eq!(preview.variants.len(), 1);
+        assert_eq!(preview.variants[0].id, "video+aac-best");
+        assert_eq!(preview.variants[0].container, "mp4");
+        assert_eq!(preview.variants[0].audio, "mp4a.40.2");
+        assert_eq!(preview.variants[0].size, Some(1010));
+    }
+
+    #[test]
+    fn webm_pairs_compatible_audio_and_mp4_can_fall_back_to_mkv() {
+        let preview = preview_formats(json!([
+            {"format_id":"aac", "ext":"m4a", "vcodec":"none", "acodec":"mp4a.40.2", "abr":256},
+            {"format_id":"opus", "ext":"webm", "vcodec":"none", "acodec":"opus", "abr":128},
+            {"format_id":"webm", "ext":"webm", "vcodec":"vp9", "acodec":"none", "height":1080}
+        ]))
+        .unwrap();
+        assert_eq!(preview.variants[0].id, "webm+opus");
+        assert_eq!(preview.variants[0].container, "webm");
+        let fallback = preview_formats(json!([
+            {"format_id":"opus", "ext":"webm", "vcodec":"none", "acodec":"opus", "abr":128},
+            {"format_id":"video", "ext":"mp4", "vcodec":"avc1", "acodec":"none", "height":720}
+        ]))
+        .unwrap();
+        assert_eq!(fallback.variants[0].id, "video+opus");
+        assert_eq!(fallback.variants[0].container, "mkv");
+    }
+
+    #[test]
+    fn mp4_choices_come_first_without_losing_higher_webm_resolutions_or_frame_rates() {
+        let preview = preview_formats(json!([
+            {"format_id":"webm-1080", "ext":"webm", "vcodec":"vp9", "acodec":"opus", "height":1080, "fps":60},
+            {"format_id":"webm-720", "ext":"webm", "vcodec":"vp9", "acodec":"opus", "height":720, "fps":60},
+            {"format_id":"mp4-360", "ext":"mp4", "vcodec":"avc1", "acodec":"aac", "height":360},
+            {"format_id":"mp4-720-30", "ext":"mp4", "vcodec":"avc1", "acodec":"aac", "height":720, "fps":29.97},
+            {"format_id":"mp4-720-60", "ext":"mp4", "vcodec":"avc1", "acodec":"aac", "height":720, "fps":59.94}
+        ])).unwrap();
+        let choices: Vec<_> = preview
+            .variants
+            .iter()
+            .map(|v| (v.id.as_str(), v.quality.as_str()))
+            .collect();
+        assert_eq!(
+            choices,
+            vec![
+                ("mp4-720-60", "720p60"),
+                ("mp4-720-30", "720p30"),
+                ("mp4-360", "360p"),
+                ("webm-1080", "1080p60")
+            ]
+        );
+    }
+
+    #[test]
+    fn duplicate_choices_prefer_container_then_h264_then_bitrate_then_format_id() {
+        let formats = json!([
+            {"format_id":"webm", "ext":"webm", "vcodec":"vp9", "acodec":"opus", "height":720, "tbr":9000},
+            {"format_id":"av1", "ext":"mp4", "vcodec":"av01", "acodec":"aac", "height":720, "tbr":8000},
+            {"format_id":"h264-low", "ext":"mp4", "vcodec":"avc1", "acodec":"aac", "height":720, "tbr":1000.1},
+            {"format_id":"h264-b", "ext":"mp4", "vcodec":"h264", "acodec":"aac", "height":720, "tbr":1000.9},
+            {"format_id":"h264-a", "ext":"mp4", "vcodec":"avc1", "acodec":"aac", "height":720, "tbr":1000.9},
+            {"format_id":"mkv", "ext":"mkv", "vcodec":"h264", "acodec":"aac", "height":720, "tbr":10000}
+        ]);
+        let preview = preview_formats(formats.clone()).unwrap();
+        assert_eq!(preview.variants.len(), 1);
+        assert_eq!(preview.variants[0].id, "h264-a");
+        let mut reversed = formats.as_array().unwrap().clone();
+        reversed.reverse();
+        assert_eq!(
+            preview_formats(json!(reversed)).unwrap().variants,
+            preview.variants
+        );
+    }
+
+    #[test]
+    fn source_labels_override_cropped_heights_and_dimensions_handle_portrait_video() {
+        let preview = preview_formats(json!([
+            {"format_id":"cropped", "ext":"mp4", "vcodec":"avc1", "acodec":"aac", "width":3840, "height":1920, "format_note":"2160p60 HDR", "fps":59.94},
+            {"format_id":"portrait", "ext":"mp4", "vcodec":"avc1", "acodec":"aac", "width":720, "height":1280, "fps":29.97},
+            {"format_id":"label-only", "ext":"mp4", "vcodec":"avc1", "acodec":"aac", "format_note":"1440p50, premium"},
+            {"format_id":"height-only", "ext":"mp4", "vcodec":"avc1", "acodec":"aac", "height":360},
+            {"format_id":"unknown", "ext":"mp4", "format_note":"public stream"}
+        ])).unwrap();
+        let labels: Vec<_> = preview
+            .variants
+            .iter()
+            .map(|v| v.quality.as_str())
+            .collect();
+        assert_eq!(
+            labels,
+            vec!["2160p60", "1440p50", "720p30", "360p", "public stream"]
+        );
+    }
+
+    #[test]
+    fn unavailable_or_invalid_quality_metadata_does_not_invent_a_resolution() {
+        let preview = preview_formats(json!([
+            {"format_id":"unknown", "ext":"mp4", "width":1920, "height":0, "fps":-1},
+            {"format_id":"malformed-note", "ext":"mp4", "height":480, "format_note":"1080preview", "fps":0}
+        ])).unwrap();
+        assert_eq!(preview.variants[0].quality, "480p");
+        assert_eq!(preview.variants[1].quality, "video");
+    }
+
+    #[test]
+    fn audio_ties_are_deterministic_and_drm_tracks_are_excluded() {
+        let formats = json!([
+            {"format_id":"aac-b", "ext":"m4a", "vcodec":"none", "acodec":"aac", "abr":128},
+            {"format_id":"aac-a", "ext":"m4a", "vcodec":"none", "acodec":"aac", "abr":128},
+            {"format_id":"drm", "ext":"m4a", "vcodec":"none", "acodec":"aac", "abr":300, "has_drm":true},
+            {"format_id":"video", "ext":"mp4", "vcodec":"avc1", "acodec":"none", "height":720}
+        ]);
+        let preview = preview_formats(formats.clone()).unwrap();
+        assert_eq!(preview.variants[0].id, "video+aac-a");
+        let mut reversed = formats.as_array().unwrap().clone();
+        reversed.reverse();
+        assert_eq!(
+            preview_formats(json!(reversed)).unwrap().variants,
+            preview.variants
+        );
+    }
+
+    #[test]
+    fn preview_limit_applies_after_deduplication_and_never_silently_drops_qualities() {
+        let mut formats: Vec<Value> = (0..128)
+            .map(|index| {
+                json!({
+                    "format_id":format!("video-{index}"), "ext":"mp4", "height":144 + index
+                })
+            })
+            .collect();
+        let preview = preview_formats(json!(formats)).unwrap();
+        assert_eq!(preview.variants.len(), 128);
+        assert_eq!(preview.variants.last().unwrap().quality, "144p");
+        formats.push(json!({"format_id":"duplicate", "ext":"mp4", "height":144}));
+        assert_eq!(preview_formats(json!(formats)).unwrap().variants.len(), 128);
+        formats.push(json!({"format_id":"overflow", "ext":"mp4", "height":1000}));
+        assert!(preview_formats(json!(formats)).is_err());
+    }
 
     #[test]
     fn preview_pairs_video_and_audio_and_rejects_non_public_media() {

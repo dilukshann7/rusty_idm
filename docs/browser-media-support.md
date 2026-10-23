@@ -23,6 +23,16 @@ when available. Submitting a variant makes Rusty recheck its media identity and
 format before opening the native destination dialog. Accepted jobs use the main
 list and support progress, pause, resume and cancel. Incomplete media staging
 paths are retained for recovery when a job fails or is cancelled.
+Quality choices preserve each available resolution and frame rate, using the
+source's quality label when present and actual dimensions otherwise. Fractional
+frame rates are rounded for display, for example 59.94 fps becomes `720p60` for
+a 720p source. MP4 choices appear first, highest quality first. For each quality,
+Rusty prefers MP4 with compatible AAC/M4A audio, then WebM, then MKV. A higher
+quality available only as WebM or MKV remains selectable. Duplicate encodings
+are reduced to one choice per resolution and frame rate, preferring H.264 within
+the selected container, then bitrate. Downloads merge the selected streams
+without transcoding. Previews allow up to 128 distinct choices and reject larger
+lists rather than silently hiding lower qualities.
 Use **Retry** to continue the retained media stage after a failure or cancellation.
 To remove an entry while preserving its recovery data elsewhere, move the listed
 recovery files/directories first and then remove the entry again. Rusty clears

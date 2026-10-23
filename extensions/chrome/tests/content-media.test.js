@@ -55,7 +55,7 @@ test("formats prepare during playback before the user clicks and reopening ready
   await p.button.fire("click");
   assert.equal(p.picker.hidden, false);
   assert.equal(p.formatList.children.length, 2);
-  assert.match(p.formatList.children[0].textContent, /Public video.*mp4.*1080p.*aac.*1\.0 MB/u);
+  assert.match(p.formatList.children[0].textContent, /1080p.*mp4.*aac.*1\.0 MB.*Public video/u);
   p.closePopover();
   await p.button.fire("click");
   assert.equal(p.messages.length, count, "ready click uses memory and does not repeat inspection");
@@ -79,7 +79,7 @@ test("source choice changes ignore an older inspection and quality rows submit d
   p.inspections[1].resolve(preview("second-preview", "DASH choice", ["1080"])); await flush();
   p.inspections[0].resolve(preview("first-preview", "Old HLS choice")); await flush();
   assert.equal(p.formatList.children.length, 1);
-  assert.match(p.formatList.children[0].textContent, /DASH choice.*1080p/u);
+  assert.match(p.formatList.children[0].textContent, /1080p.*DASH choice/u);
   await p.formatList.children[0].fire("click");
   assert.equal(p.submissions[0].previewId, "second-preview");
   assert.equal(p.submissions[0].variantId, "1080");

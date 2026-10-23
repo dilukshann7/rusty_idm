@@ -9,9 +9,16 @@ const preview = { v: 2, id, status: "media_preview", preview_id: id, expires_at_
 test("version 2 format previews are bounded and version 1 capture stays valid", () => {
   assert.equal(validReply(preview), true);
   assert.equal(validReply({ ...preview, v: 1 }), false);
-  assert.equal(validReply({ ...preview, variants: Array(25).fill(preview.variants[0]) }), false);
+  assert.equal(validReply({ ...preview, variants: Array(128).fill(preview.variants[0]) }), true);
+  assert.equal(validReply({ ...preview, variants: Array(129).fill(preview.variants[0]) }), false);
+  assert.equal(validReply({ ...preview, title: "x".repeat(65536) }), false);
   assert.equal(validReply({ ...preview, variants: [{ ...preview.variants[0], size: -1 }] }), false);
   assert.equal(validReply({ v: 1, id, status: "accepted", job_id: 3, created_new: true }), true);
+});
+
+test("format previews retain the native message byte limit", () => {
+  const oversized = { ...preview, variants: Array(128).fill({ ...preview.variants[0], audio: "x".repeat(512) }) };
+  assert.equal(validReply(oversized), false);
 });
 
 test("native media inspect uses protocol version 2 and keeps its request id", async () => {
