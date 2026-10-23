@@ -1,5 +1,41 @@
 # Validation
 
+## Segmented checkpoint verification (2026-10-23)
+
+The previously excluded
+`interrupted_ranges_resume_checkpoints_and_publish_exact_bytes` now passes on
+the current source. Resume inspected each sidecar twice; the first inspection
+unconditionally set its length, changing its Windows modification time even
+when the length was already correct. The second inspection rejected that change.
+Range inspection is now read-only. Only the resume write path trims a verified
+uncheckpointed tail, before syncing the next checkpoint. Identity, timestamp,
+length and hash rejection remain enabled.
+Pause/cancel during saved-byte rechecks preserves the existing range checkpoint
+and tails. Newly partitioned single-stream prefixes record their empty sidecars
+before a recheck can pause or exit.
+
+- `cargo test -p rusty-engine --locked --offline --lib output::tests`:
+  15 passed, including seven new regressions for repeated inspection, retained
+  tails, unsafe file changes, exact-byte resume, recheck pause/cancel and newly
+  partitioned range checkpoints.
+- `cargo test -p rusty-engine --locked --offline --test multi_connection`:
+  all 12 passed, with no exclusions. This includes the original failure,
+  ignored/changed ranges, pause/resume, splitting and Last-Modified rechecks.
+
+The new regressions failed before the fix. Removing inspection's side effects
+made three pass; the tail-resume regression still failed until truncation moved
+to the resume write boundary. Successful resume publishes the exact source
+bytes and leaves only the destination file.
+Focused review identified pause/cancel checkpointing before tail trimming;
+both new regressions reproduced the error before the correction. A further
+regression reproduced an unrecorded new range map when pausing a single-stream
+prefix conversion. All three pass after preserving existing maps during
+read-only rechecks and recording newly reserved maps beforehand.
+
+These focused tests compile the engine; they do not establish live desktop
+behavior. No full workspace test suite, application build/launch, dev server,
+packaging or publishing was performed.
+
 ## Accurate transfer details and local integration (2026-10-22)
 
 The authorized focused test run passed 34 tests: three telemetry-meter tests,
@@ -8,12 +44,12 @@ tests, four transfer-details lifecycle tests and 10 transfer-view presenter test
 This compiles the current engine and native UI test targets; it does not establish
 live desktop behavior or full history/recovery acceptance.
 
-`interrupted_ranges_resume_checkpoints_and_publish_exact_bytes` fails with
+`interrupted_ranges_resume_checkpoints_and_publish_exact_bytes` failed with
 `RestartRequired: A saved range file changed. All bytes were preserved.` The
 same failure was reproduced on the untouched pre-telemetry source baseline.
 It was excluded from the final focused run; the range-file safety checks were
-preserved. Automatic recovery of interrupted segmented transfers therefore
-remains a known acceptance gap.
+preserved. This acceptance gap was corrected and covered by the focused tests
+recorded above on 2026-10-23.
 
 Source checks passed for 107 Rust files, workspace manifests/lock, resources,
 assets, document links, and JavaScript/PowerShell syntax before local integration.
