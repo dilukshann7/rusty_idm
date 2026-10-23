@@ -115,6 +115,7 @@ mod connection_tests {
 }
 #[derive(Clone)]
 pub struct DownloadRequest {
+    pub project: Option<crate::grabber::ProjectMember>,
     pub options: DownloadOptions,
     pub queue: Option<crate::QueueId>,
     pub(crate) url: Url,
@@ -441,6 +442,7 @@ pub fn validate_request(
         return Err(invalid());
     }
     Ok(DownloadRequest {
+        project: None,
         options: Default::default(),
         queue: None,
         url,

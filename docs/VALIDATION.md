@@ -1,5 +1,19 @@
 # Validation
 
+## Remaining feature commit checks (2026-10-23)
+
+Fresh source checks passed for all 116 Rust files, locked workspace metadata,
+native resources/assets, documentation links and JavaScript/PowerShell syntax.
+`git diff --check` passed. The extension suite passed all 82 tests.
+All 11 media parser tests passed using the existing engine test executable;
+the Rust sources matched the earlier compiled snapshot. No new compilation
+was performed for commit preparation.
+
+The engine compiled during the checkpoint regression work recorded below.
+These checks do not establish native Site Grabber UI compilation, crawler/export
+acceptance or live browser behavior. No app build/launch, dev server, packaging
+or publishing was performed.
+
 ## Segmented checkpoint verification (2026-10-23)
 
 The previously excluded
@@ -32,9 +46,34 @@ regression reproduced an unrecorded new range map when pausing a single-stream
 prefix conversion. All three pass after preserving existing maps during
 read-only rechecks and recording newly reserved maps beforehand.
 
-These focused tests compile the engine; they do not establish live desktop
-behavior. No full workspace test suite, application build/launch, dev server,
-packaging or publishing was performed.
+Current-source test compilation first exposed existing Site Grabber calls to
+the older `cssparser` API. Parser construction and lifetime annotations were
+adapted to the pinned 0.38.0 API without dependency or parsing-policy changes.
+The existing unused `Handle` import warning in `grabber/mod.rs` remains.
+These focused tests compile the engine; they do not establish Site Grabber
+functional acceptance or live desktop behavior. No full workspace test suite,
+application build/launch, dev server, packaging or publishing was performed.
+
+## Site Grabber source implementation (2026-10-23)
+
+Source checks passed for 116 Rust files, locked workspace metadata, native
+resources/IDs/assets, documentation links, and JavaScript/PowerShell syntax.
+`git diff --check` passed. Full locked/offline Cargo metadata confirmed pinned
+parser dependencies and their license expressions. At that initial source-only
+checkpoint, no compilation, Rust tests, application/fixture/dev-server launch,
+installer build or packaging was run. Those checks did not establish type
+correctness or runtime acceptance; later focused engine checks are recorded above.
+
+Read-only review identified and corrected misplaced command arms, page-versus-
+asset admission scope, include-filter traversal, transfer redirect limits, and
+saved-project combo refresh. The independent review was interrupted before a
+complete sign-off; subsequent source review and formatting checks were local.
+Additional corrections preserve retry waits, saved rescan/deletion intent,
+immutable scan originals, resource identities, and fresh snapshot publication.
+
+Deferred acceptance scenarios are recorded in the [Site Grabber guide](site-grabber.md).
+They include restart/admission interruptions, limit and storage failures, offline
+rewriting, manual pause/resume with recovery waits, native controls/DPI, and shutdown.
 
 ## Accurate transfer details and local integration (2026-10-22)
 

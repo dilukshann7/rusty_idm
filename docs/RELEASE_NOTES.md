@@ -2,6 +2,12 @@
 
 ## Changes since v0.1.0
 
+- Site Grabber in current source: native saved projects, bounded public HTML/CSS
+  discovery, selectable results, shared transfers and offline snapshots. Queue
+  storage migrates to schema 8. The engine compiled during focused transfer
+  tests; native UI compilation and live feature acceptance remain deferred.
+  See [Site Grabber](site-grabber.md).
+
 - Permanent completed/failed history in current source, preserving dates, metadata and categories until deletion; schema-7 migration and a 10,000-entry/16 MiB capacity limit. Builds and runtime acceptance for this change are deferred.
 
 - Named download queues, categories, Windows file icons, queue ordering, and optional startup, one-time or weekly schedules.

@@ -29,8 +29,9 @@ new additions are rejected with a message to delete history entries or use
 Delete Completed. Existing records remain available for cleanup.
 
 The store remains `%LOCALAPPDATA%\RustyIDM\queues.v1.dpapi`, encrypted for the
-current Windows user and replaced atomically. Schema 7 reads schemas 1–6 and
-migrates on the next successful save. Older binaries reject schema 7. Existing
+current Windows user and replaced atomically. Schema 8 reads schemas 1–7 and
+migrates on the next successful save; it adds optional [Site Grabber](site-grabber.md)
+membership. Older binaries reject schema 8. Existing
 IDs, queues, checkpoints and journals are retained. Previously discarded records
 cannot be reconstructed. Passwords, cookies and authorization headers are not
 persisted. Stored failure explanations use fixed, sanitized wording rather than

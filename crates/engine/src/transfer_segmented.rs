@@ -107,7 +107,7 @@ async fn emit(sender: &mpsc::Sender<Event>, stop: &CancellationToken, event: Eve
 
 fn client(request: &DownloadRequest) -> Result<Client, JobError> {
     let redirect = if request.request_context.is_empty() {
-        reqwest::redirect::Policy::limited(10)
+        crate::grabber::redirect_policy(request.project.as_ref())
     } else {
         reqwest::redirect::Policy::none()
     };

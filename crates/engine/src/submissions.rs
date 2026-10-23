@@ -27,6 +27,7 @@ impl SubmissionAction {
                     && a.category == b.category
                     && a.description == b.description
                     && a.allow_duplicate == b.allow_duplicate
+                    && a.project == b.project
                     && match (&a.replacement, &b.replacement) {
                         (crate::ReplacementPolicy::Deny, crate::ReplacementPolicy::Deny) => true,
                         (

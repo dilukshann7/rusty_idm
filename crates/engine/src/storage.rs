@@ -70,6 +70,8 @@ pub(crate) struct Journal {
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct StoredEntry {
     #[serde(default)]
+    pub project: Option<crate::grabber::ProjectMember>,
+    #[serde(default)]
     pub history: HistoryMetadata,
     #[serde(default)]
     pub media: Option<crate::media::MediaSelection>,
@@ -111,7 +113,7 @@ pub(crate) struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            version: 7,
+            version: 8,
             next_entry: 1,
             next_queue: 2,
             queues: [(
@@ -317,7 +319,7 @@ fn decode_state(plain: &[u8]) -> Result<State, String> {
         "Queue storage is corrupt or incompatible. The original was preserved.".to_string()
     })?;
     validate(&state)?;
-    state.version = 7;
+    state.version = 8;
     Ok(state)
 }
 impl Recovery {
@@ -419,7 +421,7 @@ fn validate(s: &State) -> Result<(), String> {
     {
         return Err(HISTORY_FULL.into());
     }
-    if !matches!(s.version, 1 | 2 | 3 | 4 | 5 | 6 | 7)
+    if !matches!(s.version, 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8)
         || !s.queues.contains_key(&QueueId::MAIN)
         || s.queues.len() > 100
     {
@@ -499,6 +501,9 @@ fn validate(s: &State) -> Result<(), String> {
                 }
             }
         }
+        if let Some(member) = &e.project {
+            member.validate()?;
+        }
         e.options.validate()?;
         if e.media
             .as_ref()
@@ -539,7 +544,7 @@ fn validate(s: &State) -> Result<(), String> {
     }
     Ok(())
 }
-fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
     use std::io::Write;
     let parent = path.parent().ok_or("Invalid queue storage folder.")?;
     std::fs::create_dir_all(parent).map_err(|_| "Cannot create the queue storage folder.")?;
@@ -590,7 +595,7 @@ fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
     result.map_err(str::to_owned)
 }
 #[cfg(windows)]
-fn crypt(input: &[u8], encrypt: bool) -> Result<Vec<u8>, String> {
+pub(crate) fn crypt(input: &[u8], encrypt: bool) -> Result<Vec<u8>, String> {
     use windows::{
         core::PCWSTR,
         Win32::{
@@ -636,7 +641,7 @@ fn crypt(input: &[u8], encrypt: bool) -> Result<Vec<u8>, String> {
     }
 }
 #[cfg(not(windows))]
-fn crypt(_: &[u8], _: bool) -> Result<Vec<u8>, String> {
+pub(crate) fn crypt(_: &[u8], _: bool) -> Result<Vec<u8>, String> {
     Err("Durable queues require Windows current-user encryption.".into())
 }
 

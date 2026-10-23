@@ -33,7 +33,7 @@ fn schemas_1_through_6_migrate_without_invented_dates_or_changed_ids() {
             .unwrap()
             .remove("history");
         let decoded = decode_state(&serde_json::to_vec(&value).unwrap()).unwrap();
-        assert_eq!(decoded.version, 7);
+        assert_eq!(decoded.version, 8);
         let entry = &decoded.entries[&EntryId(1)];
         assert!(entry.completed);
         assert_eq!(entry.completed_bytes, Some(42));
@@ -43,7 +43,7 @@ fn schemas_1_through_6_migrate_without_invented_dates_or_changed_ids() {
     }
     assert!(decode_state(b"corrupt data").is_err());
     let mut future = state(dir.path());
-    future.version = 8;
+    future.version = 9;
     assert!(decode_state(&serde_json::to_vec(&future).unwrap()).is_err());
 }
 

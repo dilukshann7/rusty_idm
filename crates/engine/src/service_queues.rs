@@ -119,6 +119,7 @@ impl QueueRuntime {
                     continue;
                 }
             };
+            request.project = entry.project.clone();
             request.options = entry.options.clone();
             request.deferred = true;
             request.category = entry.category.clone();
@@ -319,7 +320,7 @@ impl QueueRuntime {
                     started: false,
                     restart: false,
                     resume_after_pause: false,
-                    user_held: false,
+                    user_held: entry.project.is_some(),
                 },
             );
         }
@@ -783,6 +784,7 @@ fn check_name(name: &str) -> Result<(), String> {
 }
 pub(super) fn stored(id: EntryId, r: &DownloadRequest) -> StoredEntry {
     StoredEntry {
+        project: r.project.clone(),
         history: crate::history::HistoryMetadata {
             created_at: Some(SystemTime::now()),
             ..Default::default()
@@ -790,7 +792,7 @@ pub(super) fn stored(id: EntryId, r: &DownloadRequest) -> StoredEntry {
         media: r.media.clone(),
         source_page: r.source_page.clone(),
         options: r.options.clone(),
-        ephemeral: !r.deferred,
+        ephemeral: !r.deferred && r.project.is_none(),
         admission_pending: false,
         staging: None,
         id,

@@ -7,6 +7,11 @@ versions and license expressions in `licenses/dependencies.json`, plus available
 upstream license/notice files copied from those exact local Cargo packages.
 Workspace source is covered by the included MIT LICENSE.
 
+Site Grabber also uses pinned lol_html 3.0.1, cssparser 0.38.0, encoding_rs 0.8.42
+and robotstxt 0.3.0 for HTML/CSS parsing, web encodings and robots-rule matching.
+Their transitive dependencies and upstream notices use the same Cargo package
+inventory mechanism.
+
 Inno Setup creates the installer. Its installer-engine notices are retained in
 the generated setup executable. Inno Setup is not needed to run the app.
 Windows, Chrome and their bundled system components retain their own licenses.

@@ -9,6 +9,7 @@ use std::{
 
 #[derive(Clone, Debug)]
 pub enum Event {
+    Grabber(crate::grabber::GrabberEvent),
     JobChanged(JobSnapshot),
     JobRemoved(JobId),
     QueuesChanged(Vec<crate::QueueSnapshot>),
@@ -33,6 +34,7 @@ struct Pending {
 }
 #[derive(Default)]
 struct Queue {
+    grabber: Option<crate::grabber::GrabberEvent>,
     jobs: BTreeMap<JobId, Pending>,
     error: Option<String>,
     shutdown: bool,
@@ -68,6 +70,14 @@ impl EventBus {
                     .flatten()
             })
     }
+    pub fn is_mirror_job(&self, id: JobId) -> bool {
+        self.queue
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .known
+            .get(&id)
+            .is_some_and(|(request, _)| request.project.as_ref().is_some_and(|p| p.mirror))
+    }
     pub fn destinations(&self) -> Vec<std::path::PathBuf> {
         self.queue
             .lock()
@@ -88,6 +98,7 @@ impl EventBus {
         {
             let mut queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
             match event {
+                Event::Grabber(update) => queue.grabber = Some(update),
                 Event::JobChanged(snapshot) => {
                     if let Some((_, latest)) = queue.known.get_mut(&snapshot.id) {
                         *latest = Some(snapshot.clone());
@@ -145,6 +156,9 @@ impl EventBus {
     pub fn drain(&self) -> Vec<Event> {
         let mut queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
         let mut result = Vec::new();
+        if let Some(update) = queue.grabber.take() {
+            result.push(Event::Grabber(update));
+        }
         for (id, slot) in std::mem::take(&mut queue.jobs) {
             if let Some(snapshot) = slot.latest {
                 result.push(Event::JobChanged(snapshot));

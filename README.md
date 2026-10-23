@@ -16,6 +16,7 @@ The current source targets v0.2.1. Check [Releases](https://github.com/dilukshan
 | Windows app | Native File Info, progress and completion dialogs; download list and categories; notification-area controls and optional sign-in startup. |
 | Files | Duplicate-download choices, numbered copies, guarded replacement and partial-file recovery paths. |
 | Organization | Manual queues, queue ordering and optional schedules. Unfinished jobs use encrypted current-user storage and are held for review after a restart. |
+| Site Grabber | Public HTML/CSS crawling, filters, saved projects, selection before downloading and offline snapshots. See the [Site Grabber guide](docs/site-grabber.md); native UI compilation and live feature acceptance are deferred. |
 | Browser capture | A Chrome extension, native-messaging host and local bridge for eligible downloads. The source also includes browser-specific profiles for Brave, Edge and Firefox. |
 | Address refresh | A paused, failed or restored download with saved bytes can use a pasted URL or a new browser capture. Rusty checks the local checkpoint, total size and three bounded byte samples before continuing the existing job. |
 

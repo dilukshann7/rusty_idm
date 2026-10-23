@@ -206,6 +206,7 @@ struct AppState {
     details: DetailsWindows,
     completions: CompletionWindows,
     scheduler: SchedulerWindow,
+    grabber: crate::grabber::GrabberWindow,
     scanner: crate::scanner::Scanner,
     pending_create: Option<u64>,
     pending_editor: Option<(rusty_engine::QueueId, Tab)>,
@@ -470,6 +471,7 @@ impl AppState {
 
         for event in events {
             match &event {
+                Event::Grabber(update) => self.grabber.observe(update),
                 Event::JobChanged(snapshot) => {
                     if self.refresh_target == Some(snapshot.id)
                         && matches!(
@@ -484,12 +486,17 @@ impl AppState {
                             browser.set_refresh_armed(false);
                         }
                     }
-                    let newly_completed = !snapshot.restored
+                    let mirror_resource = self
+                        .engine
+                        .as_ref()
+                        .is_some_and(|e| e.is_mirror_job(snapshot.id));
+                    let newly_completed = !mirror_resource
+                        && !snapshot.restored
                         && snapshot.state == rusty_engine::JobState::Completed
                         && self.view.jobs.get(&snapshot.id).map_or(true, |previous| {
                             previous.state != rusty_engine::JobState::Completed
                         });
-                    if self.lifecycle == Lifecycle::Open {
+                    if self.lifecycle == Lifecycle::Open && !mirror_resource {
                         if let Err(error) = self.details.observe(window.hwnd, snapshot) {
                             message(
                                 Some(window.hwnd),
@@ -833,6 +840,16 @@ impl AppState {
                 let selected = self.controls.selected();
                 let actions = self.view.actions(selected);
                 match id {
+                    SITE_GRABBER => {
+                        if let Some(engine) = &self.engine {
+                            self.grabber.open(
+                                owner,
+                                engine.client(),
+                                self.settings.default_destination.clone(),
+                                self.settings.configuration.download_options(false),
+                            )?;
+                        }
+                    }
                     QUEUE_NEW => self.new_queue(window)?,
                     QUEUE_RENAME | QUEUE_DELETE | QUEUE_START | QUEUE_STOP | QUEUE_ONE
                     | QUEUE_TWO | QUEUE_EDIT | QUEUE_SCHEDULE => {
@@ -1123,6 +1140,7 @@ pub fn run() -> Result<(), AppError> {
         details: DetailsWindows::default(),
         completions: CompletionWindows::default(),
         scheduler: SchedulerWindow::default(),
+        grabber: crate::grabber::GrabberWindow::default(),
         scanner: crate::scanner::Scanner::default(),
         pending_create: None,
         pending_editor: None,
@@ -1172,6 +1190,7 @@ pub fn run() -> Result<(), AppError> {
     app.tray.remove();
     app.completions.close_all();
     app.scheduler.close_all();
+    app.grabber.close_all();
     app.details.close_all();
     window.destroy();
     // On an exceptional message-loop exit, dropping the sender in join() also
@@ -1198,7 +1217,8 @@ fn message_loop(window: &MainWindow, app: &mut AppState) -> Result<(), AppError>
         if value == 0 {
             return Ok(());
         }
-        if !app.scheduler.is_dialog_message(&msg)
+        if !app.grabber.is_dialog_message(&msg)
+            && !app.scheduler.is_dialog_message(&msg)
             && !app.details.is_dialog_message(&msg)
             && !app.completions.is_dialog_message(&msg)
         {
@@ -1224,6 +1244,11 @@ fn message_loop(window: &MainWindow, app: &mut AppState) -> Result<(), AppError>
             }
         }
         app.scheduler_actions(window)?;
+        if app.lifecycle.accepts_submissions() {
+            app.grabber.poll()?;
+        } else {
+            app.grabber.close_all();
+        }
         app.completion_actions();
         if window.signals.overflow.replace(false) {
             message(

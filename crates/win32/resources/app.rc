@@ -34,6 +34,7 @@ BEGIN
         MENUITEM "&Add URL...\tCtrl+N", 1001
         MENUITEM "Add batch URLs...", 4050
         MENUITEM "&Scheduler...", 1037
+        MENUITEM "Site &Grabber...", 1042
         POPUP "&Queues"
         BEGIN
             MENUITEM "Create &new queue...", 1026
@@ -614,4 +615,75 @@ BEGIN
     EDITTEXT 3280, 8, 28, 288, 14, ES_READONLY | ES_AUTOHSCROLL | WS_TABSTOP
     DEFPUSHBUTTON "Copy link", IDOK, 174, 59, 58, 15
     PUSHBUTTON "Close", IDCANCEL, 240, 59, 56, 15
+END
+
+230 DIALOGEX 0, 0, 720, 464
+STYLE DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
+EXSTYLE WS_EX_CONTROLPARENT
+CAPTION "Rusty Site Grabber"
+FONT 8, "Tahoma"
+BEGIN
+    LTEXT "Saved project:", -1, 10, 12, 58, 10
+    COMBOBOX 4100, 70, 9, 362, 130, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON "New", 4101, 442, 9, 58, 15
+    PUSHBUTTON "Save settings", 4102, 506, 9, 90, 15
+    PUSHBUTTON "Delete project", 4103, 602, 9, 108, 15
+    GROUPBOX "Project settings — public HTML/CSS websites", -1, 10, 31, 700, 189
+    LTEXT "Name:", -1, 20, 46, 34, 9
+    EDITTEXT 4104, 59, 43, 272, 14, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "Mode:", -1, 350, 46, 34, 9
+    COMBOBOX 4107, 388, 43, 310, 70, CBS_DROPDOWNLIST | WS_TABSTOP
+    LTEXT "Start URL:", -1, 20, 65, 43, 9
+    EDITTEXT 4105, 70, 62, 628, 14, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "Save folder:", -1, 20, 84, 47, 9
+    EDITTEXT 4106, 70, 81, 628, 14, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "Page hosts:", -1, 20, 103, 48, 9
+    EDITTEXT 4108, 70, 100, 261, 14, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "Asset hosts:", -1, 350, 103, 50, 9
+    EDITTEXT 4109, 404, 100, 294, 14, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "Include URLs:", -1, 20, 122, 53, 9
+    EDITTEXT 4110, 78, 119, 253, 14, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "Exclude URLs:", -1, 350, 122, 54, 9
+    EDITTEXT 4111, 408, 119, 290, 14, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "Extensions:", -1, 20, 141, 48, 9
+    EDITTEXT 4112, 70, 138, 261, 14, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "MIME types:", -1, 350, 141, 50, 9
+    EDITTEXT 4113, 404, 138, 294, 14, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT "Depth", -1, 20, 160, 30, 9
+    EDITTEXT 4114, 52, 157, 34, 14, ES_NUMBER | WS_TABSTOP
+    LTEXT "Pages", -1, 94, 160, 29, 9
+    EDITTEXT 4115, 125, 157, 48, 14, ES_NUMBER | WS_TABSTOP
+    LTEXT "Results", -1, 181, 160, 34, 9
+    EDITTEXT 4116, 217, 157, 53, 14, ES_NUMBER | WS_TABSTOP
+    LTEXT "Workers", -1, 280, 160, 36, 9
+    EDITTEXT 4117, 319, 157, 29, 14, ES_NUMBER | WS_TABSTOP
+    LTEXT "Host delay (ms)", -1, 360, 160, 65, 9
+    EDITTEXT 4118, 427, 157, 51, 14, ES_NUMBER | WS_TABSTOP
+    LTEXT "Redirects", -1, 492, 160, 42, 9
+    EDITTEXT 4119, 538, 157, 35, 14, ES_NUMBER | WS_TABSTOP
+    CONTROL "Respect robots.txt", 4122, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 590, 157, 105, 14
+    LTEXT "Document limit (MiB):", -1, 20, 180, 92, 9
+    EDITTEXT 4120, 115, 177, 48, 14, ES_NUMBER | WS_TABSTOP
+    LTEXT "Scan cache (MiB):", -1, 180, 180, 77, 9
+    EDITTEXT 4121, 261, 177, 54, 14, ES_NUMBER | WS_TABSTOP
+    LTEXT "Lists: comma separated. URL/MIME patterns: * and ?. Hosts: example.com or *.example.com.", -1, 20, 200, 670, 10
+    PUSHBUTTON "Scan", 4123, 10, 227, 60, 17
+    PUSHBUTTON "Stop", 4124, 76, 227, 60, 17
+    PUSHBUTTON "Resume", 4125, 142, 227, 60, 17
+    PUSHBUTTON "Rescan", 4126, 208, 227, 60, 17
+    PUSHBUTTON "Download selected", 4127, 274, 227, 108, 17
+    PUSHBUTTON "Retry failed", 4128, 388, 227, 92, 17
+    PUSHBUTTON "Open folder", 4129, 486, 227, 100, 17
+    PUSHBUTTON "Open offline", 4130, 592, 227, 118, 17
+    LTEXT "Create or select a project.", 4131, 10, 251, 700, 25
+    LTEXT "Find:", -1, 10, 283, 24, 9
+    EDITTEXT 4133, 36, 280, 274, 14, ES_AUTOHSCROLL | WS_TABSTOP
+    PUSHBUTTON "Filter", 4134, 316, 279, 55, 16
+    PUSHBUTTON "Select page", 4137, 380, 279, 86, 16
+    PUSHBUTTON "Clear page", 4138, 472, 279, 86, 16
+    PUSHBUTTON "Previous", 4135, 566, 279, 68, 16
+    PUSHBUTTON "Next", 4136, 640, 279, 70, 16
+    CONTROL "", 4132, "SysListView32", WS_BORDER | WS_TABSTOP | LVS_REPORT | LVS_SHOWSELALWAYS, 10, 302, 700, 129
+    LTEXT "Check results before downloading. Missing mirror resources retain online links.", -1, 10, 443, 590, 12
+    PUSHBUTTON "Close", 4139, 642, 438, 68, 17
 END

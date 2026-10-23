@@ -27,6 +27,8 @@ mod dialogs;
 #[cfg(windows)]
 pub mod download_intent;
 #[cfg(windows)]
+mod grabber;
+#[cfg(windows)]
 mod icons;
 #[cfg(windows)]
 pub mod platform;

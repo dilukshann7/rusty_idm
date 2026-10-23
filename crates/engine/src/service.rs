@@ -31,6 +31,8 @@ use queue_support::QueueRuntime;
 #[path = "service_speed.rs"]
 mod speed;
 use speed::SpeedMeter;
+#[path = "service_grabber.rs"]
+mod grabber_support;
 #[path = "service_recovery.rs"]
 mod recovery_support;
 #[path = "service_refresh.rs"]
@@ -43,6 +45,12 @@ mod telemetry;
 mod history_tests;
 
 pub enum Command {
+    Grabber(crate::grabber::GrabberCommand),
+    #[doc(hidden)]
+    ProjectTransfer {
+        action: crate::grabber::TransferAction,
+        reply: tokio::sync::oneshot::Sender<Result<Vec<crate::grabber::TransferStatus>, String>>,
+    },
     PrepareRefresh(
         JobId,
         std::sync::mpsc::SyncSender<Result<Option<String>, String>>,
@@ -160,6 +168,25 @@ pub struct EngineClient {
     sender: mpsc::Sender<Command>,
     closing: Arc<AtomicBool>,
 }
+pub(crate) struct WeakEngineClient {
+    sender: mpsc::WeakSender<Command>,
+    closing: Arc<AtomicBool>,
+}
+impl WeakEngineClient {
+    pub(crate) fn try_send(&self, command: Command) -> Result<(), CommandError> {
+        if self.closing.load(Ordering::Acquire) {
+            return Err(CommandError::Closed);
+        }
+        self.sender
+            .upgrade()
+            .ok_or(CommandError::Closed)?
+            .try_send(command)
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => CommandError::QueueFull,
+                mpsc::error::TrySendError::Closed(_) => CommandError::Closed,
+            })
+    }
+}
 impl EngineClient {
     pub fn try_send(&self, command: Command) -> Result<(), CommandError> {
         if self.closing.load(Ordering::Acquire) {
@@ -203,6 +230,9 @@ impl EngineHandle {
     }
     pub fn find_duplicate(&self, request: &DownloadRequest) -> Option<JobSnapshot> {
         self.bus.find_duplicate(request)
+    }
+    pub fn is_mirror_job(&self, id: JobId) -> bool {
+        self.bus.is_mirror_job(id)
     }
     pub fn destinations(&self) -> Vec<std::path::PathBuf> {
         self.bus.destinations()
@@ -254,13 +284,24 @@ fn spawn(
     let events = bus.clone();
     let closing = Arc::new(AtomicBool::new(false));
     let flag = closing.clone();
+    let grabber_client = WeakEngineClient {
+        sender: sender.downgrade(),
+        closing: closing.clone(),
+    };
     let thread = thread::spawn(move || {
         match tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()
         {
-            Ok(runtime) => runtime.block_on(actor(receiver, events, flag, executor, durable)),
+            Ok(runtime) => runtime.block_on(actor(
+                receiver,
+                events,
+                flag,
+                executor,
+                durable,
+                grabber_client,
+            )),
             Err(_) => {
                 flag.store(true, Ordering::Release);
                 events.publish(Event::CommandRejected {
@@ -312,6 +353,7 @@ async fn actor(
     closing: Arc<AtomicBool>,
     executor: Arc<dyn TransferExecutor>,
     durable: bool,
+    grabber_client: WeakEngineClient,
 ) {
     let mut jobs: BTreeMap<JobId, Job> = BTreeMap::new();
     let mut waiting = VecDeque::new();
@@ -329,6 +371,7 @@ async fn actor(
     let mut next_id = 1u64;
     let mut queues = QueueRuntime::new(durable);
     queues.restore(&mut jobs, &mut next_id, &bus);
+    let grabber = crate::grabber::spawn(grabber_client, bus.clone(), durable);
     let mut receipts: HashMap<RequestId, Record> = HashMap::new();
     let mut shutdown = false;
     let mut history_retry = Instant::now();
@@ -366,7 +409,10 @@ async fn actor(
             }
             waiting.clear();
         }
-        if shutdown && tasks.is_empty() {
+        if shutdown {
+            grabber.stop();
+        }
+        if shutdown && tasks.is_empty() && grabber.finished() {
             if let Err(error) = queues.store.flush_history() {
                 reject(
                     &bus,
@@ -381,6 +427,11 @@ async fn actor(
             biased;
             command = receiver.recv(), if !shutdown => {
                 match command {
+                    Some(Command::Grabber(command)) => grabber.send(command),
+                    Some(Command::ProjectTransfer { action, reply }) => {
+                        let result = grabber_support::handle(action, &mut jobs, &mut waiting, &mut next_id, &bus, &queues);
+                        let _ = reply.send(result);
+                    },
                     Some(Command::External(command)) => {
                         receipts.retain(|_,r|r.at.elapsed()<RETENTION);
                         match command {

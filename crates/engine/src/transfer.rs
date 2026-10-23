@@ -411,7 +411,7 @@ async fn stream(
         .map_err(|e| JobError::new(ErrorKind::InvalidRequest, e))?;
     let client = reqwest::Client::builder()
         .user_agent(request.options.user_agent.as_str())
-        .redirect(reqwest::redirect::Policy::limited(10))
+        .redirect(crate::grabber::redirect_policy(request.project.as_ref()))
         .referer(false)
         .no_gzip()
         .no_brotli()
