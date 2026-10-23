@@ -731,6 +731,10 @@ pub(super) async fn run(
         .as_ref()
         .is_some_and(|c| c.received() > 0 && (c.refresh_pending || c.etag.is_none()))
     {
+        if !previously_segmented {
+            // Record newly reserved sidecars before a recheck can pause or exit.
+            save(output, &spans, &probe.validator, vec![]).await?;
+        }
         if !verify_saved_controlled(
             &client, request, &probe, output, &mut spans, control, &progress,
         )
@@ -739,6 +743,21 @@ pub(super) async fn run(
             return Ok(Some(TransferOutcome::Cancelled));
         }
         output.clear_refresh_pending();
+    }
+    // Verification is read-only. Discard only verified, uncheckpointed tails
+    // when preparing to resume writes; the following checkpoint syncs them.
+    for span in spans.iter_mut().skip(1) {
+        let file = span.file.as_mut().expect("sidecar");
+        let length = file
+            .metadata()
+            .await
+            .map_err(|_| JobError::new(ErrorKind::Io, "Cannot inspect saved range length."))?
+            .len();
+        if length > span.saved {
+            file.set_len(span.saved).await.map_err(|_| {
+                JobError::new(ErrorKind::Io, "Cannot trim uncheckpointed range bytes.")
+            })?;
+        }
     }
     save(output, &spans, &probe.validator, vec![]).await?;
     for span in spans.iter_mut().skip(1) {
@@ -966,13 +985,15 @@ async fn verify_saved_controlled(
     control: &TransferControl,
     progress: &ProgressSink,
 ) -> Result<bool, JobError> {
+    // Both callers have checkpointed their current ranges before this read-only
+    // recheck. Preserve that map: pre-write sidecars may still have saved tails.
     loop {
         if control.token.is_cancelled() {
-            save(output, spans, &probe.validator, vec![]).await?;
+            output.checkpoint().await?;
             return Ok(false);
         }
         if control.is_paused() {
-            save(output, spans, &probe.validator, vec![]).await?;
+            output.checkpoint().await?;
             report(
                 progress,
                 output.length().await?,
@@ -987,7 +1008,7 @@ async fn verify_saved_controlled(
         }
         tokio::select! { biased;
             _ = control.token.cancelled() => {
-                save(output, spans, &probe.validator, vec![]).await?;
+                output.checkpoint().await?;
                 return Ok(false);
             }
             _ = control.pause_requested() => continue,

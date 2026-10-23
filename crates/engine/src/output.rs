@@ -831,8 +831,6 @@ pub(crate) fn verify_segment(
     if prefix != segment.prefix_hash || full != segment.bytes_hash {
         return Err(std::io::Error::other("Recorded range bytes changed"));
     }
-    file.set_len(segment.saved)?;
-    file.sync_all()?;
     Ok(file)
 }
 pub(crate) async fn remove_segment(file: File, path: PathBuf) -> Result<(), JobError> {
@@ -1234,6 +1232,353 @@ fn delete_owned<T>(_file: &T, partial: &Path) -> std::io::Result<()> {
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+
+    fn recorded_range(dir: &Path) -> crate::storage::SegmentCheckpoint {
+        let partial = dir.join("saved.seg");
+        std::fs::write(&partial, b"data").unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&partial)
+            .unwrap();
+        // A fixed, old timestamp makes unintended writes observable without sleeps.
+        file.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000))
+            .unwrap();
+        file.sync_all().unwrap();
+        let identity = identify_destination(&file).unwrap();
+        let (prefix_hash, bytes_hash) = hashes(&mut file, 4).unwrap();
+        crate::storage::SegmentCheckpoint {
+            start: 8,
+            end: 15,
+            saved: 4,
+            partial,
+            identity,
+            prefix_hash,
+            bytes_hash,
+        }
+    }
+
+    #[test]
+    fn saved_range_verification_is_read_only_across_reopens() {
+        let dir = tempfile::tempdir().unwrap();
+        let recorded = recorded_range(dir.path());
+        for _ in 0..2 {
+            let file = verify_segment(&recorded, false).unwrap();
+            assert_eq!(identify_destination(&file).unwrap(), recorded.identity);
+            drop(file);
+            assert_eq!(std::fs::read(&recorded.partial).unwrap(), b"data");
+            assert_eq!(
+                inspect_destination(&recorded.partial).unwrap().unwrap(),
+                recorded.identity
+            );
+        }
+    }
+
+    #[test]
+    fn saved_range_verification_preserves_uncheckpointed_tail() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let recorded = recorded_range(dir.path());
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&recorded.partial)
+            .unwrap();
+        file.write_all(b"tail").unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+        let before = inspect_destination(&recorded.partial).unwrap().unwrap();
+        for _ in 0..2 {
+            drop(verify_segment(&recorded, false).unwrap());
+            assert_eq!(std::fs::read(&recorded.partial).unwrap(), b"datatail");
+            assert_eq!(
+                inspect_destination(&recorded.partial).unwrap().unwrap(),
+                before
+            );
+        }
+    }
+
+    #[test]
+    fn saved_range_verification_rejects_unsafe_changes_without_modifying_files() {
+        for change in ["bytes", "replacement", "length", "timestamp", "missing"] {
+            let dir = tempfile::tempdir().unwrap();
+            let recorded = recorded_range(dir.path());
+            match change {
+                "bytes" => std::fs::write(&recorded.partial, b"evil").unwrap(),
+                "replacement" => {
+                    std::fs::rename(&recorded.partial, dir.path().join("original.seg")).unwrap();
+                    std::fs::write(&recorded.partial, b"data").unwrap();
+                }
+                "length" => std::fs::write(&recorded.partial, b"dat").unwrap(),
+                "timestamp" => {
+                    let file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(&recorded.partial)
+                        .unwrap();
+                    file.set_modified(
+                        recorded.identity.modified.unwrap() + std::time::Duration::from_secs(60),
+                    )
+                    .unwrap();
+                }
+                "missing" => std::fs::remove_file(&recorded.partial).unwrap(),
+                _ => unreachable!(),
+            }
+            let before = inspect_destination(&recorded.partial).unwrap();
+            let contents = std::fs::read(&recorded.partial).ok();
+            for ignore_modified in [false, true] {
+                let result = verify_segment(&recorded, ignore_modified);
+                assert_eq!(
+                    result.is_ok(),
+                    change == "timestamp" && ignore_modified,
+                    "change={change}, ignore_modified={ignore_modified}"
+                );
+                drop(result);
+                assert_eq!(inspect_destination(&recorded.partial).unwrap(), before);
+                assert_eq!(std::fs::read(&recorded.partial).ok(), contents);
+            }
+            if change == "replacement" {
+                assert_eq!(
+                    std::fs::read(dir.path().join("original.seg")).unwrap(),
+                    b"data"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn saved_ranges_resume_after_inspection_with_uncheckpointed_tail() {
+        check_saved_tail_resume(None).await;
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum RecheckStop {
+        Pause,
+        Cancel,
+        PauseNewRanges,
+    }
+
+    #[tokio::test]
+    async fn saved_range_recheck_pause_preserves_uncheckpointed_tail() {
+        check_saved_tail_resume(Some(RecheckStop::Pause)).await;
+    }
+
+    #[tokio::test]
+    async fn saved_range_recheck_cancel_preserves_uncheckpointed_tail() {
+        check_saved_tail_resume(Some(RecheckStop::Cancel)).await;
+    }
+
+    #[tokio::test]
+    async fn saved_range_recheck_pause_records_newly_partitioned_ranges() {
+        check_saved_tail_resume(Some(RecheckStop::PauseNewRanges)).await;
+    }
+
+    async fn check_saved_tail_resume(stop: Option<RecheckStop>) {
+        use crate::{storage, transfer, EntryId};
+        use std::{
+            sync::{
+                atomic::{AtomicBool, Ordering},
+                Arc,
+            },
+            time::Duration,
+        };
+        use tokio_util::sync::CancellationToken;
+
+        const HALF: usize = 4 * 1024 * 1024;
+        const SAVED: usize = 64 * 1024;
+        let bytes: Arc<Vec<u8>> = Arc::new((0..2 * HALF).map(|i| (i % 251) as u8).collect());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/file", listener.local_addr().unwrap());
+        let control = transfer::TransferControl::new(CancellationToken::new());
+        let server_control = control.clone();
+        let server_bytes = bytes.clone();
+        let server = tokio::spawn(async move {
+            let ranges = match stop {
+                None => vec![(0, 0), (HALF + SAVED, 2 * HALF - 1)],
+                Some(RecheckStop::Pause | RecheckStop::PauseNewRanges) => vec![(0, 0)],
+                Some(RecheckStop::Cancel) => vec![(0, 0), (0, SAVED - 1)],
+            };
+            for expected in ranges {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0u8; 1];
+                while !request.ends_with(b"\r\n\r\n") && request.len() < 8192 {
+                    stream.read_exact(&mut byte).await.unwrap();
+                    request.push(byte[0]);
+                }
+                let request = String::from_utf8(request).unwrap();
+                let range = request
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        if !name.eq_ignore_ascii_case("range") {
+                            return None;
+                        }
+                        let (start, end) = value.trim().strip_prefix("bytes=")?.split_once('-')?;
+                        Some((start.parse::<usize>().ok()?, end.parse::<usize>().ok()?))
+                    })
+                    .unwrap();
+                assert_eq!(range, expected);
+                let (start, end) = range;
+                if stop == Some(RecheckStop::Cancel) && end == SAVED - 1 {
+                    server_control.preserve_on_exit();
+                    server_control.token().cancel();
+                    break;
+                }
+                let headers = format!(
+                    "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{end}/{}\r\nContent-Length: {}\r\nETag: \"v1\"\r\nConnection: close\r\n\r\n",
+                    server_bytes.len(), end - start + 1
+                );
+                stream.write_all(headers.as_bytes()).await.unwrap();
+                stream.write_all(&server_bytes[start..=end]).await.unwrap();
+            }
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("resumed.bin");
+        let mut request =
+            crate::validate_request(&url, target.clone(), ReplacementPolicy::Deny).unwrap();
+        request.options.max_connections = 2;
+        request.options.temporary_directory = Some(dir.path().to_path_buf());
+        let store = storage::Store::open(false);
+        store
+            .update(|state| {
+                state.next_entry = 2;
+                state.entries.insert(
+                    EntryId(1),
+                    serde_json::from_value(serde_json::json!({
+                        "id": 1, "url": url, "destination": target,
+                        "category": null, "description": "", "authenticated": false,
+                        "completed": false, "checkpoint": null, "journal": null
+                    }))
+                    .unwrap(),
+                );
+                Ok(())
+            })
+            .unwrap();
+        let recovery = storage::Recovery {
+            store,
+            entry: EntryId(1),
+        };
+        request.recovery = Some(recovery.clone());
+        let mut output = OutputFile::durable_prepare(&request).await.unwrap();
+        output.representation(Some(bytes.len() as u64), Some(url), Some("\"v1\"".into()));
+        output.write(&bytes[..HALF]).await.unwrap();
+        let recorded = if stop == Some(RecheckStop::PauseNewRanges) {
+            output.checkpoint().await.unwrap();
+            None
+        } else {
+            let (mut file, reserved) =
+                reserve_segment(output.partial_path(), HALF as u64, (2 * HALF - 1) as u64)
+                    .await
+                    .unwrap();
+            file.write_all(&bytes[HALF..HALF + SAVED]).await.unwrap();
+            let recorded = segment_checkpoint(
+                &file,
+                reserved.partial,
+                HALF as u64,
+                (2 * HALF - 1) as u64,
+                SAVED as u64,
+            )
+            .await
+            .unwrap();
+            drop(file);
+            output
+                .checkpoint_ranges(vec![recorded.clone()], None, vec![])
+                .await
+                .unwrap();
+            Some(recorded)
+        };
+        drop(output);
+        if stop.is_some() {
+            let mut checkpoint = recovery.checkpoint().unwrap();
+            checkpoint.refresh_pending = true;
+            recovery.save(checkpoint).unwrap();
+        }
+        let mut expected_sidecar = bytes[HALF..HALF + SAVED].to_vec();
+        expected_sidecar.extend_from_slice(b"uncheckpointed tail");
+        let before = recorded.as_ref().map(|recorded| {
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&recorded.partial)
+                .unwrap();
+            std::io::Write::write_all(&mut file, b"uncheckpointed tail").unwrap();
+            file.sync_all().unwrap();
+            drop(file);
+            let before = inspect_destination(&recorded.partial).unwrap().unwrap();
+            drop(verify_segment(recorded, false).unwrap());
+            assert!(
+                std::fs::read(&recorded.partial).unwrap() == expected_sidecar,
+                "Inspection must preserve the saved prefix and uncheckpointed tail."
+            );
+            before
+        });
+
+        control.attach_recovery(Some(recovery.clone()));
+        let paused = Arc::new(AtomicBool::new(false));
+        let callback_paused = paused.clone();
+        let callback_control = control.clone();
+        let progress: transfer::ProgressSink = Arc::new(move |progress| {
+            if matches!(stop, Some(RecheckStop::Pause | RecheckStop::PauseNewRanges)) {
+                if progress.paused {
+                    callback_control.preserve_on_exit();
+                    callback_control.token().cancel();
+                } else if progress
+                    .details
+                    .as_ref()
+                    .is_some_and(|details| !details.segments.is_empty())
+                    && !callback_paused.swap(true, Ordering::SeqCst)
+                {
+                    assert!(callback_control.try_pause());
+                }
+            }
+        });
+        let done = tokio::time::timeout(
+            Duration::from_secs(10),
+            transfer::controlled_transfer(request, control, progress),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        if stop.is_some() {
+            assert_eq!(done, transfer::TransferOutcome::Cancelled);
+            assert!(!target.exists());
+            let checkpoint = recovery.checkpoint().unwrap();
+            assert!(checkpoint.refresh_pending);
+            if let Some(recorded) = recorded {
+                assert_eq!(inspect_destination(&recorded.partial).unwrap(), before);
+                assert!(std::fs::read(&recorded.partial).unwrap() == expected_sidecar);
+                assert!(checkpoint.segments == vec![recorded]);
+            } else {
+                assert_eq!(checkpoint.segments.len(), 1);
+                let segment = &checkpoint.segments[0];
+                assert_eq!(
+                    (segment.start, segment.end, segment.saved),
+                    (HALF as u64, (2 * HALF - 1) as u64, 0)
+                );
+                assert!(segment.partial.exists());
+                assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+            }
+            if matches!(stop, Some(RecheckStop::Pause | RecheckStop::PauseNewRanges)) {
+                assert!(paused.load(Ordering::SeqCst));
+            }
+        } else {
+            assert_eq!(
+                done,
+                transfer::TransferOutcome::Completed {
+                    bytes: bytes.len() as u64
+                }
+            );
+            assert!(
+                std::fs::read(&target).unwrap() == *bytes,
+                "Resumed output must match every source byte."
+            );
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        }
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn saved_range_hash_rejects_changed_bytes() {
         let dir = tempfile::tempdir().unwrap();
