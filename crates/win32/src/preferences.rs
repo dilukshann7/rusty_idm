@@ -122,7 +122,7 @@ impl Default for Configuration {
             choose_queue_later: false,
             choose_queue_batch: true,
             ignore_modified_time: false,
-            user_agent: "RustyDownloadManager/0.2.1".into(),
+            user_agent: concat!("RustyDownloadManager/", env!("CARGO_PKG_VERSION")).into(),
             max_connections: 8,
             retry_policy: Default::default(),
             progress: Default::default(),
@@ -179,7 +179,7 @@ impl Configuration {
             user_agent: if manual {
                 self.user_agent.clone()
             } else {
-                "RustyDownloadManager/0.2.1".into()
+                concat!("RustyDownloadManager/", env!("CARGO_PKG_VERSION")).into()
             },
             max_connections: self.max_connections,
             retry_policy: self.retry_policy,

@@ -1,5 +1,52 @@
 # Validation
 
+## v0.3.0-beta.1 release checks (2026-10-23)
+
+The final beta source passed all 215 Rust tests with the locked/offline workspace
+command and no compiler warnings. Two ignored subprocess helper entrypoints are
+invoked by the containment test. All 82 extension tests, both Python packaging
+tests and all three media-tool checks passed. Source verification passed for
+116 Rust files, resources, document links and JavaScript/PowerShell syntax.
+
+The optimized static-CRT app/native-host build and Inno Setup compilation passed
+with textual product version `0.3.0-beta.1`. Chromium profiles use numeric
+`0.3.0` with `version_name` `0.3.0-beta.1`; Firefox uses numeric `0.3.0`.
+No external dependency versions changed: the lockfile update affects only the
+four workspace package versions.
+
+Read-only release review found one packaging omission: the acceptance record
+was linked but not staged. A failing packaging regression was added; document
+staging now includes the root documentation set and the regression passes.
+Final package manifests identify the release assets. Live pre-beta acceptance
+is recorded separately below and is not a claim of complete beta acceptance.
+
+An isolated-profile beta smoke check confirmed the title, single-instance
+activation and native Site Grabber dialog. A garbled resource label was
+reproduced, corrected and checked on the rebuilt release executable; all 40
+native UI unit tests passed afterward. Only that resource changed after the
+full workspace suite.
+
+## Windows acceptance and beta preparation (2026-10-23)
+
+The Windows run passed 215 locked/offline Rust tests, all 82 extension tests,
+one four-profile browser-package test and three media-package tests. It also
+produced static-CRT release binaries, an installer and five ZIP archives.
+Fresh install, running-app protection, upgrade with eight segmented partials,
+public address refresh, hidden startup command, uninstall and reinstall were
+observed. Original user data/integration were restored and verified afterward.
+
+See [Windows acceptance](windows-acceptance.md) for exact snapshot/artifact hashes,
+per-case evidence, the earlier failed test runs, and remaining BLOCKED cases.
+Full Windows acceptance is not complete. A synthetic 10,000-entry restore also
+identified slow startup; its full-store snapshots remain a beta performance
+limitation.
+
+Version preparation removes two unused-code warnings, derives runtime labels and
+packager versions from Cargo, and maps the beta version to valid numeric browser
+and Windows metadata. The release manifest identifies the final beta artifact
+hashes and build/package results; the earlier live acceptance observations apply
+to their explicitly recorded pre-beta binaries.
+
 ## Remaining feature commit checks (2026-10-23)
 
 Fresh source checks passed for all 116 Rust files, locked workspace metadata,

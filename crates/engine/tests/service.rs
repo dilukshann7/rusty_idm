@@ -214,8 +214,12 @@ fn two_running_one_waiting_and_waiting_cancel_never_executes() {
     collect_until(&engine, |events| {
         events
             .iter()
-            .filter(|e| matches!(e, Event::JobChanged(s) if s.state == JobState::Running))
-            .count()
+            .filter_map(|e| match e {
+                Event::JobChanged(s) if s.state == JobState::Running => Some(s.id),
+                _ => None,
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
             == 2 && started.load(Ordering::SeqCst) == 2
             && events.iter().any(|e| matches!(e, Event::JobChanged(s) if s.id == JobId(3) && s.state == JobState::Waiting))
     });
@@ -382,19 +386,18 @@ fn send_eventually(engine: &EngineHandle, mut command: Command) {
     }
 }
 #[test]
-fn retained_entry_limit_rejects_visibly_without_losing_shutdown() {
+fn more_than_one_thousand_retained_entries_allow_shutdown() {
     let dir = tempfile::tempdir().unwrap();
     let engine = spawn_engine_with_executor(Arc::new(|| {}), Arc::new(FailImmediately));
     for index in 0..1001 {
-        send_eventually(
-            &engine,
-            Command::Submit(request(dir.path().join(format!("file-{index}.bin")))),
-        );
+        let mut request = request(dir.path().join(format!("file-{index}.bin")));
+        request.deferred = true;
+        send_eventually(&engine, Command::Submit(request));
     }
     let events = collect_until(&engine, |events| {
         events
             .iter()
-            .any(|e| matches!(e, Event::CommandRejected { .. }))
+            .any(|e| matches!(e, Event::JobChanged(s) if s.id == JobId(1001)))
     });
     let ids: std::collections::BTreeSet<_> = events
         .iter()
@@ -406,7 +409,10 @@ fn retained_entry_limit_rejects_visibly_without_losing_shutdown() {
             }
         })
         .collect();
-    assert_eq!(ids.len(), 1000);
+    assert_eq!(ids.len(), 1001);
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, Event::CommandRejected { .. })));
     engine.try_send(Command::Shutdown).unwrap();
     collect_until(&engine, |events| {
         events.iter().any(|e| matches!(e, Event::ShutdownComplete))

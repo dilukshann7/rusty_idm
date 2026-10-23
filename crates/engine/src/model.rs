@@ -59,7 +59,7 @@ pub struct DownloadOptions {
 impl Default for DownloadOptions {
     fn default() -> Self {
         Self {
-            user_agent: "RustyDownloadManager/0.2.1".into(),
+            user_agent: concat!("RustyDownloadManager/", env!("CARGO_PKG_VERSION")).into(),
             max_connections: 8,
             retry_policy: RetryPolicy::default(),
             temporary_directory: None,

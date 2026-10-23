@@ -1,8 +1,8 @@
-# Rusty Download Manager 0.2.1
+# Rusty Download Manager 0.3.0-beta.1
 
 ## Install
 
-Run `RustyDownloadManager-0.2.1-windows-x64-setup.exe`. Setup installs for the
+Run `RustyDownloadManager-0.3.0-beta.1-windows-x64-setup.exe`. Setup installs for the
 current Windows user and offers **Start Rusty in the background when I sign in**
 (selected by default), an optional desktop shortcut, and Chrome setup.
 This release is unsigned; Windows may show an unknown publisher prompt.

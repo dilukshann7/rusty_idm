@@ -21,7 +21,7 @@ their original commits remain available in Git history.
 
 ## Prerequisites and source checks
 
-Windows 10/11 x64, Rust MSVC, Windows SDK resource compiler, Python 3, Node.js for
+Windows 10/11 x64, Rust MSVC, Windows SDK resource compiler, Python 3.11+, Node.js for
 extension syntax checks, and Inno Setup for installer compilation.
 
 `scripts/verify-source.ps1` inspects locked/offline Cargo metadata, Rust formatting,
@@ -38,6 +38,12 @@ The script prepares the pinned media tools, produces optimized static-CRT GUI/ho
 version resources, stages required runtime files and dependency licenses, and
 compiles setup plus portable/extension ZIPs under ignored `dist/`. Preserve an
 existing `dist/` before rebuilding. No app or installer is run automatically.
+
+Cargo's workspace version controls the release version and archive names.
+Browser manifests use its numeric base; Chromium profiles also show the complete
+prerelease in `version_name`. Windows resources carry numeric file versions and
+the complete textual product version. Source checks reject inconsistent browser
+and installer metadata.
 
 `python tools/fetch_media_tools.py` can prepare the tools independently without
 building Rusty. It verifies downloaded archives and extracted executables against

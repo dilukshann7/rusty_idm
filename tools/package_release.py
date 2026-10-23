@@ -6,10 +6,12 @@ import struct
 from pathlib import Path
 import shutil
 import subprocess
+import tomllib
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.2.1"
+VERSION = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+BROWSER_VERSION = VERSION.split("-", 1)[0]
 PREFIX = f"RustyDownloadManager-{VERSION}"
 
 
@@ -68,8 +70,10 @@ def archive(source, target, prefix=""):
 
 def write_package_readme(payload):
     # Keep distribution links relative to files that are actually shipped.
+    channel = "Beta prerelease" if "-" in VERSION else "Release"
     (payload / "README.md").write_text(
         f"# Rusty Download Manager {VERSION}\n\n"
+        f"**{channel} · Windows 10/11 x64 · Unsigned**\n\n"
         "![Rusty](branding/rusty-128.png)\n\n"
         "Run `bin/rusty-win32.exe` to open the manager. Close or minimize it to "
         "keep downloads running in the notification area. Use tray Exit to stop it.\n\n"
@@ -82,6 +86,13 @@ def write_package_readme(payload):
         "execution does not enable startup or register browser hosts automatically.\n",
         encoding="utf-8",
     )
+
+
+def stage_documents(payload):
+    """Keep distributed guides and their local document links together."""
+    for source in sorted((ROOT / "docs").iterdir()):
+        if source.is_file() and (source.suffix == ".md" or source.name == "SETUP.txt"):
+            copy_file(source, payload / "docs" / source.name)
 
 
 def stage(binary_dir):
@@ -115,8 +126,7 @@ def stage(binary_dir):
     for name in ["LICENSE", "README.md", "THIRD_PARTY.md"]:
         copy_file(ROOT / name, payload / name)
     write_package_readme(payload)
-    for name in ["USER_GUIDE.md", "RELEASE_NOTES.md", "VALIDATION.md", "SETUP.txt", "browser-media-support.md", "refresh-download-address.md"]:
-        copy_file(ROOT / "docs" / name, payload / "docs" / name)
+    stage_documents(payload)
     for name in ["register-chrome-host.ps1", "unregister-chrome-host.ps1", "chrome-integration.ps1", "release-integration.ps1", "browser-host.ps1"]:
         copy_file(ROOT / "scripts" / name, payload / "scripts" / name)
     for path in (ROOT / "assets/branding").glob("*"):

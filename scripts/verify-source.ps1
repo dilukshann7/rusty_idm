@@ -17,14 +17,17 @@ try {
     $versions = @($metadata.packages | Where-Object { $_.id -in $metadata.workspace_members } | ForEach-Object { $_.version } | Select-Object -Unique)
     if ($versions.Count -ne 1) { throw 'Workspace package versions differ.' }
     $releaseVersion = $versions[0]
+    $browserVersion = ($releaseVersion -split '-', 2)[0]
     foreach ($browser in @('chrome', 'brave', 'edge', 'firefox')) {
         $manifestFile = if ($browser -eq 'chrome') { 'extensions/chrome/manifest.json' } else { "extensions/profiles/$browser/manifest.json" }
-        $extensionVersion = (Get-Content -Raw -LiteralPath (Join-Path $taskRoot $manifestFile) | ConvertFrom-Json).version
-        if ($extensionVersion -ne $releaseVersion) { throw "Extension version differs from Cargo: $manifestFile" }
+        $extensionManifest = Get-Content -Raw -LiteralPath (Join-Path $taskRoot $manifestFile) | ConvertFrom-Json
+        if ($extensionManifest.version -ne $browserVersion) { throw "Extension version differs from Cargo: $manifestFile" }
+        if ($browser -ne 'firefox' -and $releaseVersion.Contains('-') -and $extensionManifest.version_name -ne $releaseVersion) { throw "Extension beta label differs from Cargo: $manifestFile" }
     }
-    $releaseSource = Get-Content -Raw -LiteralPath (Join-Path $taskRoot 'tools/package_release.py')
+    $packageVersion = & python -c 'from tools.package_release import VERSION; print(VERSION)'
+    if ($LASTEXITCODE -ne 0 -or $packageVersion -ne $releaseVersion) { throw 'Release packager version differs from Cargo.' }
     $installerSource = Get-Content -Raw -LiteralPath (Join-Path $taskRoot 'installer/windows.iss')
-    if (-not $releaseSource.Contains('VERSION = "' + $releaseVersion + '"') -or -not $installerSource.Contains('#define AppVersion "' + $releaseVersion + '"')) {
+    if (-not $installerSource.Contains('#define AppVersion "' + $releaseVersion + '"')) {
         throw 'Release packager or installer version differs from Cargo.'
     }
 

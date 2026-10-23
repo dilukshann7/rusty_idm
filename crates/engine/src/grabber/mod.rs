@@ -9,7 +9,7 @@ mod store;
 pub(crate) use crawl::redirect_policy;
 pub(crate) use model::host_allowed;
 pub use model::*;
-pub(crate) use runtime::{spawn, Handle};
+pub(crate) use runtime::spawn;
 #[doc(hidden)]
 pub use runtime::{TransferAction, TransferStatus};
 

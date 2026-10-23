@@ -59,7 +59,8 @@ pub(super) fn handle(
                 request.options.confirmation_required = false;
                 request.deferred = false;
                 request.queue = None;
-                request.options.user_agent = "RustySiteGrabber/0.2.1".into();
+                request.options.user_agent =
+                    concat!("RustySiteGrabber/", env!("CARGO_PKG_VERSION")).into();
                 admit(request,jobs,waiting,next_id,bus,queues,false)
                     .map_err(|_|"Project download admission failed. Check history capacity, destination conflicts, and storage.".to_string())?;
             }

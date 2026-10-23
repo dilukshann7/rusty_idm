@@ -1,30 +1,53 @@
-# Rusty Download Manager v0.2.1
+# Rusty Download Manager v0.3.0-beta.1
 
-## Changes since v0.1.0
+Windows x64 beta. Installer, portable and browser-extension archives are provided
+with SHA-256 checksums. Executables are unsigned.
 
-- Site Grabber in current source: native saved projects, bounded public HTML/CSS
-  discovery, selectable results, shared transfers and offline snapshots. Queue
-  storage migrates to schema 8. The engine compiled during focused transfer
-  tests; native UI compilation and live feature acceptance remain deferred.
-  See [Site Grabber](site-grabber.md).
+## Changes since v0.2.1
 
-- Permanent completed/failed history in current source, preserving dates, metadata and categories until deletion; schema-7 migration and a 10,000-entry/16 MiB capacity limit. Builds and runtime acceptance for this change are deferred.
+- Site Grabber: saved public-site projects, bounded HTML/CSS discovery, filters,
+  selectable results, shared downloads and offline snapshots. Saved state uses
+  schema 8; older supported state migrates when saved.
+- Permanent completed/failed history, with dates, metadata and categories retained
+  until deletion. Capacity is 10,000 records within the shared 16 MiB encrypted
+  state limit. Previously discarded records cannot be reconstructed.
+- Automatic recovery for eligible temporary HTTP/network failures, including
+  bounded retry settings, queue behavior and preserved checkpoints.
+- Live transfer details: active connection counts, per-segment status/progress
+  and improved telemetry.
+- Segmented checkpoint verification no longer changes sidecar modification times.
+  Uncheckpointed tails are trimmed only at the verified resume write boundary.
+- Browser media controls, direct-file handling and compatible MP4 format choices,
+  with pinned bundled yt-dlp, Deno and FFmpeg tools.
+- Release cleanup: package versions derive from Cargo; Windows displays the beta
+  version; Chromium extensions use numeric versions plus a beta label; unused
+  code is removed and the README describes current installation and features.
+- Updated recovery/concurrency regression tests and 10,000-entry admission
+  coverage.
+- Corrected a garbled Site Grabber resource label found during beta smoke checks.
 
-- Named download queues, categories, Windows file icons, queue ordering, and optional startup, one-time or weekly schedules.
-- Encrypted checkpoints for unfinished downloads. On restart, Rusty holds those jobs for review before continuing.
-- Pause and resume with stricter HTTP range checks, per-download speed limits, and a smoother speed display.
-- Up to 16 connections for one eligible HTTP(S) file, with dynamic range splitting, aggregate speed limiting, verified sidecar recovery and single-stream fallback for unsupported servers. The native **Options > Connection** page defaults to 8.
-- **Refresh download address** for a paused, failed or restored job with saved bytes. A pasted link or an explicitly selected browser capture is checked against the saved partial before continuation.
-- Compact native Options pages for browser capture, file types, folders and download behavior.
-- Browser extension profiles for Chrome, Brave, Edge and Firefox. Each browser requires its own extension and native-host setup; Firefox distribution requires signing.
-- Protected GET capture with a separate unchecked File Info approval and exact observed redirect headers.
-- Opt-in public HLS, DASH and single YouTube video format inspection and media jobs, using pinned bundled tools in installer and portable distributions.
-- Updated native toolbar, scheduler, File Info and transfer dialogs.
+## Verification and remaining acceptance
 
-## Scope and limits
+The pre-version Windows run passed 215 Rust tests, 82 extension tests and four
+package checks. It produced static-CRT binaries and verified fresh installation,
+upgrade from published v0.2.1, running-process protection, hidden startup command,
+uninstall/reinstall data retention, and changed/matching URL refresh with
+segmented partials. The final file matched the fixture SHA-256 and owned sidecars
+were removed. These observations apply to the recorded pre-beta binaries;
+the beta build's checks are recorded separately in [validation](VALIDATION.md).
 
-Windows 10/11 x64. Rusty must run in a signed-in, awake Windows session. Automatic browser capture covers eligible HTTP/HTTPS GET downloads; protected ones require a separate approval. Public on-demand HLS, DASH and individual YouTube videos are selected from the opt-in media panel. Playlists, live streams, DRM, account-required video, private browsing and uploads are outside this release. Saved-byte verification samples up to three ranges, so it does not prove equality of unseen bytes. Permanent history is a newer source change; previously discarded records cannot be recovered. This release is unsigned and has no automatic updater.
+Full Windows acceptance remains incomplete: attended sign-in/shutdown, Explorer
+restart, forced process termination during active transfer/assembly, live browser
+capture, screen-reader announcements, DPI scaling and monitor transitions need
+verification. Very large histories may restore slowly. See
+[Windows acceptance](windows-acceptance.md) for per-case results and limitations.
 
-## Verification status
+## Limits
 
-See [validation](VALIDATION.md) for the checks completed on this version and the remaining acceptance cases. Installer upgrade/uninstall, live browser handoff and authenticated address refresh still need hands-on verification.
+Rusty needs an awake, signed-in Windows session. Capture handles eligible
+HTTP/HTTPS GETs; protected requests require separate approval and fresh browser
+credentials after restart. Public on-demand HLS/DASH and individual YouTube
+videos are supported through the opt-in media panel. Private browsing, uploads,
+playlists, live streams, DRM and account-required video are unsupported. Firefox
+distribution requires signing. Saved-byte sampling cannot prove equality of
+unseen bytes. No automatic updater is included.

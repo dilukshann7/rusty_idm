@@ -269,8 +269,8 @@ BEGIN
 END
 
 1 VERSIONINFO
- FILEVERSION 0,2,1,0
- PRODUCTVERSION 0,2,1,0
+ FILEVERSION 0,3,0,0
+ PRODUCTVERSION 0,3,0,0
  FILEOS VOS_NT_WINDOWS32
  FILETYPE VFT_APP
 BEGIN
@@ -280,8 +280,8 @@ BEGIN
         BEGIN
             VALUE "FileDescription", "Rusty Download Manager\0"
             VALUE "ProductName", "Rusty Download Manager\0"
-            VALUE "FileVersion", "0.2.1\0"
-            VALUE "ProductVersion", "0.2.1\0"
+            VALUE "FileVersion", "0.3.0-beta.1\0"
+            VALUE "ProductVersion", "0.3.0-beta.1\0"
             VALUE "OriginalFilename", "rusty-win32.exe\0"
         END
     END
@@ -628,7 +628,7 @@ BEGIN
     PUSHBUTTON "New", 4101, 442, 9, 58, 15
     PUSHBUTTON "Save settings", 4102, 506, 9, 90, 15
     PUSHBUTTON "Delete project", 4103, 602, 9, 108, 15
-    GROUPBOX "Project settings — public HTML/CSS websites", -1, 10, 31, 700, 189
+    GROUPBOX "Project settings - public HTML/CSS websites", -1, 10, 31, 700, 189
     LTEXT "Name:", -1, 20, 46, 34, 9
     EDITTEXT 4104, 59, 43, 272, 14, ES_AUTOHSCROLL | WS_TABSTOP
     LTEXT "Mode:", -1, 350, 46, 34, 9

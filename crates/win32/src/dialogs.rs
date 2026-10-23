@@ -65,9 +65,6 @@ pub struct PreparedDownload {
     draft: Draft,
 }
 impl PreparedDownload {
-    pub fn is_protected(&self) -> bool {
-        self.draft.protected_browser
-    }
     pub fn requires_dialog(&self) -> bool {
         self.draft.protected_browser || self.draft.force_dialog
     }

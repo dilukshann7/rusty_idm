@@ -11,6 +11,8 @@ Push-Location -LiteralPath $root
 $oldFlags = $env:RUSTFLAGS
 try {
     & (Join-Path $PSScriptRoot 'verify-source.ps1')
+    $releaseVersion = & python -c 'from tools.package_release import VERSION; print(VERSION)'
+    if($LASTEXITCODE -ne 0) { throw 'Cannot resolve the release version.' }
     & python tools/fetch_media_tools.py
     if($LASTEXITCODE -ne 0) { throw 'Pinned media tool preparation failed.' }
     $env:RUSTFLAGS = '-C target-feature=+crt-static'
@@ -19,14 +21,14 @@ try {
     $binaries = Join-Path $TargetDir 'release'
     foreach($name in @('rusty-win32.exe','rusty-native-host.exe')) {
         $info = (Get-Item -LiteralPath (Join-Path $binaries $name)).VersionInfo
-        if($info.ProductName -ne 'Rusty Download Manager' -or $info.ProductVersion -ne '0.2.1') { throw "Incorrect product/version in $name" }
+        if($info.ProductName -ne 'Rusty Download Manager' -or $info.ProductVersion -ne $releaseVersion) { throw "Incorrect product/version in $name" }
     }
     & python tools/package_release.py stage --binary-dir $binaries
     if($LASTEXITCODE -ne 0) { throw 'Packaging failed.' }
     & $compilerPath '/Qp' ("/DSourceRoot=" + $root) ("/DPayloadRoot=" + (Join-Path $root 'dist/payload')) (Join-Path $root 'installer/windows.iss')
     if($LASTEXITCODE -ne 0) { throw 'Installer compilation failed.' }
-    $setupInfo = (Get-Item -LiteralPath (Join-Path $root 'dist/RustyDownloadManager-0.2.1-windows-x64-setup.exe')).VersionInfo
-    if($setupInfo.ProductName.Trim() -ne 'Rusty Download Manager' -or $setupInfo.ProductVersion.Trim() -ne '0.2.1') { throw 'Incorrect setup product/version.' }
+    $setupInfo = (Get-Item -LiteralPath (Join-Path $root "dist/RustyDownloadManager-$releaseVersion-windows-x64-setup.exe")).VersionInfo
+    if($setupInfo.ProductName.Trim() -ne 'Rusty Download Manager' -or $setupInfo.ProductVersion.Trim() -ne $releaseVersion) { throw 'Incorrect setup product/version.' }
     & python tools/package_release.py finish
     if($LASTEXITCODE -ne 0) { throw 'Release manifest creation failed.' }
 } finally { $env:RUSTFLAGS = $oldFlags; Pop-Location }

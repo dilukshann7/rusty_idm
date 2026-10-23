@@ -7,7 +7,7 @@ import zipfile
 from pathlib import Path
 
 from tools.package_browser_extensions import stage
-from tools.package_release import VERSION, archive
+from tools.package_release import BROWSER_VERSION, VERSION, archive
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,7 +27,9 @@ class BrowserPackageTests(unittest.TestCase):
                 with self.subTest(browser=browser):
                     folder = payload / f"{browser}-extension"
                     manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
-                    self.assertEqual(manifest["version"], VERSION)
+                    self.assertEqual(manifest["version"], BROWSER_VERSION)
+                    if browser != "firefox" and "-" in VERSION:
+                        self.assertEqual(manifest["version_name"], VERSION)
                     output = scratch / f"RustyDownloadManager-{VERSION}-{browser}-extension.zip"
                     archive(folder, output)
                     with zipfile.ZipFile(output) as package:
@@ -39,7 +41,7 @@ class BrowserPackageTests(unittest.TestCase):
                         self.assertIn("media-toolbar.js", names)
                         self.assertIn("media-preview-cache.js", names)
                         self.assertFalse(any(name.startswith("tests/") for name in names))
-                        self.assertEqual(json.loads(package.read("manifest.json"))["version"], VERSION)
+                        self.assertEqual(json.loads(package.read("manifest.json"))["version"], BROWSER_VERSION)
 
 
 if __name__ == "__main__":

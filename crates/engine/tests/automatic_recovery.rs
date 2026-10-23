@@ -117,7 +117,7 @@ fn run(request: rusty_engine::DownloadRequest) -> Vec<JobSnapshot> {
         assert!(Instant::now() < deadline, "recovery did not finish");
         thread::sleep(Duration::from_millis(5));
     }
-    engine.request_shutdown();
+    engine.client().request_shutdown();
     engine.join().unwrap();
     snapshots
 }

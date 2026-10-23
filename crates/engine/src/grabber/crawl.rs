@@ -39,7 +39,7 @@ impl From<String> for CrawlError {
 impl Network {
     pub fn new() -> Result<Self, String> {
         let client = Client::builder()
-            .user_agent("RustySiteGrabber/0.2.1")
+            .user_agent(concat!("RustySiteGrabber/", env!("CARGO_PKG_VERSION")))
             .redirect(reqwest::redirect::Policy::none())
             .referer(false)
             .retry(reqwest::retry::never())

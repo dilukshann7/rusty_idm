@@ -110,7 +110,7 @@ fn safe_url(url: &Url) -> bool {
 }
 pub(crate) fn client() -> Result<Client, JobError> {
     Client::builder()
-        .user_agent("RustyDownloadManager/0.2.1")
+        .user_agent(concat!("RustyDownloadManager/", env!("CARGO_PKG_VERSION")))
         .redirect(reqwest::redirect::Policy::none())
         .no_gzip()
         .no_brotli()

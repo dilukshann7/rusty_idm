@@ -29,7 +29,7 @@ def fetch(entry):
     temporary = target.with_suffix(target.suffix + ".partial")
     if temporary.is_file():
         temporary.unlink()
-    request = urllib.request.Request(entry["url"], headers={"User-Agent": "RustyIDM-media-packager/0.2.1"})
+    request = urllib.request.Request(entry["url"], headers={"User-Agent": "RustyIDM-media-packager"})
     hash_value = hashlib.sha256()
     size = 0
     with urllib.request.urlopen(request, timeout=60) as response, temporary.open("xb") as file:

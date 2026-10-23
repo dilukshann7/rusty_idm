@@ -4,7 +4,7 @@
 #ifndef PayloadRoot
   #define PayloadRoot SourceRoot + "\dist\payload"
 #endif
-#define AppVersion "0.2.1"
+#define AppVersion "0.3.0-beta.1"
 
 [Setup]
 AppId={{D407FE27-761D-4EF5-8565-A3221FAE6423}
@@ -25,7 +25,9 @@ SetupIconFile={#SourceRoot}\assets\branding\rusty.ico
 UninstallDisplayIcon={app}\bin\rusty-win32.exe
 UninstallDisplayName=Rusty Download Manager
 VersionInfoProductName=Rusty Download Manager
-VersionInfoVersion=0.2.1.0
+VersionInfoVersion=0.3.0.0
+VersionInfoTextVersion={#AppVersion}
+VersionInfoProductTextVersion={#AppVersion}
 VersionInfoDescription=Rusty Download Manager setup
 LicenseFile={#SourceRoot}\LICENSE
 InfoAfterFile={#SourceRoot}\docs\SETUP.txt

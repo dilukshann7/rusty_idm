@@ -15,6 +15,91 @@ fn request(dir: &std::path::Path, name: &str) -> DownloadRequest {
 }
 
 type CapturedStore = Arc<Mutex<Option<(Arc<Store>, EntryId)>>>;
+
+#[test]
+fn full_history_rejects_admission_without_pruning_or_starting_jobs() {
+    let dir = tempfile::tempdir().unwrap();
+    let queues = QueueRuntime::new(false);
+    queues
+        .store
+        .update(|state| {
+            for index in 1..=10_000 {
+                let id = EntryId(index);
+                let request = request(dir.path(), &format!("{index}.bin"));
+                state
+                    .entries
+                    .insert(id, queue_support::stored(id, &request));
+            }
+            state.next_entry = 10_001;
+            Ok(())
+        })
+        .unwrap();
+    let bus = EventBus::new(Arc::new(|| {}));
+    let mut jobs = BTreeMap::new();
+    let mut waiting = VecDeque::new();
+    let mut next = 1;
+    // Populate actor records directly: restoring 10,000 entries would exercise
+    // unrelated startup work instead of this admission boundary.
+    let template_request = request(dir.path(), "held.bin");
+    let template_bus = EventBus::new(Arc::new(|| {}));
+    let mut template_jobs = BTreeMap::new();
+    let mut template_waiting = VecDeque::new();
+    let template_queues = QueueRuntime::new(false);
+    admit(
+        template_request,
+        &mut template_jobs,
+        &mut template_waiting,
+        &mut next,
+        &template_bus,
+        &template_queues,
+        false,
+    )
+    .unwrap();
+    let template = template_jobs.remove(&JobId(1)).unwrap();
+    for index in 1..=10_000 {
+        let mut snapshot = template.snapshot.clone();
+        snapshot.id = JobId(index);
+        jobs.insert(
+            snapshot.id,
+            Job {
+                transfer_meter: Default::default(),
+                retry: Default::default(),
+                request: template.request.clone(),
+                retired_history: None,
+                snapshot,
+                cancel: TransferControl::new(CancellationToken::new()),
+                remove: false,
+                speed_meter: SpeedMeter::new(Instant::now(), 0),
+                started: false,
+                restart: false,
+                resume_after_pause: false,
+                user_held: true,
+            },
+        );
+    }
+    bus.drain();
+    assert_eq!(jobs.len(), 10_000);
+    assert!(admit(
+        request(dir.path(), "extra.bin"),
+        &mut jobs,
+        &mut waiting,
+        &mut next,
+        &bus,
+        &queues,
+        false,
+    )
+    .is_err());
+    assert_eq!(jobs.len(), 10_000);
+    assert_eq!(queues.store.snapshot().entries.len(), 10_000);
+    assert!(waiting.is_empty());
+    let events = bus.drain();
+    assert!(events.iter().any(|event| matches!(event,
+        Event::CommandRejected { message } if message.contains("history is full"))));
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, Event::JobRemoved(_))));
+}
+
 struct HistoryExecutor {
     captured: CapturedStore,
     fail: bool,
